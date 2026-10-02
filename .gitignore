@@ -1,0 +1,11 @@
+# build output (the exes are large and rebuilt with build.bat / build_mac.sh / CI)
+dist/
+build/
+*.spec
+# python
+__pycache__/
+*.pyc
+# local runtime files if someone points CLAUDE_PET_DIR at the repo
+events.log
+*.log
+.claude-pet/

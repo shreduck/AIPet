@@ -1,0 +1,54 @@
+{
+  "robot": {
+    "file": "robot_body.png",
+    "size": [
+      37,
+      52
+    ],
+    "screen": [
+      6,
+      16,
+      25,
+      33
+    ],
+    "eyes": {
+      "left": [
+        10,
+        24
+      ],
+      "right": [
+        20,
+        24
+      ]
+    },
+    "mouth": [
+      15,
+      29
+    ],
+    "lights": [
+      [
+        17,
+        42,
+        "amber"
+      ],
+      [
+        20,
+        42,
+        "green"
+      ],
+      [
+        25,
+        42,
+        "black"
+      ]
+    ],
+    "antenna_tip": [
+      24,
+      0
+    ],
+    "base_y": 51
+  },
+  "screen_color": "#0e151a",
+  "cyan": "#8ceaf3",
+  "block": 8
+}
