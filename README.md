@@ -79,16 +79,20 @@ Backups are plain copies of your `settings.json`. If you keep secrets in it (e.g
 - A session that runs **subagents** shows extra robots next to the main one (up to four), and the state line shows `+N`.
   This relies on the hook payloads carrying an `agent_id` (finished agents drop off after `SubagentStop` or 90 s without
   activity). A subagent's tool call no longer hides a permission prompt that belongs to a different agent.
-- **Resize** with the slider: right-click the pet > *Size...* (or tray > *Pet size...*) opens a small window with a 60% - 200%
-  slider; the pet follows it live and the value is saved as `scale`. *Reset size* restores 100%.
+- **Resize** with the slider: right-click the pet > *Size...* (or tray > *Pet size...*) opens a small window with a 30% - 300%
+  slider; the pet follows it live and the value is saved as `size` (1.0 = 100%). 100% is the default size (twice the drawing
+  size the first versions used; an older `scale` value in `config.json` is converted once). *Reset size* restores 100%.
 
 ## Answering permission prompts from the pet
 When Claude Code asks for permission, the popup (click the bubble's title) shows **Deny** and **Allow once**. Your click is
 handed to the `PermissionRequest` hook, which prints the decision to Claude Code.
-- The hook waits at most ~45 s (~20 s for a subagent's prompt) and **only while the pet is running** (it checks a heartbeat
-  file). If you don't click, or the pet is closed, it prints nothing and the normal prompt appears as usual.
+- The hook waits up to the **answer timeout** (default 3 minutes, set 0 - 5 minutes with right-click > *Answer timeout...*
+  or tray > *Answer timeout...*; 0 turns answering from the pet off) and **only while the pet is running** (it checks a
+  heartbeat file). If you don't click, or the pet is closed, it prints nothing and the normal prompt appears as usual.
+  The setting is saved as `answer_wait_seconds` and mirrored into `~/.claude-pet/answer-wait` for the hooks.
 - Claude Code (CLI/desktop) shows its own prompt at the same time and the first answer wins, so you can still answer there.
-- Turn it off with tray > *Answer permission prompts from the pet* (the hook then only records the request).
+- For background subagents Claude Code may wait for the hook before showing its own prompt, so a long timeout also
+  lengthens that delay; lower the slider if you notice it.
 - There is no "always allow" button: that needs a permission-rule format I haven't verified. The VS Code extension does
   not send `PermissionRequest` events, so its prompts keep the read-only bubble.
 

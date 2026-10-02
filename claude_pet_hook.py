@@ -273,6 +273,20 @@ def await_answer(base, key, seconds):
     return None
 
 
+def configured_wait(base):
+    """Seconds the user allows for answering from the pet (0 = off). Set with the pet's "Answer timeout" slider,
+    which mirrors it into <pet dir>/answer-wait; 3 minutes if it was never set."""
+    try:
+        raw = os.environ.get("CLAUDE_PET_ANSWER_WAIT")
+        if not raw:
+            with open(os.path.join(base, "answer-wait"), encoding="utf-8") as f:
+                raw = f.read().strip()
+        value = float(raw)
+    except (OSError, ValueError):
+        value = 180.0
+    return max(0.0, min(300.0, value))
+
+
 def answer_flow(base, path, aid):
     """After the request is recorded: give the user a window to answer from the pet, then print the decision.
     Prints nothing (normal prompt) if the pet isn't running, answering is switched off, or nobody clicks in time."""
@@ -280,14 +294,13 @@ def answer_flow(base, path, aid):
     req = record.get("request") or {}
     if not req or not pet_alive(base) or os.path.exists(os.path.join(base, "no-answers")):
         return
+    seconds = configured_wait(base)
+    if seconds <= 0:
+        return  # answering from the pet is switched off: observe only
     key = safe_name(req.get("id") or record.get("id") or "request")
     req["answerable"] = True
     record["request"] = req
     write_atomic(path, record)
-    try:
-        seconds = float(os.environ.get("CLAUDE_PET_ANSWER_WAIT") or (20 if aid else 45))
-    except ValueError:
-        seconds = 20 if aid else 45
     decision = await_answer(base, key, seconds)
     cur = read_json(path)
     if (cur.get("request") or {}).get("id") == req.get("id"):  # still the same prompt: settle the record

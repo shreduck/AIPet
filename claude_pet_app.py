@@ -202,9 +202,6 @@ class TrayApp:
             m.insert_command(q + 1, label="Claude Code hooks / setup...", command=self.show_setup)
             m.insert_checkbutton(q + 2, label="Notifications", variable=self.notify_var,
                                  command=lambda: self._set_notify(self.notify_var.get()))
-            self.answers_var = tk.BooleanVar(value=core.answers_enabled())
-            m.insert_checkbutton(m.index("Quit"), label="Answer permission prompts from the pet", variable=self.answers_var,
-                                 command=self.toggle_answers)
             self.debug_var = tk.BooleanVar(value=os.path.exists(DEBUG_FLAG))
             m.insert_checkbutton(m.index("Quit"), label="Log hook events (debug)", variable=self.debug_var,
                                  command=self.toggle_debug)
@@ -569,8 +566,7 @@ class TrayApp:
                                  radio=True) for key, label in PET_STYLES])),
             I("Pet size...", act(self.pet.open_size_slider)),
             I("Reset pet size", act(self.pet.reset_scale)),
-            I("Answer permission prompts from the pet", act(self.toggle_answers),
-              checked=lambda item: core.answers_enabled()),
+            I("Answer timeout...", act(self.pet.open_answer_slider)),
             I("Log hook events (debug)", act(self.toggle_debug), checked=lambda item: os.path.exists(DEBUG_FLAG)),
             I("Start with Windows", act(self.toggle_autostart), checked=lambda item: self.c_autostart,
               visible=os.name == "nt"),
@@ -708,21 +704,6 @@ class TrayApp:
             self.info("Couldn't save the theme (config.json isn't valid JSON?). It applies until you quit.", error=True)
         if hasattr(self, "theme_var"):
             self.theme_var.set(name == "dark")
-        self.refresh_menu()
-
-    def toggle_answers(self):
-        """While on, the PermissionRequest hook waits (briefly) for a click on the pet; off = observe only."""
-        flag = os.path.join(core.HOME_DIR, "no-answers")
-        try:
-            if os.path.exists(flag):
-                os.remove(flag)
-            else:
-                os.makedirs(core.HOME_DIR, exist_ok=True)
-                open(flag, "w").close()
-        except OSError:
-            pass
-        if hasattr(self, "answers_var"):
-            self.answers_var.set(core.answers_enabled())
         self.refresh_menu()
 
     def toggle_debug(self):

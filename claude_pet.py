@@ -48,8 +48,10 @@ DEFAULT_CONFIG = {
     "sound_on_done": True,
     "notifications": False,  # Windows toast notifications; off by default (toggle in the tray menu)
     "theme": "light",  # "light" (default) or "dark"; toggle in the tray / right-click menu
+    "answer_wait_seconds": 180,  # how long a permission prompt can be answered from the pet: 0 (off) - 300
     "pet_style": "robot",  # "robot" (default), "mole" or "cat"
-    "scale": 1.0,  # overall size, 0.6 - 2.0 (drag a corner of the overlay)
+    # "size": 1.0 is written when you use the Size slider (1.0 = 100%, range 0.3 - 3.0); deliberately not a default
+    # here, so an old absolute "scale" value in config.json can still be migrated once.
     "remind_seconds": 90,
     "hide_done_after_minutes": 30,
     "stale_hours": 12,
@@ -119,20 +121,49 @@ def set_theme(name):
 set_theme("light")
 
 STYLE = {"v": "robot"}  # "robot", "mole" or "cat"
-SCALE = {"v": 1.0}  # overall size factor (resize by dragging a corner)
+SCALE_UNIT = 2.0  # the absolute drawing scale that counts as 100% (it was the old 200%, the size people settled on)
+SCALE = {"v": SCALE_UNIT}  # absolute drawing scale: 92x122 px per pet at 1.0; the slider shows SCALE / SCALE_UNIT
+
+
+ANSWER_WAIT = {"v": 180}  # seconds; mirrored into <pet dir>/answer-wait for the hook (0 = answering from the pet is off)
 
 
 def answers_dir():
     return os.path.join(HOME_DIR, "answers")
 
 
+def clamp_wait(v):
+    try:
+        return int(max(0, min(300, round(float(v)))))
+    except (TypeError, ValueError):
+        return 180
+
+
+def fmt_wait(sec):
+    sec = int(sec)
+    if sec <= 0:
+        return "off"
+    m, s = divmod(sec, 60)
+    return f"{m} min {s} s" if m and s else (f"{m} min" if m else f"{s} s")
+
+
+def write_answer_wait(sec):
+    """Tell the hooks (including WSL ones, through the shared folder) how long to wait for a click."""
+    try:
+        os.makedirs(HOME_DIR, exist_ok=True)
+        with open(os.path.join(HOME_DIR, "answer-wait"), "w", encoding="utf-8") as f:
+            f.write(str(int(sec)))
+    except OSError:
+        pass
+
+
 def answers_enabled():
-    return not os.path.exists(os.path.join(HOME_DIR, "no-answers"))
+    return ANSWER_WAIT["v"] > 0 and not os.path.exists(os.path.join(HOME_DIR, "no-answers"))
 
 
 def clamp_scale(v):
     try:
-        return max(0.6, min(2.0, float(v)))
+        return max(0.6, min(6.0, float(v)))  # 30% - 300% of SCALE_UNIT
     except (TypeError, ValueError):
         return 1.0
 
@@ -1093,8 +1124,13 @@ class Detail:
         self.code = tk.Text(self.body, height=1, width=60, wrap="word", bg="#0b1220", fg="#d1fae5", relief="flat",
                             borderwidth=0, highlightthickness=0, padx=10, pady=8, font=("Consolas", 9), state="disabled",
                             insertbackground="#d1fae5")
-        self.wait = tk.Label(right, bg=bg, fg=muted, anchor="w", font=("Segoe UI", 9))
-        self.wait.pack(fill="x", pady=(8, 0))
+        wait_row = tk.Frame(right, bg=bg)
+        wait_row.pack(fill="x", pady=(8, 0))
+        self.wait = tk.Label(wait_row, bg=bg, fg=muted, anchor="w", font=("Segoe UI", 9))
+        self.wait.pack(side="left")
+        self.golink = tk.Label(wait_row, text="Go to window ›", bg=bg, fg=self.ACCENT, cursor="hand2",
+                               font=("Segoe UI", 9, "underline"))
+        self.golink.bind("<Button-1>", lambda e: self.go())
         self.note = tk.Label(right, bg=bg, fg=muted, anchor="w", justify="left", wraplength=430, font=("Segoe UI", 8))
         self.note.pack(fill="x", pady=(2, 8))
         self.answer_row = tk.Frame(right, bg=bg)
@@ -1107,6 +1143,11 @@ class Detail:
         self.btn_deny.pack(side="left", ipady=3)
         self.btn_allow.pack(side="right", ipady=4)
         self.answer_row.pack(fill="x")
+        self.go_row = tk.Frame(right, bg=bg)
+        self.btn_go = tk.Button(self.go_row, text="Go to window", bg=self.ACCENT, fg="#111827", activebackground="#d97706",
+                                activeforeground="#111827", relief="flat", cursor="hand2", font=("Segoe UI", 10, "bold"),
+                                command=self.go)
+        self.btn_go.pack(side="left", ipady=4, ipadx=14)
         self.update(item)
         self._place(first=True)
         w.focus_force()
@@ -1221,22 +1262,37 @@ class Detail:
             note = f"Sent: {self.sent}. Claude Code will carry on in a moment."
         elif can_answer:
             note = ("Allow once or Deny answers this prompt right from here, or answer in the session window "
-                    "(click the pet). If you do neither, the normal prompt appears.")
+                    "(Go to window). If you do neither, the normal prompt appears.")
         elif req.get("source") == "transcript":
             note = ("This session type (the VS Code extension) sends no permission events, so the pet can't answer for it. "
-                    "This is what Claude is asking, so you know what to approve there. Click the pet to go to its window.")
+                    "This is what Claude is asking, so you know what to approve there. Press Go to window to jump there.")
         elif req:
-            note = ("The pet's answer window has passed (about 45 s), or answering is off in the tray menu. "
-                    "Answer in the session window: click the pet to go there.")
+            if ANSWER_WAIT["v"] <= 0:
+                note = ("Answering from the pet is switched off (Answer timeout = off). "
+                        "Answer in the session window: press Go to window.")
+            else:
+                note = (f"The pet's {fmt_wait(ANSWER_WAIT['v'])} answer window has passed. "
+                        "Answer in the session window: press Go to window.")
         else:
             note = ("No command details were reported for this prompt, so there is nothing to answer here. "
-                    "Click the pet to go to the session's window.")
+                    "Press Go to window to jump to the session.")
         self.note.config(text=note)
         if can_answer:
             self.answer_row.pack(fill="x", after=self.note)
         else:
             self.answer_row.pack_forget()
+        if can_answer or self.sent:  # small link while the answer buttons (or the "sent" note) are showing
+            self.golink.pack(side="right")
+            self.go_row.pack_forget()
+        else:  # nothing to answer from here: the big button
+            self.golink.pack_forget()
+            self.go_row.pack(fill="x", after=self.note)
         self._place()
+
+    def go(self):
+        """Bring the session's window to the front and dismiss this popup."""
+        self.app.focus_key(self.key)
+        self.close()
 
     def answer(self, behavior):
         if self.app.send_answer(self.key, behavior):
@@ -1263,7 +1319,17 @@ class PetApp:
         set_theme(self.cfg.get("theme", "light"))
         style = {"duckbot": "robot"}.get(self.cfg.get("pet_style"), self.cfg.get("pet_style"))  # old name
         STYLE["v"] = style if style in ("robot", "mole", "cat") else "robot"
-        SCALE["v"] = clamp_scale(self.cfg.get("scale", 1.0))
+        size = self.cfg.get("size")
+        if size is None and self.cfg.get("scale") is not None:  # older config: an absolute scale -> relative to the new 100%
+            try:
+                size = round(float(self.cfg["scale"]) / SCALE_UNIT, 2)
+                self.cfg["size"] = size
+                save_setting("size", size)
+            except (TypeError, ValueError):
+                size = None
+        SCALE["v"] = clamp_scale((size if size is not None else 1.0) * SCALE_UNIT)
+        ANSWER_WAIT["v"] = clamp_wait(self.cfg.get("answer_wait_seconds", 180))
+        write_answer_wait(ANSWER_WAIT["v"])
         root = self.root = tk.Tk()
         root.title("Claude Pet")
         root.overrideredirect(True)
@@ -1306,6 +1372,7 @@ class PetApp:
         m.add_command(label="Size...", command=self.open_size_slider)
         self.size_menu_index = m.index("end")
         m.add_command(label="Reset size", command=self.reset_scale)
+        m.add_command(label="Answer timeout...", command=self.open_answer_slider)
         m.add_separator()
         m.add_checkbutton(label="Mute sounds", variable=self.muted)
         m.add_command(label="Clear finished", command=self.clear_finished)
@@ -1456,8 +1523,21 @@ class PetApp:
         for pet in self.pets.values():
             pet.canvas.config(width=px(PET_W), height=px(PET_H))
 
+    def _place_above_pet(self, w):
+        """Put a small window directly above the pet overlay, centred on it (just below it if there is no room)."""
+        w.update_idletasks()
+        self.root.update_idletasks()
+        sw, sh = w.winfo_screenwidth(), w.winfo_screenheight()
+        ww, wh = w.winfo_reqwidth(), w.winfo_reqheight()
+        ox, oy, ow, oh = self.root.winfo_x(), self.root.winfo_y(), self.root.winfo_width(), self.root.winfo_height()
+        x = max(0, min(ox + ow // 2 - ww // 2, sw - ww - 10))
+        y = oy - wh - 10
+        if y < 0:
+            y = max(0, min(oy + oh + 10, sh - wh - 60))
+        w.geometry(f"+{x}+{y}")
+
     def open_size_slider(self):
-        """A small window with a slider (60% - 200%); the pet follows it live and the value is saved on release."""
+        """A small window with a slider (30% - 300%; 100% = SCALE_UNIT). The pet follows it live, saved on release."""
         if self.size_win is not None:
             try:
                 self.size_win.lift()
@@ -1469,17 +1549,19 @@ class PetApp:
         w.title("Pet size")
         w.attributes("-topmost", True)
         w.resizable(False, False)
-        var = tk.DoubleVar(value=SCALE["v"])
+        var = tk.DoubleVar(value=SCALE["v"] / SCALE_UNIT)
         pct = tk.Label(w, width=6, font=("Segoe UI", 12, "bold"))
 
         def apply(_v=None):
-            self.set_scale(var.get())
+            self.set_scale(var.get() * SCALE_UNIT)
             self.reposition()
-            pct.config(text=f"{int(round(SCALE['v'] * 100))}%")
+            pct.config(text=f"{int(round(SCALE['v'] / SCALE_UNIT * 100))}%")
 
         def commit(_e=None):
-            self.cfg["scale"] = round(SCALE["v"], 2)
-            save_setting("scale", self.cfg["scale"])
+            self.cfg["size"] = round(SCALE["v"] / SCALE_UNIT, 2)
+            save_setting("size", self.cfg["size"])
+            if self.size_win is not None:
+                self._place_above_pet(w)  # the pet grew/shrank: stay directly above it
 
         def reset():
             var.set(1.0)
@@ -1492,28 +1574,79 @@ class PetApp:
             w.destroy()
 
         tk.Label(w, text="Pet size", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
-        scale = ttk.Scale(w, from_=0.6, to=2.0, orient="horizontal", length=240, variable=var, command=apply)
+        scale = ttk.Scale(w, from_=0.3, to=3.0, orient="horizontal", length=260, variable=var, command=apply)
         scale.grid(row=1, column=0, padx=(14, 6), pady=8)
         scale.bind("<ButtonRelease-1>", commit)
         pct.grid(row=1, column=1, padx=(0, 14))
         row = tk.Frame(w)
         row.grid(row=2, column=0, columnspan=2, sticky="e", padx=14, pady=(0, 12))
-        tk.Button(row, text="Reset", width=8, command=reset).pack(side="left", padx=(0, 6))
+        tk.Button(row, text="100%", width=8, command=reset).pack(side="left", padx=(0, 6))
         tk.Button(row, text="Done", width=8, command=close).pack(side="left")
         w.protocol("WM_DELETE_WINDOW", close)
         w.bind("<Escape>", lambda e: close())
         apply()
-        w.update_idletasks()
-        sw, sh = w.winfo_screenwidth(), w.winfo_screenheight()
-        ex, ey = self._menu_xy or (self.root.winfo_rootx(), self.root.winfo_rooty())
-        w.geometry(f"+{max(0, min(ex - w.winfo_reqwidth() // 2, sw - w.winfo_reqwidth() - 10))}"
-                   f"+{max(0, min(ey - w.winfo_reqheight() - 14, sh - w.winfo_reqheight() - 60))}")
+        self._place_above_pet(w)
+
+    def open_answer_slider(self):
+        """Slider for how long a permission prompt can be answered from the pet: 0 (off) to 5 minutes."""
+        if getattr(self, "answer_win", None) is not None:
+            try:
+                self.answer_win.lift()
+                return
+            except tk.TclError:
+                self.answer_win = None
+        from tkinter import ttk
+        w = self.answer_win = tk.Toplevel(self.root)
+        w.title("Answer timeout")
+        w.attributes("-topmost", True)
+        w.resizable(False, False)
+        var = tk.DoubleVar(value=ANSWER_WAIT["v"])
+        val = tk.Label(w, width=10, font=("Segoe UI", 12, "bold"))
+
+        def apply(_v=None):
+            ANSWER_WAIT["v"] = clamp_wait(round(var.get() / 5) * 5)  # steps of 5 s
+            val.config(text=fmt_wait(ANSWER_WAIT["v"]))
+
+        def commit(_e=None):
+            apply()
+            self.cfg["answer_wait_seconds"] = ANSWER_WAIT["v"]
+            save_setting("answer_wait_seconds", ANSWER_WAIT["v"])
+            write_answer_wait(ANSWER_WAIT["v"])
+
+        def reset():
+            var.set(180)
+            commit()
+
+        def close():
+            commit()
+            self.answer_win = None
+            w.destroy()
+
+        tk.Label(w, text="Answer permission prompts from the pet for up to:", font=("Segoe UI", 10, "bold")
+                 ).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
+        scale = ttk.Scale(w, from_=0, to=300, orient="horizontal", length=260, variable=var, command=apply)
+        scale.grid(row=1, column=0, padx=(14, 6), pady=8)
+        scale.bind("<ButtonRelease-1>", commit)
+        val.grid(row=1, column=1, padx=(0, 14))
+        tk.Label(w, justify="left", wraplength=360, fg="#6b7280", font=("Segoe UI", 8),
+                 text="0 turns it off: the pet only shows the question and you answer in the session window. "
+                      "While the pet waits, Claude Code's own prompt is still shown and the first answer wins, "
+                      "except for background subagents, where Claude Code may hold its prompt until this time is up."
+                 ).grid(row=2, column=0, columnspan=2, sticky="w", padx=14)
+        row = tk.Frame(w)
+        row.grid(row=3, column=0, columnspan=2, sticky="e", padx=14, pady=(8, 12))
+        tk.Button(row, text="Default (3 min)", command=reset).pack(side="left", padx=(0, 6))
+        tk.Button(row, text="Done", width=8, command=close).pack(side="left")
+        w.protocol("WM_DELETE_WINDOW", close)
+        w.bind("<Escape>", lambda e: close())
+        apply()
+        self._place_above_pet(w)
 
     def reset_scale(self):
-        self.set_scale(1.0)
+        self.set_scale(SCALE_UNIT)
         self.reposition()
-        self.cfg["scale"] = SCALE["v"]
-        save_setting("scale", SCALE["v"])
+        self.cfg["size"] = 1.0
+        save_setting("size", 1.0)
 
     def focus_key(self, key):
         pet = self.pets.get(key)
@@ -1625,7 +1758,7 @@ class PetApp:
         self.hide_tip()
         self.menu_pet = pet
         self._menu_xy = (e.x_root, e.y_root)
-        self.menu.entryconfigure(self.size_menu_index, label=f"Size...  ({int(round(SCALE['v'] * 100))}%)")
+        self.menu.entryconfigure(self.size_menu_index, label=f"Size...  ({int(round(SCALE['v'] / SCALE_UNIT * 100))}%)")
         ok = bool(pet and pet.data.get("source") == "CC" and pet.data.get("cwd"))
         self.menu.entryconfigure(self.vscode_menu_index, state="normal" if ok else "disabled")
         self.menu.entryconfigure(self.dismiss_menu_index,
