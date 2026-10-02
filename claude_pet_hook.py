@@ -28,7 +28,11 @@ import subprocess
 import sys
 import time
 
-WORKING_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse"}
+WORKING_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart"}
+# Notification kinds that ask the user to act. Everything else (idle reminders, auth_success, agent_completed, elicitation_complete,
+# quota_auto_resume_fired, ...) is informational and must not raise a "needs you".
+ACTIONABLE_NOTIFICATIONS = {"permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input",
+                            "quota_auto_resume_stale"}
 LOCAL_PET_DIR = os.path.join(os.path.expanduser("~"), ".claude-pet")
 WSL_CACHE = os.path.join(LOCAL_PET_DIR, "windows-pet-dir.txt")
 
@@ -91,6 +95,78 @@ def is_home_or_root(path):
     """True for the user's home folder or a filesystem root, where the folder name makes a useless title."""
     norm = os.path.normcase(os.path.normpath(path))
     return norm == os.path.normcase(os.path.normpath(os.path.expanduser("~"))) or os.path.dirname(norm) == norm
+
+
+CLAUDE_PROCESS_NAMES = ("claude", "claude.exe", "node", "node.exe")
+
+
+def _read_proc(pid):
+    """(name, parent pid) of a process, or None. /proc on Linux (WSL), ps on macOS."""
+    try:
+        if sys.platform.startswith("linux"):
+            with open("/proc/%d/stat" % pid, encoding="utf-8", errors="replace") as f:
+                stat = f.read()
+            name = stat[stat.index("(") + 1:stat.rindex(")")]
+            return name, int(stat[stat.rindex(")") + 2:].split()[1])
+        out = subprocess.run(["ps", "-o", "ppid=,comm=", "-p", str(pid)], capture_output=True, text=True, timeout=2).stdout.strip()
+        ppid, _, comm = out.partition(" ")
+        return os.path.basename(comm.strip()), int(ppid)
+    except Exception:
+        return None
+
+
+def _windows_process_table():
+    """{pid: (parent pid, exe name)} from a toolhelp snapshot."""
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.windll.kernel32
+
+    class ENTRY(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD),
+                    ("cntThreads", wintypes.DWORD), ("th32ParentProcessID", wintypes.DWORD),
+                    ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD), ("szExeFile", ctypes.c_wchar * 260)]
+
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    k32.Process32FirstW.argtypes = k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(ENTRY)]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    snap = k32.CreateToolhelp32Snapshot(2, 0)
+    table, e = {}, ENTRY()
+    e.dwSize = ctypes.sizeof(ENTRY)
+    ok = k32.Process32FirstW(snap, ctypes.byref(e))
+    while ok:
+        table[e.th32ProcessID] = (e.th32ParentProcessID, e.szExeFile)
+        ok = k32.Process32NextW(snap, ctypes.byref(e))
+    k32.CloseHandle(snap)
+    return table
+
+
+def find_claude_pid():
+    """PID of the Claude Code process that runs this session (the nearest claude / node ancestor), else None.
+    Inside WSL this is a WSL PID, which the pet labels as such."""
+    try:
+        if os.name == "nt":
+            table, cur, seen = _windows_process_table(), os.getpid(), set()
+            while cur in table and cur not in seen:
+                seen.add(cur)
+                parent = table[cur][0]
+                if parent in table and table[parent][1].lower() in CLAUDE_PROCESS_NAMES:
+                    return parent  # judge the ANCESTOR by its own name
+                cur = parent
+            return None
+        pid, seen = os.getppid(), set()
+        while pid > 1 and pid not in seen:
+            seen.add(pid)
+            info = _read_proc(pid)
+            if not info:
+                return None
+            if info[0].lower() in CLAUDE_PROCESS_NAMES:
+                return pid
+            pid = info[1]
+    except Exception:
+        pass
+    return None
 
 
 def find_host_window():
@@ -179,6 +255,10 @@ def debug_log(base_dir, event, data, prev_state, new_state):
             "msg": str(data.get("message", ""))[:80], "keys": sorted(data.keys()),
             "agent": {k: str(data[k])[:12] for k in ("agent_id", "agent_type", "parent_session_id") if k in data},
             "prev": prev_state, "new": new_state,
+            # shapes only (type, length, key names): never the values
+            "shape": {k: [type(data[k]).__name__, len(data[k]) if hasattr(data[k], "__len__") else data[k],
+                          sorted(data[k][0].keys()) if isinstance(data[k], list) and data[k] and isinstance(data[k][0], dict) else None]
+                      for k in ("background_tasks", "session_crons", "agents", "subagents") if k in data},
             "env": {"entry": e.get("CLAUDE_CODE_ENTRYPOINT", ""), "term": e.get("TERM_PROGRAM", ""),
                     "vscode_vars": [k for k in ("VSCODE_PID", "VSCODE_IPC_HOOK_CLI", "VSCODE_GIT_IPC_HANDLE") if e.get(k)]},
         }
@@ -449,7 +529,7 @@ def _update_session(path, target, event, data, wsl):
     # show a stack, and so a subagent's tool call can't hide a permission prompt that belongs to someone else.
     aid = str(data.get("agent_id") or data.get("subagent_id") or "")
     t_now = time.time()
-    agents = {k: v for k, v in (prev.get("agents") or {}).items() if t_now - v < 120}
+    agents = {k: v for k, v in (prev.get("agents") or {}).items() if t_now - v < 900}  # until SubagentStop (15 min safety)
     if event == "SubagentStop":
         agents.pop(aid, None)
     elif aid:
@@ -457,12 +537,15 @@ def _update_session(path, target, event, data, wsl):
     agents = dict(sorted(agents.items(), key=lambda kv: kv[1])[-8:])
     wait_agent = prev.get("wait_agent", "")
     request = prev.get("request") or {}
+    main_stopped = bool(prev.get("main_stopped"))  # the main agent finished its turn while subagents kept running
 
     if event in WORKING_EVENTS:
         keep = (aid and event != "UserPromptSubmit" and prev.get("state") == "needs_input"
                 and (not wait_agent or wait_agent != aid))
         if not keep:  # otherwise another agent is working while this prompt is still waiting for the user
             state, message = "working", ""
+        if not aid:
+            main_stopped = False  # the main agent itself is active again
     elif event == "PermissionRequest":  # observe only: print nothing, so the normal prompt is untouched
         request = build_request(data)
         state, message = "needs_input", f"Claude needs your permission to use {request['tool'] or 'a tool'}"
@@ -471,8 +554,11 @@ def _update_session(path, target, event, data, wsl):
         msg = data.get("message", "") or ""
         ntype = data.get("notification_type", "") or ""
         is_idle_reminder = ntype == "idle_prompt" or "waiting for your input" in msg.lower()
-        # An "idle" reminder after Claude already finished is not a new question: stay "done".
-        if not (is_idle_reminder and prev.get("state") in ("done", "idle")):
+        # Only notifications that ask the user to act count. An idle reminder ("Claude is waiting for your input", which also
+        # fires while background agents run) and informational kinds never become "needs you". Older versions send no type:
+        # then a permission message counts.
+        actionable = ntype in ACTIONABLE_NOTIFICATIONS or (not ntype and not is_idle_reminder and "permission" in msg.lower())
+        if actionable:
             state, message = "needs_input", msg
             wait_agent = aid
             if request and request.get("source") == "transcript":
@@ -480,12 +566,17 @@ def _update_session(path, target, event, data, wsl):
             if not request and (ntype == "permission_prompt" or "permission" in msg.lower()):
                 request = request_from_transcript(data.get("transcript_path"))  # sessions without PermissionRequest
     elif event == "Stop":
-        state, message = "done", ""
-        agents = {}
+        if agents:  # the turn is over but background subagents are still running: not done yet
+            if prev.get("state") != "needs_input":
+                state, message = "working", ""
+            main_stopped = True
+        else:
+            state, message, main_stopped = "done", "", False
     elif event == "SessionStart":
         state = "idle"
     elif event == "SubagentStop":
-        pass  # only the agent count changes
+        if not agents and main_stopped and prev.get("state") == "working":
+            state, message, main_stopped = "done", "", False  # the last background agent finished and the main one is idle
     else:
         debug_log(os.path.dirname(target), event, data, prev.get("state"), "(ignored)")
         return
@@ -497,6 +588,7 @@ def _update_session(path, target, event, data, wsl):
     if os.name == "nt" and not wsl and not (hwnd and window_alive(hwnd)):
         hwnd, host = find_host_window()  # for click-to-focus; re-found if the window was closed
     title = os.path.basename(cwd.rstrip("\\/")) or cwd
+    pid = prev.get("pid") or find_claude_pid()  # looked up once per session
     topic = prev.get("topic", "")
     if is_home_or_root(cwd):  # no project folder to name it after: use the first words of the first prompt
         if not topic and event == "UserPromptSubmit":
@@ -512,7 +604,9 @@ def _update_session(path, target, event, data, wsl):
         "topic": topic,
         "hwnd": hwnd,
         "host": host,
+        "pid": pid,
         "agents": agents,
+        "main_stopped": main_stopped,
         "wait_agent": wait_agent if state == "needs_input" else "",
         "request": request if state == "needs_input" else {},
         "cwd": cwd,

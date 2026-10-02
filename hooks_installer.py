@@ -31,7 +31,8 @@ HOOK_EVENTS = [
     ("Notification", None),
     ("Stop", None),
     ("SessionEnd", None),
-    ("SubagentStop", None),  # lets the pet drop a finished subagent from the stack
+    ("SubagentStart", None),  # lets the pet see a subagent the moment it starts (even one running a single long command)
+    ("SubagentStop", None),  # ... and drop it when it finishes
     ("PermissionRequest", None),  # gives the pet the command/description behind a permission prompt (observe only)
 ]
 HOOK_TIMEOUTS = {"PermissionRequest": 310}  # seconds; the hook waits at most 300 s (the slider's maximum) for a click

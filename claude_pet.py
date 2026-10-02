@@ -249,11 +249,11 @@ def ago(ts):
 
 # --------------------------------------------------------------------------- Claude Code source
 def _active_agents(rec, now=None):
-    """How many subagents showed signs of life in the last 90 s (only while the session is busy)."""
+    """How many subagents are running: started (or seen) and not yet stopped, within 15 min (while the session is busy)."""
     if rec.get("state") not in ("working", "needs_input"):
         return 0
     now = now or time.time()
-    return sum(1 for ts in (rec.get("agents") or {}).values() if now - ts < 90)
+    return sum(1 for ts in (rec.get("agents") or {}).values() if now - ts < 900)
 
 
 def read_claude_code_sessions(cfg):
@@ -312,6 +312,7 @@ def read_claude_code_sessions(cfg):
             "hwnd": rec.get("hwnd"),
             "subagents": _active_agents(rec),
             "request": rec.get("request") or {},
+            "pid": rec.get("pid"),
             "sid": str(rec.get("id")),
         })
     return items
@@ -1873,7 +1874,8 @@ class PetApp:
             lines.append(d["detail"])
         if d.get("changed"):
             lines.append("since " + ago(d["changed"]))
-        lines.append("click: go to window · click the bubble: details · drag: move · right-click: menu")
+        if d.get("pid"):
+            lines.append(f"PID {d['pid']}" + (" (WSL)" if d.get("env") == "wsl" else ""))
         tip = self.tip = tk.Toplevel(self.root)
         tip.overrideredirect(True)
         tip.attributes("-topmost", True)
