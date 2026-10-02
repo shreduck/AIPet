@@ -79,6 +79,23 @@ def open_path(path):
         pass
 
 
+def windows_sees_autostart():
+    """Ask Windows itself (WMI, served by a normal system service) whether ClaudePet is a startup command.
+    A plain registry read can be fooled: a process started inside another app's container (for example the Claude
+    desktop app) reads and writes a private overlay of the registry that Windows ignores at login.
+    Returns True/False, or None if it can't be determined."""
+    if os.name != "nt":
+        return None
+    try:
+        out = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command",
+             "(Get-CimInstance Win32_StartupCommand | Where-Object { $_.Name -eq 'ClaudePet' } | Measure-Object).Count"],
+            capture_output=True, text=True, timeout=25, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout.strip()
+        return int(out) > 0
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+
+
 def autostart_enabled():
     if IS_MAC:
         return os.path.exists(LAUNCH_AGENT)
@@ -243,7 +260,15 @@ class TrayApp:
         self.update_tray()
         self.root.after(250, self.pump)
 
+    def _check_autostart(self):
+        """At startup: show what Windows really sees, not an overlay (see windows_sees_autostart)."""
+        seen = windows_sees_autostart()
+        if seen is not None and seen != self.c_autostart:
+            self.c_autostart = seen
+            self.refresh_menu()
+
     def _startup_jobs(self):
+        self._check_autostart()
         try:
             hi.migrate_legacy_backups()  # pull backups over from the old %LOCALAPPDATA% location
         except Exception as e:
@@ -721,10 +746,21 @@ class TrayApp:
         self.refresh_menu()
 
     def toggle_autostart(self):
+        turning_on = not autostart_enabled()
         try:
-            set_autostart(not autostart_enabled())
+            set_autostart(turning_on)
         except OSError as e:
             self.info(f"Couldn't change startup setting:\n{e}", error=True)
+        if turning_on and windows_sees_autostart() is False:
+            try:
+                set_autostart(False)  # don't leave a checkmark that Windows will never honour
+            except OSError:
+                pass
+            self.info("Windows does not see the startup entry, so it would not start at login.\n\n"
+                      "This usually means this copy of Claude Pet was started from inside another app (for example the Claude "
+                      "desktop app), which keeps its registry changes in a private area that Windows ignores at login.\n\n"
+                      "Quit Claude Pet, start ClaudePet.exe from File Explorer, and switch 'Start with Windows' on again.",
+                      error=True)
         self.c_autostart = autostart_enabled()
         if hasattr(self, "autostart_var"):
             self.autostart_var.set(self.c_autostart)

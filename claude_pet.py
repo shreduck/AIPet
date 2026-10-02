@@ -102,11 +102,11 @@ BUBBLE_W = 270
 THEMES = {
     "light": {"tag_bg": "#ffffff", "tag_fg": "#111827", "label_dark": True,
               "bubble_bg": "#ffffff", "bubble_fg": "#111827", "bubble_msg": "#374151", "bubble_muted": "#6b7280",
-              "tip_bg": "#ffffff", "tip_fg": "#111827", "tip_border": "#cbd5e1",
+              "tip_bg": "#ffffff", "tip_fg": "#111827", "tip_border": "#cbd5e1", "tag_outline": "#111827",
               "code_bg": "#f3f4f6", "code_fg": "#111827"},
     "dark": {"tag_bg": INK, "tag_fg": "#ffffff", "label_dark": False,
              "bubble_bg": "#111827", "bubble_fg": "#ffffff", "bubble_msg": "#e5e7eb", "bubble_muted": "#9ca3af",
-             "tip_bg": "#111827", "tip_fg": "#f9fafb", "tip_border": "#111827",
+             "tip_bg": "#111827", "tip_fg": "#f9fafb", "tip_border": "#111827", "tag_outline": "#0b1220",
              "code_bg": "#0b1220", "code_fg": "#e5e7eb"},
 }
 T = {}  # the active theme; set_theme() mutates it in place so every module sees the change
@@ -675,14 +675,14 @@ def bubble_image(w, h, fill, outline, tail_cx):
     if key in _IMG_CACHE:
         return _IMG_CACHE[key]
     from PIL import Image
-    H = h + BUBBLE_TAIL
+    H = h + (BUBBLE_TAIL if tail_cx is not None else 0)
     mask = [[False] * w for _ in range(H)]
     for y in range(h):
         inset = _BUBBLE_INSET[y] if y < len(_BUBBLE_INSET) else (
             _BUBBLE_INSET[h - 1 - y] if h - 1 - y < len(_BUBBLE_INSET) else 0)
         for x in range(inset, w - inset):
             mask[y][x] = True
-    for r in range(BUBBLE_TAIL):  # 7, 5, 3, 1 px wide
+    for r in range(BUBBLE_TAIL if tail_cx is not None else 0):  # 7, 5, 3, 1 px wide
         for x in range(tail_cx - (3 - r), tail_cx + (3 - r) + 1):
             if 0 <= x < w:
                 mask[h + r][x] = True
@@ -785,8 +785,16 @@ class Pet:
         c = self.canvas
         st = self.data.get("state", "idle")
         col, dark = COLORS.get(st, COLORS["idle"]), DARK.get(st, DARK["idle"])
-        # name tag (solid background avoids colour fringing on the transparent window)
-        c.create_rectangle(3, PET_H - 28, PET_W - 3, PET_H - 2, fill=T["tag_bg"], outline=col, width=2)
+        # name label: a pixel-art rounded box like the speech bubbles (solid pixels: no colour fringing on the
+        # transparent window), with a small "light" in the state colour like the ones on the robot
+        tw_, th_ = PET_W - 6, 26
+        try:
+            s_ = SCALE["v"]
+            im = bubble_image(tw_, th_, T["tag_bg"], T["tag_outline"], None)
+            ph = sprite_photo(("tag", tw_, th_, T["tag_bg"], T["tag_outline"]), im, int(round(tw_ * s_)), int(round(th_ * s_)))
+            c.create_image(3, PET_H - 28, image=ph, anchor="nw")
+        except Exception:  # no Pillow: a plain rectangle
+            c.create_rectangle(3, PET_H - 28, PET_W - 3, PET_H - 2, fill=T["tag_bg"], outline=T["tag_outline"], width=1)
         bx = 3  # environment badges, top-left
         for b in self.data.get("badges", []):
             w = 7 + 6 * len(b)
@@ -800,7 +808,19 @@ class Pet:
         label = LABELS.get(st, st)
         if self.data.get("subagents"):
             label += f" +{self.data['subagents']}"
-        c.create_text(PET_W / 2, PET_H - 9, text=label, fill=dark if T["label_dark"] else col, font=fnt(7, "bold"))
+        font = fnt(7, "bold")
+        x0 = int(PET_W / 2 - (6 + self._text_w(font, label)) / 2)
+        c.create_rectangle(x0, PET_H - 10, x0 + 3, PET_H - 7, fill=col, outline="")  # the state light
+        c.create_text(x0 + 6, PET_H - 9, text=label, anchor="w", fill=dark if T["label_dark"] else col, font=font)
+
+    @staticmethod
+    def _text_w(font, text):
+        """Width of text in drawing units (real font metrics, so the label stays centred at every size)."""
+        key = ("font", font)
+        if key not in _IMG_CACHE:
+            import tkinter.font as tkfont
+            _IMG_CACHE[key] = tkfont.Font(family=font[0], size=font[1], weight=font[2] if len(font) > 2 else "normal")
+        return _IMG_CACHE[key].measure(text) / SCALE["v"]
 
     def _mole_head(self, cx, bc, k, st, ph):
         c = self.canvas
