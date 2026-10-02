@@ -290,28 +290,29 @@ def configured_wait(base):
 def answer_flow(base, path, aid):
     """After the request is recorded: give the user a window to answer from the pet, then print the decision.
     Prints nothing (normal prompt) if the pet isn't running, answering is switched off, or nobody clicks in time."""
-    record = read_json(path)
-    req = record.get("request") or {}
-    if not req or not pet_alive(base) or os.path.exists(os.path.join(base, "no-answers")):
-        return
     seconds = configured_wait(base)
-    if seconds <= 0:
-        return  # answering from the pet is switched off: observe only
-    key = safe_name(req.get("id") or record.get("id") or "request")
-    req["answerable"] = True
-    record["request"] = req
-    write_atomic(path, record)
-    decision = await_answer(base, key, seconds)
-    cur = read_json(path)
-    if (cur.get("request") or {}).get("id") == req.get("id"):  # still the same prompt: settle the record
-        if decision:
-            cur.update(state="working", message="", request={}, wait_agent="", changed=time.time(), updated=time.time())
-        else:
-            cur["request"]["answerable"] = False
-        write_atomic(path, cur)
+    if seconds <= 0 or not pet_alive(base) or os.path.exists(os.path.join(base, "no-answers")):
+        return  # observe only
+    with SessionLock(path):
+        record = read_json(path)
+        req = record.get("request") or {}
+        if not req:
+            return
+        key = safe_name(req.get("id") or record.get("id") or "request")
+        req["answerable"] = True
+        record["request"] = req
+        write_atomic(path, record)
+    decision = await_answer(base, key, seconds)  # no lock held while waiting
+    with SessionLock(path):
+        cur = read_json(path)
+        if (cur.get("request") or {}).get("id") == req.get("id"):  # still the same prompt: settle the record
+            if decision:
+                cur.update(state="working", message="", request={}, wait_agent="", changed=time.time(), updated=time.time())
+            else:
+                cur["request"]["answerable"] = False
+            write_atomic(path, cur)
     if decision:
         write_stdout(decision_output(decision))
-
 
 def request_from_transcript(path, max_bytes=300000):
     """Fallback for sessions that only send a Notification (the VS Code extension): the tool call that has no result
@@ -396,33 +397,51 @@ def read_json(path):
 
 
 def write_atomic(path, record):
-    tmp = path + ".tmp"
+    tmp = "%s.%d.tmp" % (path, os.getpid())  # unique per process: two hooks writing at once must not share a file
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(record, f)
     os.replace(tmp, path)
 
 
-def main():
-    try:
-        data = json.loads(read_stdin() or "{}")
-    except Exception:
-        data = {}
+class SessionLock:
+    """Serialises read-modify-write of one session file. Claude Code starts several hooks for one moment (for example
+    Notification and PermissionRequest) as separate processes; without this the last writer wins with stale data."""
 
-    event = data.get("hook_event_name") or (sys.argv[1] if len(sys.argv) > 1 else "")
+    def __init__(self, path):
+        self.path = path + ".lock"
+        self.held = False
+
+    def __enter__(self):
+        deadline = time.time() + 2.0
+        while True:
+            try:
+                os.close(os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                self.held = True
+                return self
+            except FileExistsError:
+                try:
+                    if time.time() - os.path.getmtime(self.path) > 3:  # left behind by a crashed hook
+                        os.remove(self.path)
+                        continue
+                except OSError:
+                    pass
+                if time.time() > deadline:
+                    return self  # never block Claude Code: carry on unlocked
+                time.sleep(0.01)
+            except OSError:
+                return self
+
+    def __exit__(self, *exc):
+        if self.held:
+            try:
+                os.remove(self.path)
+            except OSError:
+                pass
+
+
+def _update_session(path, target, event, data, wsl):
+    """Apply one hook event to the session file (call under SessionLock). Returns the agent id, if any."""
     session_id = data.get("session_id") or "unknown"
-    wsl = is_wsl()
-    target = sessions_dir(wsl)
-    os.makedirs(target, exist_ok=True)
-    path = os.path.join(target, safe_name(session_id) + ".json")
-
-    if event == "SessionEnd":
-        debug_log(os.path.dirname(target), event, data, read_json(path).get("state"), "(removed)")
-        try:
-            os.remove(path)
-        except OSError:
-            pass
-        return
-
     prev = read_json(path)
     state = prev.get("state", "idle")
     message = prev.get("message", "")
@@ -456,8 +475,8 @@ def main():
         if not (is_idle_reminder and prev.get("state") in ("done", "idle")):
             state, message = "needs_input", msg
             wait_agent = aid
-            if request and (request.get("source") == "transcript" or time.time() - request.get("t", 0) > 5):
-                request = {}  # a request from an earlier prompt, not this one (transcript-derived ones are recomputed)
+            if request and request.get("source") == "transcript":
+                request = {}  # a transcript guess is recomputed; a real PermissionRequest one is kept whatever its age
             if not request and (ntype == "permission_prompt" or "permission" in msg.lower()):
                 request = request_from_transcript(data.get("transcript_path"))  # sessions without PermissionRequest
     elif event == "Stop":
@@ -504,8 +523,34 @@ def main():
     }
     debug_log(os.path.dirname(target), event, data, prev.get("state"), state)
     write_atomic(path, record)
+    return aid
+
+
+def main():
+    try:
+        data = json.loads(read_stdin() or "{}")
+    except Exception:
+        data = {}
+
+    event = data.get("hook_event_name") or (sys.argv[1] if len(sys.argv) > 1 else "")
+    session_id = data.get("session_id") or "unknown"
+    wsl = is_wsl()
+    target = sessions_dir(wsl)
+    os.makedirs(target, exist_ok=True)
+    path = os.path.join(target, safe_name(session_id) + ".json")
+
+    if event == "SessionEnd":
+        debug_log(os.path.dirname(target), event, data, read_json(path).get("state"), "(removed)")
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return
+
+    with SessionLock(path):
+        aid = _update_session(path, target, event, data, wsl)
     if event == "PermissionRequest":
-        answer_flow(os.path.dirname(target), path, aid)
+        answer_flow(os.path.dirname(target), path, aid or "")
 
 
 if __name__ == "__main__":

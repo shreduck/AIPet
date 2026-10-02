@@ -570,7 +570,7 @@ def load_sprites(directory=None):
         with open(os.path.join(d, "sprites.json"), encoding="utf-8") as f:
             meta = json.load(f)
         img = {"robot": Image.open(os.path.join(d, meta["robot"]["file"])).convert("RGBA")}
-        img["shadow"] = Image.open(os.path.join(d, "shadow.png")).convert("RGBA")
+        img["shadow"] = _solid_shadow(Image.open(os.path.join(d, "shadow.png")).convert("RGBA"))
         res = {"meta": meta, "img": img, "faces": {}}
     except Exception as e:
         print(f"[claude-pet] robot sprites unavailable ({e}); using the mole", file=sys.stderr)
@@ -652,6 +652,79 @@ def sprite_photo(key, image, w, h):
 
 def mono(size):
     return ("Consolas", max(4, int(round(size * SCALE["v"]))))
+
+
+# ---- pixel-art speech bubbles and glyphs, drawn at sprite resolution so they match the robot
+BUBBLE_TAIL = 4  # rows the tail adds below the box
+_BUBBLE_INSET = (3, 1, 1)  # stair-stepped round corners: pixels cut from the first three rows (and last three)
+_IMG_CACHE = {}
+MARKS = {  # drawn at sprite resolution (no enlargement), about 45% of the answer bubble's height
+    "ok": ["..........##", ".........###", "........###.", ".##....###..", ".###..###...", "..######....", "...####.....",
+           "....##......", ".....#......"],
+    "no": ["##.....##", "###...###", ".###.###.", "..#####..", "...###...", "..#####..", ".###.###.", "###...###", "##.....##"],
+    "?": ["..####.", ".##..##", ".....##", "....##.", "...##..", "...##..", ".......", "...##..", "...##.."],
+}
+MARK_COLORS = {"ok": "#22a447", "no": "#e0301e", "?": "#111827"}
+
+
+def bubble_image(w, h, fill, outline, tail_cx):
+    """A w x h speech bubble plus a tail, as one shape: 1 px outline, round corners, and the tail grows out of the box
+    (no seam), all at sprite resolution so it scales with the robot."""
+    key = ("bubble", w, h, fill, outline, tail_cx)
+    if key in _IMG_CACHE:
+        return _IMG_CACHE[key]
+    from PIL import Image
+    H = h + BUBBLE_TAIL
+    mask = [[False] * w for _ in range(H)]
+    for y in range(h):
+        inset = _BUBBLE_INSET[y] if y < len(_BUBBLE_INSET) else (
+            _BUBBLE_INSET[h - 1 - y] if h - 1 - y < len(_BUBBLE_INSET) else 0)
+        for x in range(inset, w - inset):
+            mask[y][x] = True
+    for r in range(BUBBLE_TAIL):  # 7, 5, 3, 1 px wide
+        for x in range(tail_cx - (3 - r), tail_cx + (3 - r) + 1):
+            if 0 <= x < w:
+                mask[h + r][x] = True
+    fill_c, out_c = _rgb(fill) + (255,), _rgb(outline) + (255,)
+    im = Image.new("RGBA", (w, H), (0, 0, 0, 0))
+    px = im.load()
+    for y in range(H):
+        for x in range(w):
+            if mask[y][x]:
+                edge = any(not (0 <= nx < w and 0 <= ny < H and mask[ny][nx])
+                           for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)))
+                px[x, y] = out_c if edge else fill_c
+    _IMG_CACHE[key] = im
+    return im
+
+
+def mark_image(kind, k=1):
+    """A check / cross / question-mark glyph in pixel art, enlarged k times (nearest neighbour)."""
+    key = ("mark", kind, k)
+    if key not in _IMG_CACHE:
+        from PIL import Image
+        rows = MARKS[kind]
+        im = Image.new("RGBA", (len(rows[0]), len(rows)), (0, 0, 0, 0))
+        px = im.load()
+        colour = _rgb(MARK_COLORS[kind]) + (255,)
+        for y, row in enumerate(rows):
+            for x, ch in enumerate(row):
+                if ch == "#":
+                    px[x, y] = colour
+        _IMG_CACHE[key] = im.resize((im.width * k, im.height * k), Image.NEAREST) if k > 1 else im
+    return _IMG_CACHE[key]
+
+
+def _solid_shadow(im):
+    """The pet window is colour-keyed transparent, so semi-transparent pixels would blend with the key colour (a magenta
+    halo). Turn the soft shadow into two solid tones."""
+    out = im.copy()
+    px = out.load()
+    for y in range(out.height):
+        for x in range(out.width):
+            a = px[x, y][3]
+            px[x, y] = (0, 0, 0, 0) if a < 40 else ((150, 150, 166, 255) if a < 100 else (118, 118, 136, 255))
+    return out
 
 
 class Pet:
@@ -807,11 +880,19 @@ class Pet:
                     c.create_line(zx - s, zy - s, zx + s, zy - s, zx - s, zy + s, zx + s, zy + s, width=2, fill="#9ca3af")
         self._draw_tag()
 
+    @staticmethod
+    def _char_w(font):
+        key = ("charw", font)
+        if key not in _IMG_CACHE:
+            import tkinter.font as tkfont
+            _IMG_CACHE[key] = tkfont.Font(family=font[0], size=font[1]).measure("0") / SCALE["v"]
+        return _IMG_CACHE[key]
+
     def _terminal_rows(self, rows=3, cols=13):
         """Scrolling hacker text for the working bubble; each row advances at its own speed."""
         tx = self.__dict__.setdefault("_tx", {"rows": None, "t": 0.0})
         now = time.time()
-        if tx["rows"] is None:
+        if tx["rows"] is None or len(tx["rows"][0]) != cols:
             tx["rows"] = ["".join(random.choice(TERMINAL_CHARS) for _ in range(cols)) for _ in range(rows)]
         if now - tx["t"] > 0.09:
             tx["t"] = now
@@ -821,11 +902,19 @@ class Pet:
         return tx["rows"]
 
     def _bubble(self, x1, y1, x2, y2, tail_x, fill, outline, tags=()):
-        c = self.canvas
-        c.create_polygon(tail_x - 6, y2 - 1, tail_x + 6, y2 - 1, tail_x, y2 + 7, fill=fill, outline=outline, width=2,
-                         tags=tags)
-        c.create_rectangle(x1, y1, x2, y2, fill=fill, outline=outline, width=2, tags=tags)
-        c.create_rectangle(tail_x - 5, y2 - 1, tail_x + 5, y2 + 1, fill=fill, outline=fill, tags=tags)
+        """Pixel-art speech bubble (see bubble_image) with its top-left at (x1, y1); the tail points down at tail_x."""
+        w, h = max(14, int(round(x2 - x1))), max(9, int(round(y2 - y1)))
+        tcx = max(5, min(w - 6, int(round(tail_x - x1))))
+        im = bubble_image(w, h, fill, outline, tcx)
+        s = SCALE["v"]
+        ph = sprite_photo(("bubble", w, h, fill, outline, tcx), im, int(round(w * s)), int(round(im.height * s)))
+        self.canvas.create_image(int(round(x1)), int(round(y1)), image=ph, anchor="nw", tags=tags)
+
+    def _mark(self, kind, cx, cy, k=1, tags=()):
+        im = mark_image(kind, k)
+        s = SCALE["v"]
+        ph = sprite_photo(("mark", kind, k), im, int(round(im.width * s)), int(round(im.height * s)))
+        self.canvas.create_image(int(round(cx)), int(round(cy)), image=ph, anchor="center", tags=tags)
 
     def _draw_robot(self, t):
         spr = load_sprites()
@@ -878,34 +967,23 @@ class Pet:
             tail = cx0 - 6  # off the antenna
             if st == "working":  # hacker-screen bubble
                 self._bubble(bx1, by1, bx2, by2, tail, "#0b1220", "#34d399")
-                rows = self._terminal_rows()
+                font = mono(5)
+                cw = self._char_w(font)  # real width of one character, in drawing units
+                rows = self._terminal_rows(cols=max(6, int((bx2 - bx1 - 12) / cw)))
                 for i, row in enumerate(rows):
                     y = by1 + 6 + i * (by2 - by1 - 8) / 2.6
-                    c.create_text(bx1 + 5, y, text=row[:-1], anchor="w", fill="#22c55e", font=mono(5))
-                    c.create_text(bx1 + 5 + 3.9 * (len(row) - 1) * (1 if SCALE["v"] else 1), y, text=row[-1], anchor="w",
-                                  fill="#d1fae5", font=mono(5))
+                    c.create_text(bx1 + 5, y, text=row[:-1], anchor="w", fill="#22c55e", font=font)
+                    c.create_text(bx1 + 5 + cw * (len(row) - 1), y, text=row[-1], anchor="w", fill="#d1fae5", font=font)
             elif st in ("done", "error"):
-                self._bubble(bx1 + 16, by1, bx2 - 14, by2, tail, "#fafafa", "#111827")
-                y, grow = (by1 + by2) / 2, 1 + 0.08 * math.sin(t * 4)
-                if st == "done":
-                    c.create_line(cx0 - 7 * grow, y, cx0 - 2, y + 5 * grow, cx0 + 8 * grow, y - 6 * grow, fill="#22a447", width=3)
-                else:
-                    r = 6 * grow
-                    c.create_line(cx0 - r, y - r, cx0 + r, y + r, fill="#e0301e", width=3)
-                    c.create_line(cx0 - r, y + r, cx0 + r, y - r, fill="#e0301e", width=3)
-            elif st == "needs_input":  # the answer bubble: check / cross / question mark
+                top = by2 - 19  # a small bubble, centred on its tail
+                self._bubble(cx0 - 22, top, cx0 + 10, by2, tail, "#fafafa", "#111827")
+                bob = 1 if int(t * 3) % 2 else 0  # a one-pixel bob
+                self._mark("ok" if st == "done" else "no", cx0 - 6, (top + by2) / 2 - bob)
+            elif st == "needs_input":  # the answer bubble: check / cross / question mark (click it for the popup)
                 self._bubble(bx1 + 4, by1, bx2 - 6, by2, tail, "#fafafa", "#111827", tags=("ans",))
                 y, pulse = (by1 + by2) / 2, int(t * 2) % 3
                 for i, (x, kind) in enumerate(((cx0 - 16, "ok"), (cx0 - 1, "no"), (cx0 + 14, "?"))):
-                    big = 1.25 if i == pulse else 1.0
-                    if kind == "ok":
-                        c.create_line(x - 5 * big, y, x - 1, y + 4 * big, x + 5 * big, y - 5 * big, fill="#22a447", width=3, tags=("ans",))
-                    elif kind == "no":
-                        r = 4.5 * big
-                        c.create_line(x - r, y - r, x + r, y + r, fill="#e0301e", width=3, tags=("ans",))
-                        c.create_line(x - r, y + r, x + r, y - r, fill="#e0301e", width=3, tags=("ans",))
-                    else:
-                        c.create_text(x, y, text="?", fill="#111827", font=fnt(12, "bold"), tags=("ans",))
+                    self._mark(kind, x, y - (1 if i == pulse else 0), tags=("ans",))
             else:  # idle: sleeping, rising z's
                 for i in range(3):
                     ph = (t * 0.5 + i / 3) % 1
