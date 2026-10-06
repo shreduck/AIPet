@@ -90,8 +90,8 @@ TRANSPARENT = "systemTransparent" if IS_MAC else "#ff00fe"
 COLORS = {"working": "#5b8def", "needs_input": "#f59e0b", "done": "#22c55e", "error": "#ef4444", "idle": "#9ca3af"}
 DARK = {"working": "#2f5bb7", "needs_input": "#b45309", "done": "#15803d", "error": "#991b1b", "idle": "#4b5563"}
 LABELS = {"working": "working…", "needs_input": "needs you!", "done": "done", "error": "error", "idle": "idle"}
-SOURCE_NAMES = {"CC": "Claude Code", "WB": "Workbench"}
-BADGE_COLORS = {"CC": "#6b7280", "WSL": "#7c3aed", "VS": "#007acc", "WB": "#0f766e"}
+SOURCE_NAMES = {"CC": "Claude Code", "CW": "Cowork", "WB": "Workbench"}
+BADGE_COLORS = {"CC": "#6b7280", "CW": "#c2410c", "WSL": "#7c3aed", "VS": "#007acc", "WB": "#0f766e"}
 STATE_ORDER = ("needs_input", "error", "done", "working")
 PET_W, PET_H = 92, 122
 INK = "#1f2937"
@@ -286,10 +286,11 @@ def read_claude_code_sessions(cfg):
             continue
         seen_ids.add(sid)
         env, ide = rec.get("env", ""), rec.get("ide", "")
-        badges = ["WSL"] if env == "wsl" else []
+        cowork = rec.get("app") == "cowork"
+        badges = ["CW"] if cowork else (["WSL"] if env == "wsl" else [])
         if ide == "vscode":
             badges.append("VS")
-        where = ["Claude Code"]
+        where = ["Claude app · Cowork" if cowork else "Claude Code"]
         if env == "wsl":
             where.append(f"WSL ({rec['distro']})" if rec.get("distro") else "WSL")
         if ide == "vscode":

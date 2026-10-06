@@ -91,6 +91,49 @@ def detect_ide():
     return ""
 
 
+def is_cowork():
+    """Cowork (the Claude desktop app's agent mode) runs Claude Code with these set; its cwd is a private
+    per-session folder ("host-cwd"), so it says nothing about what the user is working on."""
+    e = os.environ
+    return (e.get("CLAUDE_CODE_IS_COWORK", "").lower() in ("1", "true", "yes")
+            or e.get("CLAUDE_CODE_ENTRYPOINT", "").lower() == "local-agent")
+
+
+def _strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            yield from _strings(k)
+            yield from _strings(v)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            yield from _strings(v)
+
+
+def cowork_folders():
+    """Folders the user connected to the Cowork session (host paths), in order. Read from
+    CLAUDE_CODE_WORKSPACE_HOST_PATHS, accepting JSON (list or mapping) or a separator-delimited list, and keeping
+    only real folders outside the app's own session storage (outputs, uploads, skills)."""
+    raw = os.environ.get("CLAUDE_CODE_WORKSPACE_HOST_PATHS", "").strip()
+    if not raw:
+        return []
+    try:
+        cands = list(_strings(json.loads(raw)))
+    except ValueError:
+        cands = [p for chunk in raw.splitlines() for p in chunk.split(os.pathsep)]
+    out, seen = [], set()
+    for p in cands:
+        p = p.strip().strip('"')
+        if not p or "local-agent-mode-sessions" in p.replace("\\", "/") or not os.path.isabs(p):
+            continue
+        k = os.path.normcase(os.path.normpath(p))
+        if k not in seen and os.path.isdir(p):
+            seen.add(k)
+            out.append(os.path.normpath(p))
+    return out
+
+
 def is_home_or_root(path):
     """True for the user's home folder or a filesystem root, where the folder name makes a useless title."""
     norm = os.path.normcase(os.path.normpath(path))
@@ -260,6 +303,7 @@ def debug_log(base_dir, event, data, prev_state, new_state):
                           sorted(data[k][0].keys()) if isinstance(data[k], list) and data[k] and isinstance(data[k][0], dict) else None]
                       for k in ("background_tasks", "session_crons", "agents", "subagents") if k in data},
             "env": {"entry": e.get("CLAUDE_CODE_ENTRYPOINT", ""), "term": e.get("TERM_PROGRAM", ""),
+                    "cowork": is_cowork(), "cowork_folders": len(cowork_folders()),  # a count, not the paths
                     "vscode_vars": [k for k in ("VSCODE_PID", "VSCODE_IPC_HOOK_CLI", "VSCODE_GIT_IPC_HANDLE") if e.get(k)]},
         }
         path = os.path.join(base_dir, "events.log")
@@ -587,16 +631,23 @@ def _update_session(path, target, event, data, wsl):
     hwnd, host = prev.get("hwnd"), prev.get("host", "")
     if os.name == "nt" and not wsl and not (hwnd and window_alive(hwnd)):
         hwnd, host = find_host_window()  # for click-to-focus; re-found if the window was closed
+    cowork = is_cowork() or prev.get("app") == "cowork"
+    folders = cowork_folders() if cowork else []
+    if folders:  # name a Cowork session after the folder it works in, not its private "host-cwd"
+        cwd = folders[0]
     title = os.path.basename(cwd.rstrip("\\/")) or cwd
+    if len(folders) > 1:
+        title += f" +{len(folders) - 1}"
     pid = prev.get("pid") or find_claude_pid()  # looked up once per session
     topic = prev.get("topic", "")
-    if is_home_or_root(cwd):  # no project folder to name it after: use the first words of the first prompt
+    if is_home_or_root(cwd) or (cowork and not folders):  # no folder to name it after: use the first prompt
         if not topic and event == "UserPromptSubmit":
             topic = " ".join(str(data.get("prompt") or "").split())[:40]
-        title = topic or "~"
+        title = topic or ("Cowork" if cowork else "~")
     record = {
         "id": session_id,
         "source": "claude-code",
+        "app": "cowork" if cowork else "",
         "env": "wsl" if wsl else ("windows" if os.name == "nt" else sys.platform),
         "distro": os.environ.get("WSL_DISTRO_NAME", "") if wsl else "",
         "ide": detect_ide() or prev.get("ide", ""),
