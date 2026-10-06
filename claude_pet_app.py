@@ -208,15 +208,21 @@ class TrayApp:
         self._icon_key = None
 
         self.pet.on_alert = self.on_alert
+        self.cowork_win = None
         m = self.pet.menu
+        hooks_menu = tk.Menu(m, tearoff=0)
+        hooks_menu.configure(postcommand=lambda: self._fill_hooks_menu(hooks_menu))
         if pystray:
+            q = m.index("Quit")
+            m.insert_cascade(q, label="Claude Code hooks", menu=hooks_menu)
+            m.insert_separator(q + 1)
             m.insert_command(m.index("Quit"), label="Hide to tray", command=self.hide)
         else:  # no tray icon (macOS): the tray menu's essentials live in the pet's right-click menu
             self.notify_var = tk.BooleanVar(value=self.c_notify)
             self.autostart_var = tk.BooleanVar(value=self.c_autostart)
             q = m.index("Quit")
             m.insert_separator(q)
-            m.insert_command(q + 1, label="Claude Code hooks / setup...", command=self.show_setup)
+            m.insert_cascade(q + 1, label="Claude Code hooks", menu=hooks_menu)
             m.insert_checkbutton(q + 2, label="Notifications", variable=self.notify_var,
                                  command=lambda: self._set_notify(self.notify_var.get()))
             self.debug_var = tk.BooleanVar(value=os.path.exists(DEBUG_FLAG))
@@ -275,6 +281,8 @@ class TrayApp:
             print(f"[claude-pet] backup migration failed: {e}", file=sys.stderr)
         try:
             hi.deploy_files(only_if_deployed=True)  # refresh an existing install only; never create one
+            if os.path.isdir(hi.INSTALL_DIR) and (os.name == "nt" or IS_MAC):
+                hi.build_plugin()  # keep the Cowork plugin zip next to the exe current
         except Exception:
             pass
         self.refresh_targets()
@@ -300,9 +308,15 @@ class TrayApp:
         except Exception as e:
             self.ui(lambda: self.info(f"Couldn't detect Claude Code installs:\n{e}", error=True))
             return
-        self.ui(lambda: self._build_setup(targets, hidden))
+        zip_path = None
+        if os.name == "nt" or IS_MAC:
+            try:
+                zip_path = hi.build_plugin()["zip"]  # the installer always leaves the Cowork zip ready
+            except Exception:
+                pass
+        self.ui(lambda: self._build_setup(targets, hidden, zip_path))
 
-    def _build_setup(self, targets, hidden):
+    def _build_setup(self, targets, hidden, zip_path=None):
         if self.setup_win is not None:
             return
         win = self.setup_win = tk.Toplevel(self.root)
@@ -368,6 +382,17 @@ class TrayApp:
                       "the tray menu: Claude Code hooks."
                  ).pack(anchor="w", padx=16, pady=(0, 8))
 
+        cw = tk.LabelFrame(win, text=" Claude desktop app - Cowork ", font=("Segoe UI", 9, "bold"))
+        cw.pack(fill="x", padx=16, pady=(0, 10))
+        tk.Label(cw, justify="left", wraplength=410, font=("Segoe UI", 8),
+                 text="Cowork ignores settings.json, so it needs the hooks as a plugin, which only the Claude app "
+                      "can install. Claude Pet built it for you:\n" + (zip_path or hi.COWORK_ZIP + " (not built yet)") + "\n"
+                      "1. Claude app > Customize > Plugins > upload that zip, and keep its hooks on.\n"
+                      "2. Restart the Claude app and start a new Cowork session."
+                 ).pack(anchor="w", padx=8, pady=(4, 2))
+        tk.Button(cw, text="Build the zip and show full instructions (app + CLI)...", command=self.show_cowork
+                  ).pack(anchor="w", padx=8, pady=(0, 6))
+
         def install():
             keys = [k for k, v in picks.items() if v.get()]
             if not keys:
@@ -421,6 +446,136 @@ class TrayApp:
             row.pack(anchor="w", pady=(4, 0))
             tk.Button(row, text="How to get Python 3...", command=self.python_help).pack(side="left")
             tk.Button(row, text="Re-check", command=self._recheck_setup).pack(side="left", padx=6)
+
+    # ---- Cowork / CLI plugin
+    def show_cowork(self):
+        if getattr(self, "cowork_win", None) is not None:
+            try:
+                self.cowork_win.lift()
+                return
+            except tk.TclError:
+                self.cowork_win = None
+        threading.Thread(target=self._cowork_job, daemon=True).start()
+
+    def _cowork_job(self):
+        try:
+            res = hi.build_plugin()
+        except Exception as e:
+            err = f"Couldn't build the Cowork plugin:\n{e}"
+            self.ui(lambda: self.info(err, error=True))
+            return
+        self.ui(lambda: self._build_cowork(res))
+
+    def _build_cowork(self, res):
+        if getattr(self, "cowork_win", None) is not None:
+            return
+        win = self.cowork_win = tk.Toplevel(self.root)
+        win.title(f"{APP_NAME} - Cowork and CLI plugin")
+        win.attributes("-topmost", True)
+        win.resizable(False, False)
+        grey, wrap = "#6b7280", 470
+
+        def close():
+            self.cowork_win = None
+            win.destroy()
+
+        def copy(text):
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+
+        def h(text):
+            tk.Label(win, text=text, font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=16, pady=(12, 2))
+
+        def p(text, **kw):
+            tk.Label(win, text=text, justify="left", wraplength=wrap, font=("Segoe UI", 9), **kw
+                     ).pack(anchor="w", padx=16)
+
+        def path_row(path, open_cmd):
+            row = tk.Frame(win)
+            row.pack(fill="x", padx=16, pady=(4, 2))
+            e = tk.Entry(row, width=58, font=("Consolas", 9))
+            e.insert(0, path)
+            e.configure(state="readonly")
+            e.pack(side="left", fill="x", expand=True)
+            tk.Button(row, text="Copy", command=lambda: copy(path)).pack(side="left", padx=(6, 0))
+            tk.Button(row, text="Open folder", command=open_cmd).pack(side="left", padx=(6, 0))
+
+        def reveal(path):
+            if os.name == "nt":
+                subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+            else:
+                open_path(os.path.dirname(path))
+
+        h("Claude desktop app (Cowork)")
+        p("Cowork runs its own Claude Code that never reads settings.json, so the pet's hooks reach it as a plugin. "
+          "Only the Claude app can install plugins, so ClaudePet.exe can't do this step for you. Your plugin zip:",
+          fg=grey)
+        path_row(res["zip"], lambda: reveal(res["zip"]))
+        p("1. Open the Claude app > Customize > Plugins.\n"
+          "2. Upload a plugin and pick " + hi.COWORK_ZIP + ". Make sure the plugin and its hooks are enabled.\n"
+          "3. Restart the Claude app, then start a new Cowork session - it appears on the pet like any other.\n"
+          "To remove it: Customize > Plugins > " + hi.PLUGIN_NAME + " > Uninstall.")
+
+        h("Claude Code CLI (optional)")
+        p("The terminal, VS Code and the app's Code tab already work through settings.json (Claude Code hooks > "
+          "Install). Use the plugin there only instead of those hooks, never both, or every event reaches the pet "
+          "twice. Run in a terminal:", fg=grey)
+        cmds = "\n".join(hi.cli_plugin_commands(res["market"]))
+        box = tk.Text(win, height=2, width=64, font=("Consolas", 9), relief="solid", borderwidth=1)
+        box.insert("1.0", cmds)
+        box.configure(state="disabled")
+        box.pack(anchor="w", padx=16, pady=(4, 2))
+        row = tk.Frame(win)
+        row.pack(fill="x", padx=16)
+        tk.Button(row, text="Copy commands", command=lambda: copy(cmds)).pack(side="left")
+        tk.Button(row, text="Open folder", command=lambda: open_path(res["market"])).pack(side="left", padx=(6, 0))
+        p(f"Inside Claude Code the same works with /plugin marketplace add and /plugin install. "
+          f"To remove it: claude plugin uninstall {hi.PLUGIN_NAME}@{hi.PLUGIN_MARKET}", fg=grey)
+
+        p("\nThe plugin calls the hook in " + hi.INSTALL_DIR + ", which Claude Pet keeps up to date. "
+          "Rebuild and re-upload only if that folder moves.", fg=grey)
+        tk.Button(win, text="Close", width=12, command=close, default="active").pack(anchor="e", padx=16, pady=12)
+        win.protocol("WM_DELETE_WINDOW", close)
+        win.update_idletasks()
+        win.geometry(f"+{max(0, (win.winfo_screenwidth() - win.winfo_reqwidth()) // 2)}"
+                     f"+{max(0, (win.winfo_screenheight() - win.winfo_reqheight()) // 3)}")
+
+    # ---- pet right-click: the same "Claude Code hooks" menu as the tray
+    def _fill_hooks_menu(self, menu):
+        menu.delete(0, "end")
+
+        def target(name, key):
+            st = self.status.get(key, "checking…")
+            sub = tk.Menu(menu, tearoff=0)
+            sub.add_command(label="Install / update hooks", command=lambda: self.confirm(key, True))
+            sub.add_command(label="Remove hooks", command=lambda: self.confirm(key, False))
+            sub.add_separator()
+            rest = tk.Menu(sub, tearoff=0)
+            backups = hi.list_backups(key)[:15]
+            if not backups:
+                rest.add_command(label="No backups yet", state="disabled")
+            for b in backups:
+                note = "no settings.json" if b["absent"] else (
+                    ("with pet hooks" if b["pet_hooks"] else "no pet hooks") + ("" if b["valid_json"] else ", invalid JSON"))
+                rest.add_command(label=f"{b['when']} - {b['reason']} ({note}){'  [original]' if b['original'] else ''}",
+                                 command=lambda b=b: self.confirm_restore(key, b))
+            sub.add_cascade(label="Restore backup", menu=rest)
+            sub.add_command(label="Back up now", command=lambda: self.start_job(key, "backup"))
+            sub.add_command(label="Open backups folder", command=lambda: self.open_backups(key))
+            menu.add_cascade(label=f"{'✓ ' if st.startswith('installed') else ''}{name}  ({st})", menu=sub)
+
+        target("This Mac" if IS_MAC else "This PC (Windows)", hi.LOCAL)
+        menu.add_separator()
+        if self.distros:
+            for n, _ in self.distros:
+                target(f"WSL: {n}", "wsl:" + n)
+        else:
+            menu.add_command(label="No WSL distros found" if self.probed else "Detecting WSL distros…", state="disabled")
+        menu.add_separator()
+        menu.add_command(label="Cowork (Claude desktop app)...", command=self.show_cowork)
+        menu.add_command(label="Run setup again...", command=self.show_setup)
+        menu.add_command(label="Re-detect / refresh status",
+                         command=lambda: threading.Thread(target=self.refresh_targets, daemon=True).start())
 
     def _recheck_setup(self):
         self._close_setup()
@@ -576,6 +731,7 @@ class TrayApp:
             else:
                 items.append(I("No WSL distros found" if self.probed else "Detecting WSL distros…", None, enabled=False))
             items += [M.SEPARATOR,
+                      I("Cowork (Claude desktop app)...", act(self.show_cowork)),
                       I("Run setup again...", act(self.show_setup)),
                       I("Re-detect / refresh status", lambda: threading.Thread(target=self.refresh_targets, daemon=True).start())]
             return items

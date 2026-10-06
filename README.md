@@ -28,6 +28,8 @@ Run `ClaudePet.exe`. The pet appears bottom-right and a tray icon appears near t
   - **This PC (Windows)**: installs into `%USERPROFILE%\.claude\settings.json`. Covers terminal and VS Code sessions on Windows.
   - **WSL: \<distro\>**: one entry per auto-detected distro. Installs into that distro's `~/.claude/settings.json` and covers terminal and VS Code Remote-WSL sessions there. Stopped distros aren't booted just to show their status. They only start when you install or remove hooks.
   - Each target shows its status (✓ installed, not installed, needs python3, …) and offers *Install / update* and *Remove*.
+  - **Cowork (Claude desktop app)...**: builds the Cowork plugin and shows how to install it (see below).
+  - The pet's right-click menu has the same *Claude Code hooks* submenu.
 - **Mute sounds**, **Start with Windows**, **Workbench status**, **Open config folder**, **Quit**.
 
 What hook install does:
@@ -51,6 +53,22 @@ Each target's submenu also has **Restore backup**, **Back up now** and **Open ba
 Backups are plain copies of your `settings.json`. If you keep secrets in it (e.g. under `env`), the copies contain them too. They stay in your own user profile.
 
 **Pet:** hover for details, click to acknowledge a pet that needs input (or dismiss a done one), drag to move. Right-click opens the menu, including *Open in VS Code*.
+
+## Cowork (Claude desktop app)
+Cowork runs its own Claude Code with a private config folder, so it never reads `settings.json` and the hooks above don't reach it. It does run plugin hooks, on Windows itself (not in its Linux sandbox), so Claude Pet ships its hooks as a plugin. Only the Claude app can install plugins, so this step is manual:
+
+1. The setup window and *Claude Code hooks > Cowork (Claude desktop app)...* write `claude-pet-cowork-plugin.zip` next to `ClaudePet.exe` (or to `~\.claude-pet` if that folder is read-only). The zip is refreshed at every start once hooks are installed.
+2. In the Claude app: **Customize > Plugins > upload** the zip, and keep the plugin's hooks enabled.
+3. Restart the Claude app and start a new Cowork session.
+
+The plugin (`pet-hooks`) calls the same hook as `settings.json` (`~\.claude-pet\bin`), so updating Claude Pet updates it too. Remove it from Customize > Plugins.
+
+**Claude Code CLI:** the same window shows how to install the plugin from a local marketplace in `~\.claude-pet\plugin-marketplace`:
+```
+claude plugin marketplace add "%USERPROFILE%\.claude-pet\plugin-marketplace"
+claude plugin install pet-hooks@desktop-pet-local
+```
+Use it *instead of* the settings.json hooks, never both, or every event reaches the pet twice.
 
 ## WSL notes
 - The WSL hook is a Python script, so the distro needs `python3`. Ubuntu has it by default. Otherwise the menu shows *needs python3*; install it in the distro (e.g. `sudo apt install python3`).
