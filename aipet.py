@@ -987,12 +987,38 @@ class Pet:
         name = self.data.get("title", "")
         font = fnt(5.4)
         room = PET_W - 14  # inside the tag's rounded border
-        if self._text_w(font, name) > room:  # cut to the real width, not a character count
+        everyone = self.data.get("everyone") or []
+        scrolling = False
+        if len(everyone) > 1 and st != "needs_input":
+            name, scrolling = self._title_banner([m.get("title") or "session" for m in everyone], font, room)
+        elif self._text_w(font, name) > room:  # cut to the real width, not a character count
             while name and self._text_w(font, name + "\u2026") > room:
                 name = name[:-1]
             name = name.rstrip() + "\u2026"
         # just the name: the pet itself already shows the state (face, lights, bubble, hopping)
-        c.create_text(PET_W / 2, PET_H - 2 - TAG_H / 2 + 1.5, text=name, fill=T["tag_fg"], font=font)  # a bit low: badges overlap the top
+        y = PET_H - 2 - TAG_H / 2 + 1.5  # a bit low: badges overlap the top
+        if scrolling:  # pinned left, so the text moves smoothly instead of re-centring on every step
+            c.create_text(7, y, text=name, anchor="w", fill=T["tag_fg"], font=font)
+        else:
+            c.create_text(PET_W / 2, y, text=name, fill=T["tag_fg"], font=font)
+
+    TITLE_SEP = "  \u25c6  "  # between titles in compact mode's scrolling name tag
+    BANNER_CPS = 5  # characters per second
+
+    def _title_banner(self, titles, font, room):
+        """Compact mode, nobody waiting: every session's title, separated by a diamond, scrolling through the name tag
+        like a banner (one character at a time; Tk canvases can't clip text). Shown whole if it all fits."""
+        whole = self.TITLE_SEP.join(titles)
+        if self._text_w(font, whole) <= room:
+            return whole, False
+        loop = whole + self.TITLE_SEP
+        i = int(time.time() * self.BANNER_CPS) % len(loop)
+        text, out = loop[i:] + loop, ""
+        for ch in text:
+            if self._text_w(font, out + ch) > room:
+                break
+            out += ch
+        return out, True
 
     def _draw_badges(self):
         """Where each session runs: one small pixel box per session ("Claude CLI", "Codex WSL VS"...), styled like the
