@@ -370,7 +370,19 @@ def build_request(data):
     if not detail and inp:
         detail = "\n".join(f"{k}: {str(v)[:200]}" for k, v in list(inp.items())[:6])
     return {"tool": str(data.get("tool_name") or ""), "description": str(inp.get("description") or "")[:300],
-            "detail": detail[:1500], "id": str(data.get("tool_use_id") or data.get("turn_id") or ""), "t": time.time()}
+            "detail": detail[:1500], "id": request_id(data), "t": time.time()}
+
+
+def request_id(data):
+    """An id that is unique per permission prompt. Claude Code's PermissionRequest payload carries no tool_use_id and
+    Codex only sends a turn_id (shared by every prompt in a turn), so without the unique part two prompts in a row had
+    the same id (""): settling the first one (after Allow once on the pet) then wiped the second one from the session,
+    and a waiting hook could no longer tell that its prompt had been answered in the app."""
+    base = str(data.get("tool_use_id") or "")
+    if base:
+        return base
+    turn = str(data.get("turn_id") or "")
+    return (turn + "-" if turn else "pr-") + "%d-%d" % (os.getpid(), time.time_ns())
 
 
 def pet_alive(base):
@@ -807,9 +819,15 @@ def _update_session(path, target, event, data, wsl, auto=None):
         req = build_request(data)
         auto_what = (req["tool"] + (": " + req["detail"].splitlines()[0] if req["detail"] else ""))[:120]
     elif event in WORKING_EVENTS:
-        keep = (aid and event != "UserPromptSubmit" and prev.get("state") == "needs_input"
-                and (not wait_agent or wait_agent != aid))
-        if not keep:  # otherwise another agent is working while this prompt is still waiting for the user
+        # A waiting prompt survives activity that doesn't answer it: another agent working (a subagent while the
+        # main agent asks, or the main agent while a subagent asks), or the same agent starting ANOTHER tool - Claude
+        # Code runs PreToolUse for parallel tool calls while the first one's permission prompt is still open (the
+        # prompt's own PreToolUse came before its PermissionRequest). Its answer shows up as PostToolUse / Stop.
+        other_agent = (aid or "") != (wait_agent or "")
+        parallel = (event == "PreToolUse" and not other_agent and bool(request)
+                    and request.get("source") != "transcript")
+        keep = event != "UserPromptSubmit" and prev.get("state") == "needs_input" and (other_agent or parallel)
+        if not keep:  # otherwise the prompt is still waiting for the user
             state, message = "working", ""
         if not aid:
             main_stopped = False  # the main agent itself is active again
