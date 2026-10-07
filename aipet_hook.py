@@ -715,20 +715,22 @@ class SessionLock:
 
 
 def conversation_title(path, max_bytes=400000):
-    """The conversation's title from its transcript: a name the user gave it (/rename), else the title Claude Code
-    generated (summary / ai-title lines). Reads only the end of the file."""
+    """(name the user gave it, name Claude Code gave it) from the transcript, "" where there is none: custom-title lines
+    (customTitle) and agent-name lines (agentName; older versions wrote summary / ai-title lines instead). Reads only the
+    end of the file; the caller keeps the first generated name, so a long transcript doesn't lose it."""
     try:
         if not path or not os.path.isfile(path):
-            return ""
+            return "", ""
         size = os.path.getsize(path)
         with open(path, "rb") as f:
             if size > max_bytes:
                 f.seek(size - max_bytes)
                 f.readline()
             lines = f.read().decode("utf-8", "replace").splitlines()
-        custom = generated = ""
+        custom = agent_name = generated = ""
         for line in lines:
-            if '"title' not in line.lower() and '"summary"' not in line:
+            low = line.lower()
+            if "title" not in low and "agent-name" not in low and '"summary"' not in line:  # cheap pre-filter
                 continue
             try:
                 obj = json.loads(line)
@@ -737,9 +739,41 @@ def conversation_title(path, max_bytes=400000):
             kind = str(obj.get("type", "")) if isinstance(obj, dict) else ""
             if kind == "custom-title":
                 custom = str(obj.get("customTitle") or obj.get("title") or "") or custom
+            elif kind == "agent-name":
+                agent_name = str(obj.get("agentName") or "") or agent_name
             elif kind in ("summary", "ai-title"):
                 generated = str(obj.get("aiTitle") or obj.get("title") or obj.get("summary") or "") or generated
-        return " ".join((custom or generated).split())[:60]
+        clean = lambda t: " ".join(t.split())[:60]  # noqa: E731
+        return clean(custom), clean(agent_name or generated)
+    except Exception:
+        return "", ""
+
+
+def codex_thread_name(session_id, max_bytes=2_000_000):
+    """Codex's name for a thread, as its UI shows it: the newest entry for this id in <CODEX_HOME>/session_index.jsonl
+    ({"id", "thread_name", "updated_at"}). The hook runs where Codex runs (Windows or WSL), so ~ is the right home."""
+    try:
+        home = os.environ.get("CODEX_HOME") or os.path.join(os.path.expanduser("~"), ".codex")
+        path = os.path.join(home, "session_index.jsonl")
+        if not session_id or not os.path.isfile(path):
+            return ""
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            if size > max_bytes:
+                f.seek(size - max_bytes)
+                f.readline()
+            lines = f.read().decode("utf-8", "replace").splitlines()
+        name = ""
+        for line in lines:
+            if session_id not in line:
+                continue
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(obj, dict) and obj.get("id") == session_id and obj.get("thread_name"):
+                name = str(obj["thread_name"])
+        return " ".join(name.split())[:60]
     except Exception:
         return ""
 
@@ -834,15 +868,27 @@ def _update_session(path, target, event, data, wsl, auto=None):
         title += f" +{len(folders) - 1}"
     pid = prev.get("pid") or find_claude_pid()  # looked up once per session
     topic = prev.get("topic", "")
-    first_prompt = prev.get("first_prompt", "")
-    if not first_prompt and event == "UserPromptSubmit":
-        first_prompt = " ".join(str(data.get("prompt") or "").split())[:60]
-    conv = prev.get("conv", "")
+    last_prompt = prev.get("last_prompt", "")
+    prompt_text = " ".join(str(data.get("prompt") or "").split()) if event == "UserPromptSubmit" else ""
+    if prompt_text.startswith("<"):  # injected by the harness (<task-notification>, <command-name>...), not typed
+        prompt_text = ""
+    if prompt_text:  # the latest prompt the user typed: the name until the harness has one
+        last_prompt = prompt_text[:60]
+    # The conversation's name, kept stable like the harness shows it: a /rename always wins (and follows later renames);
+    # otherwise the FIRST generated title is kept for good, even if the harness writes newer summaries later.
+    conv, conv_src = prev.get("conv", ""), prev.get("conv_src", "")
     if event in ("Stop", "SessionStart", "UserPromptSubmit"):  # not on every tool call: it reads the transcript
-        conv = conversation_title(data.get("transcript_path")) or conv
+        if AGENT == "codex":  # Codex keeps the thread's name (and later renames) in its session index
+            custom, generated = codex_thread_name(str(data.get("session_id") or "")), ""
+        else:
+            custom, generated = conversation_title(data.get("transcript_path"))
+        if custom:
+            conv, conv_src = custom, "custom"
+        elif generated and conv_src not in ("custom", "generated"):
+            conv, conv_src = generated, "generated"
     if is_home_or_root(cwd) or (cowork and not folders):  # no folder to name it after: use the first prompt
         if not topic and event == "UserPromptSubmit":
-            topic = " ".join(str(data.get("prompt") or "").split())[:40]
+            topic = prompt_text[:40]
         title = topic or ("Cowork" if cowork else "~")
     record = {
         "id": session_id,
@@ -869,8 +915,9 @@ def _update_session(path, target, event, data, wsl, auto=None):
         "auto_approved": auto_n,  # permission prompts auto-approved in this session (Auto approve menu)
         "auto_kind": auto_kind,  # how the last one was approved: "all" or "whitelist"
         "auto_what": auto_what,  # tool and first line of what it ran, shown by the pet for a few seconds
-        "conv": conv,  # the conversation's title, shown when several sessions share a folder name
-        "first_prompt": first_prompt,
+        "conv": conv,  # the conversation's name, shown when several sessions share a folder name
+        "conv_src": conv_src,  # "custom" (/rename) or "generated"; until then the pet uses last_prompt
+        "last_prompt": last_prompt,
         "updated": now,
         "changed": now if state != prev.get("state") else prev.get("changed", now),
     }

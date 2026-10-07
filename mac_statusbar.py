@@ -164,14 +164,15 @@ def _rect(obj, name):
     return f(obj, sel(name))
 
 
-def screen_rects():
+def screen_rects(visible=True):
     """Every screen as (left, top, right, bottom) in Tk's coordinates: origin at the top-left of the main screen, y down
-    (Cocoa puts the origin at the main screen's bottom-left, y up). Whole screens, menu bar and Dock included, like the
-    Windows side."""
+    (Cocoa puts the origin at the main screen's bottom-left, y up). visible: without the menu bar and the Dock, which
+    sits above every window, so a pet placed over it would hide its name tags behind it."""
     screens = send(cls("NSScreen"), "screens")
     n = send(screens, "count", restype=c_ulong)
-    frames = [_rect(send(screens, "objectAtIndex:", i, argtypes=[c_ulong]), "frame") for i in range(n)]
-    if not frames:
+    objs = [send(screens, "objectAtIndex:", i, argtypes=[c_ulong]) for i in range(n)]
+    if not objs:
         return []
-    main_h = frames[0].height  # screens[0] is the one with the menu bar: Cocoa's origin
+    main_h = _rect(objs[0], "frame").height  # screens[0] is the one with the menu bar: Cocoa's origin
+    frames = [_rect(o, "visibleFrame" if visible else "frame") for o in objs]
     return [(int(f.x), int(main_h - f.y - f.height), int(f.x + f.width), int(main_h - f.y)) for f in frames]

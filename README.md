@@ -120,7 +120,7 @@ click belong to the session in front:
 - With nobody waiting, the most urgent / most recently active session is in front.
 - The name tag scrolls through every session's title like a banner, each after its state symbol in a faded state colour: `❃` working (blue), `❉` waiting for you (red), `✺` done (green).
 - Hover the pet for a list of every session.
-- The badges collapse into one: different agents are listed by name (`Claude + Codex`), a single agent gets all its tags (`Claude Cowork+WSL+VS`); it turns faint red if any session needs you. Click it (`▴`) to show one badge per session, and `▾` to collapse again.
+- The badges collapse into one: different agents are listed by name (`Claude + Codex`), a single agent gets all its tags (`Claude Cowork+WSL+VS`); it turns faint red if any session needs you. Click it (`▴`) to show one badge per session in a column snapped to the pet's left side (a second column further left if it fills up), each with its conversation's title on a second, smaller line, and `▾` to collapse again.
 
 ## WSL notes
 - The WSL hook is a Python script, so the distro needs `python3`. Ubuntu has it by default. Otherwise the menu shows *needs python3*; install it in the distro (e.g. `sudo apt install python3`).
@@ -128,8 +128,11 @@ click belong to the session in front:
 
 ## Clicking pets, bubbles
 - **Same folder, several sessions:** pets whose sessions share a folder name add the conversation's title to the name
-  (`esign-online · Fix login bug`): the name you gave it with `/rename`, else Claude Code's generated title, else the
-  first prompt (a short session id until there is one). Long names scroll through the tag.
+  (`esign-online · Fix login bug`), the name the harness shows: for Claude Code your `/rename` name (`custom-title` in
+  the transcript), else the name Claude Code gave the session (`agent-name`, kept for good once seen); for Codex the
+  thread name from `~/.codex/session_index.jsonl` (renames follow). Right-click (or tray / menu bar) > *Session titles* switches between *Session name* (the default)
+  and *Last prompt* (saved as `"session_titles"`: `"name"` / `"prompt"`). Without a name, the latest prompt you typed (a
+  short session id before that). Long names scroll through the tag.
 - **Click a pet** to acknowledge it and bring its window to the front: the terminal or Claude desktop app that hosts the
   session (the hook records the window), or the right VS Code window for VS Code sessions. WSL terminals are best effort
   (matches a Windows Terminal window by distro/project, else the only/frontmost one). It cannot pick the tab inside a
@@ -163,8 +166,8 @@ click belong to the session in front:
 - **Resize** with the slider: right-click the pet > *Size...* (or tray > *Pet size...*) opens a small window with a 30% - 300%
   slider; the pet follows it live and the value is saved as `size` (1.0 = 100%). 100% is the default size (twice the drawing
   size the first versions used; an older `scale` value in `config.json` is converted once). *Reset size* restores 100%.
-  The pet keeps its bottom-right corner while it grows or shrinks, but stays on the screen it is on (on macOS too, where
-  the screens are read from NSScreen). If it is ever lost off screen, *Reset position (main screen)* in the pet's
+  The pet keeps its bottom-right corner while it grows or shrinks, but stays on the screen it is on (on macOS too, kept
+  above the Dock; the screens are read from NSScreen). If it is ever lost off screen, *Reset position (main screen)* in the pet's
   right-click menu, the tray menu or the macOS menu-bar menu puts it back in the main screen's bottom-right corner.
 
 ## Answering permission prompts from the pet
@@ -202,7 +205,7 @@ Details:
 - Saved in `~/.aipet/auto-approve.json`; hooks read it on every prompt, so changes apply to running sessions at once.
 - It only works **while AIPet is running** (the hooks check the pet's heartbeat) and with AIPet's hooks installed for
   that config; the menu marks configs without them. The VS Code extension sends no permission events, so it always asks.
-- When the **whitelist** approves something, the robot does a green hop with an `AUTO ✓` bubble and rising check marks
+- When the **whitelist** approves something, the robot shows steady green lights, a gentle bob and a small pale-green `✓ auto` bubble
   for 10 seconds, or until any session needs you. Its tooltip shows what was approved. *Allow all* approvals don't
   animate (they would never stop). The tray tooltip starts with `AUTO APPROVE ON` while any config is on.
 

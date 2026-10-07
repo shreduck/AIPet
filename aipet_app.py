@@ -1140,6 +1140,9 @@ class TrayApp:
             I("Answer timeout...", act(self.pet.open_answer_slider)),
             I("Clear finished after...", act(self.pet.open_done_slider)),
             I("Compact mode (one pet)", act(self.pet.toggle_compact), checked=lambda item: bool(self.pet.cfg.get("compact"))),
+            I("Session titles", M(*[I(text, act(self.pet.set_session_titles, value), radio=True,
+                                      checked=lambda item, v=value: self.pet.cfg.get("session_titles", "name") == v)
+                                    for value, text in (("name", "Session name"), ("prompt", "Last prompt"))])),
             I("Answer Codex prompts from the pet", act(lambda: self.pet.set_codex_answers(not self.pet.cfg.get("codex_answers"))),
               checked=lambda item: bool(self.pet.cfg.get("codex_answers"))),
             I("Log hook events (debug)", act(self.toggle_debug), checked=lambda item: os.path.exists(DEBUG_FLAG)),
@@ -1193,6 +1196,9 @@ class TrayApp:
             item("Auto approve (ON)" if self.c_auto else "Auto approve", submenu=auto),
             None,
             item("Compact mode (one pet)", self.pet.toggle_compact, checked=bool(cfg.get("compact"))),
+            item("Session titles", submenu=[item(text, lambda v=value: self.pet.set_session_titles(v),
+                                                 checked=cfg.get("session_titles", "name") == value)
+                                            for value, text in (("name", "Session name"), ("prompt", "Last prompt"))]),
             item("Answer Codex prompts from the pet", lambda: self.pet.set_codex_answers(not cfg.get("codex_answers")),
                  checked=bool(cfg.get("codex_answers"))),
             item("Mute sounds", self.toggle_mute, checked=self.c_muted),

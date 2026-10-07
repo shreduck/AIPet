@@ -57,6 +57,7 @@ DEFAULT_CONFIG = {
     # here, so an old absolute "scale" value in config.json can still be migrated once.
     "remind_seconds": 90,
     "compact": False,
+    "session_titles": "name",  # extra title for same-folder sessions: "name" (the harness's name) or "prompt" (latest prompt)
     "codex_answers": True,  # answer Codex permission prompts in the pet's prompt window (Codex waits for it first)  # one pet for all sessions (a robot per session) instead of one pet per session
     "click_through": True,  # only the robot and its "needs you" bubble take clicks; the rest of the window lets them through
     # clicking a session of the VS Code extension also opens its conversation tab (vscode://anthropic.claude-code/open)
@@ -667,6 +668,15 @@ def ago(ts):
     return f"{s // 3600}h {s % 3600 // 60}m ago"
 
 
+def session_title(rec, mode="name"):
+    """The extra title of a session: "name" = the harness's session name (Claude Code's /rename or its own name for
+    the session, Codex's thread name), else the latest prompt; "prompt" = the latest prompt, else the name."""
+    prompt = next((p for p in (rec.get("last_prompt"), rec.get("first_prompt"))  # first_prompt: older hooks
+                   if p and not str(p).startswith("<")), "")  # "<...>": injected by the harness, not typed
+    name = rec.get("conv") or ""
+    return (prompt or name) if mode == "prompt" else (name or prompt)
+
+
 def disambiguate_titles(items):
     """Sessions named after the same folder ("esign-online", "esign-online") get their conversation's title added
     ("esign-online · Fix login bug"), or a short session id when there is none yet."""
@@ -677,6 +687,7 @@ def disambiguate_titles(items):
     for i in items:
         if counts.get((i.get("title") or "").casefold(), 0) > 1:
             extra = i.get("conv") or ("#" + str(i.get("session_id") or i.get("key") or "")[-4:])
+            i["raw_title"] = i.get("title") or ""
             i["title"] = f"{i.get('title') or 'session'} \u00b7 {extra}"
             i["dup_title"] = True
 
@@ -769,7 +780,7 @@ def read_claude_code_sessions(cfg):
             "auto_t": rec.get("auto_t", 0),
             "auto_kind": rec.get("auto_kind", ""),
             "auto_what": rec.get("auto_what", ""),
-            "conv": rec.get("conv") or rec.get("first_prompt") or "",
+            "conv": session_title(rec, cfg.get("session_titles", "name")),
         })
     return items
 
@@ -1091,8 +1102,8 @@ def light_cycle(state, t):
         return tuple("amber" if j == i else ("green" if j == (i + 1) % 3 else "off") for j in range(3))
     if state == "needs_input":  # flashing amber: attention
         return ("amber",) * 3 if int(t * 3) % 2 else ("off", "amber", "off")
-    if state == "auto":  # flashing green: something was just auto-approved
-        return ("green",) * 3 if int(t * 4) % 2 else ("off", "green", "off")
+    if state == "auto":  # steady green: something was just auto-approved
+        return ("green",) * 3
     return {"done": ("green",) * 3, "error": ("red", "amber", "red"), "idle": ("off",) * 3}.get(state, ("off",) * 3)
 
 
@@ -1314,8 +1325,18 @@ class Pet:
             self._draw_mole(t)
         else:
             self._draw_robot(t)
-        c.move("all", BADGE_GUTTER, -TOP_TRIM)  # make room for the badge column on the left; drop the empty top strip
-        self._draw_badges()
+        c.move("all", BADGE_GUTTER, -TOP_TRIM)  # drop the empty top strip
+        min_x = self._draw_badges()
+        # compact mode, expanded: the badges stand in a column snapped to the pet's left; widen the canvas to the left
+        # for it (the overlay is anchored bottom-right, so the pet itself doesn't move)
+        gutter = int(math.ceil(-min_x)) + 1 if min_x is not None and min_x < 0 else 0
+        if gutter:
+            c.move("all", gutter, 0)
+        if gutter != getattr(self, "gutter", 0):
+            delta = px(CANVAS_W + gutter) - px(CANVAS_W + getattr(self, "gutter", 0))
+            self.gutter = gutter
+            c.config(width=px(CANVAS_W + gutter))
+            self.app.shift_for_width(delta)  # move and resize in the same redraw: no flash of the pet sideways
         self._finish()
 
     def _finish(self):
@@ -1445,40 +1466,80 @@ class Pet:
             dot = 0 if not label else 8  # the arrow-only collapse badge has no dot
             return int(round(4 + dot + self._text_w(font, label) + (2 if label and arrow else 0)
                              + (self._text_w(arrow_font, arrow) if arrow else 0)))
+        # expanded compact badges: each session's conversation title on a second, smaller line
+        sub_font, sub_h = fnt(4.5 * 0.85), 7
+        sub_fg = "#d1d5db" if T.get("name") == "dark" else "#374151"  # almost black grey (light grey on dark tags)
+        titles = list(self.data.get("badge_titles") or []) if collapse else []
+        titles += [""] * (len(texts) - len(titles))
+
+        def fit(text, room):
+            if self._text_w(sub_font, text) <= room:
+                return text
+            while text and self._text_w(sub_font, text + "\u2026") > room:
+                text = text[:-1]
+            return text.rstrip() + "\u2026" if text else ""
+        col_max = 112  # expanded compact mode: the widest a badge in the side column gets (titles are cut to fit)
         rows, x = [[]], left
-        for text, hot, key in zip(texts, flags, keys):
+        for text, hot, key, sub in zip(texts, flags, keys, titles):
             w = width(text)
+            if sub:
+                sub = fit(sub, (col_max if collapse else right - left) - 6)
+                w = max(w, int(round(6 + self._text_w(sub_font, sub))))
             if rows[-1] and x + w > right:  # no more room on this row: wrap to a new one above
                 rows.append([])
                 x = left
-            rows[-1].append((text, hot, x, w, key))
+            rows[-1].append((text, hot, x, w, key, sub))
             x += w + gap
         if collapse:  # always the topmost row
-            rows.append([(self.COLLAPSE, False, left, width(self.COLLAPSE), "__collapse")])
-        base = PET_H - 2 - TAG_H - TOP_TRIM - h + 4  # the first row overlaps the tag's top border by 4 units
-        for r, row in enumerate(rows):
-            y = base - r * (h + gap)
-            for text, hot, bx, w, key in row:
-                bg = BADGE_ATTENTION_BG if hot else T["tag_bg"]
-                tags = ("badge", "badge:" + (key or ""))
-                try:
-                    im = bubble_image(w, h, bg, T["tag_outline"], None)
-                    self._put(("badge", w, h, bg, T["tag_outline"]), im, int(round(w * s_)), int(round(h * s_)), bx, y, "nw",
-                              tags=tags)
-                except Exception:  # no Pillow
-                    c.create_rectangle(bx, y, bx + w, y + h, fill=bg, outline=T["tag_outline"], tags=tags)
-                label, arrow = split(text)
-                fg = "#111827" if hot else T["tag_fg"]
-                tx = bx + 2
-                if label:
-                    dot = COLORS["needs_input"] if text.startswith("+") else badge_dot(text)
-                    # the dot at the badge's middle; the text a unit higher than its anchor box would put it, because
-                    # its visual middle sits below the box's middle (room for descenders)
-                    c.create_rectangle(bx + 3, y + 4, bx + 6, y + 7, fill=dot, outline="", tags=tags)
-                    c.create_text(bx + 8, y + h / 2 - 0.5, text=label, anchor="w", fill=fg, font=font, tags=tags)
-                    tx = bx + 8 + self._text_w(font, label) + 2
-                if arrow:
-                    c.create_text(tx, y + h / 2 - 0.5, text=arrow, anchor="w", fill=fg, font=arrow_font, tags=tags)
+            rows.append([(self.COLLAPSE, False, left, width(self.COLLAPSE), "__collapse", "")])
+        placed = []  # (text, hot, x, y, w, height, key, title)
+        if collapse:
+            # expanded compact mode: one column to the LEFT of the pet, right-aligned against it, from the name tag's
+            # bottom upwards (the collapse badge on top); a further column to the left when a column is full
+            entries = [e for row in rows for e in row]
+            col_right, bottom0 = -2, PET_H - 2 - TOP_TRIM
+            bottom, col_w = bottom0, 0
+            for text, hot, _, w, key, sub in entries:
+                bh = h + (sub_h if sub else 0)
+                if bottom - bh < 2 and bottom != bottom0:  # column full: start the next one further left
+                    col_right -= col_w + 3
+                    bottom, col_w = bottom0, 0
+                placed.append((text, hot, col_right - w, bottom - bh, w, bh, key, sub))
+                bottom -= bh + gap
+                col_w = max(col_w, w)
+        else:
+            bottom = PET_H - 2 - TAG_H - TOP_TRIM + 4  # the first row overlaps the tag's top border by 4 units
+            for row in rows:
+                row_h = h + (sub_h if any(e[5] for e in row) else 0)
+                for text, hot, bx, w, key, sub in row:
+                    bh = h + (sub_h if sub else 0)
+                    placed.append((text, hot, bx, bottom - bh, w, bh, key, sub))  # a row's badges share one line
+                bottom -= row_h + gap
+        for text, hot, bx, y, w, bh, key, sub in placed:
+            bg = BADGE_ATTENTION_BG if hot else T["tag_bg"]
+            tags = ("badge", "badge:" + (key or ""))
+            try:
+                im = bubble_image(w, bh, bg, T["tag_outline"], None)
+                self._put(("badge", w, bh, bg, T["tag_outline"]), im, int(round(w * s_)), int(round(bh * s_)), bx, y,
+                          "nw", tags=tags)
+            except Exception:  # no Pillow
+                c.create_rectangle(bx, y, bx + w, y + bh, fill=bg, outline=T["tag_outline"], tags=tags)
+            if sub:
+                c.create_text(bx + 3, y + h + sub_h / 2 - 1.5, text=sub, anchor="w",
+                              fill="#374151" if hot else sub_fg, font=sub_font, tags=tags)
+            label, arrow = split(text)
+            fg = "#111827" if hot else T["tag_fg"]
+            tx = bx + 2
+            if label:
+                dot = COLORS["needs_input"] if text.startswith("+") else badge_dot(text)
+                # the dot at the badge's middle; the text a unit higher than its anchor box would put it, because
+                # its visual middle sits below the box's middle (room for descenders)
+                c.create_rectangle(bx + 3, y + 4, bx + 6, y + 7, fill=dot, outline="", tags=tags)
+                c.create_text(bx + 8, y + h / 2 - 0.5, text=label, anchor="w", fill=fg, font=font, tags=tags)
+                tx = bx + 8 + self._text_w(font, label) + 2
+            if arrow:
+                c.create_text(tx, y + h / 2 - 0.5, text=arrow, anchor="w", fill=fg, font=arrow_font, tags=tags)
+        return min((p[2] for p in placed), default=None)
 
     @staticmethod
     def _text_w(font, text):
@@ -1653,10 +1714,9 @@ class Pet:
             ph = t + i * 1.7
             cx, dy, squash = cx0 + dx, 0.0, 1.0
             face = STATE_FACE.get(hst, "sleep")
-            if main and flash:  # just auto-approved something: a happy green hop
+            if main and flash:  # just auto-approved something: a calm, content robot with green lights
                 hst, face = "auto", "joy"
-                dy = -abs(math.sin(ph * 7)) * 8
-                squash = 1.0 if dy < -1.2 else 0.94
+                dy = -abs(math.sin(ph * 2.5)) * 1.5
             elif hst == "working":
                 dy = -abs(math.sin(ph * (5 if main else 4.2))) * 3 * k
                 if (ph % 4) < 0.15:
@@ -1681,15 +1741,12 @@ class Pet:
             by1 = 15.0  # the top of the drawing (the strip above is trimmed off: badges live in a left column)
             by2 = 36.0 if st == "needs_input" else min(top_main + 2, 40.0)  # the hop must not squash the bubble
             tail = cx0 - 6  # off the antenna
-            if flash:  # green "AUTO ✓" bubble and rising check marks: approved by the whitelist, nothing to do
-                self._bubble(bx1 + 4, by1, bx2 - 6, by2, tail, "#dcfce7", "#15803d")
-                y, bob = (by1 + by2) / 2, (1 if int(t * 4) % 2 else 0)
-                self._mark("ok", cx0 - 14, y - bob)
-                c.create_text(cx0 + 6, y, text="AUTO", fill="#15803d", font=fnt(5.5, "bold"))
-                for i in range(3):
-                    ph = (t * 0.7 + i / 3) % 1
-                    c.create_text(cx0 + 22 + 6 * math.sin(t * 3 + i), top_main + 6 - ph * 26, text="\u2713",
-                                  fill="#22c55e", font=fnt(6 + 4 * (1 - ph), "bold"))
+            if flash:  # a small pale-green "✓ auto" bubble: approved by the whitelist, nothing to do
+                top = by2 - 19
+                self._bubble(cx0 - 26, top, cx0 + 16, by2, tail, "#f0fdf4", "#4b8f63")
+                y = (top + by2) / 2
+                self._mark("ok", cx0 - 15, y)
+                c.create_text(cx0 + 3, y, text="auto", fill="#4b8f63", font=fnt(5))
             elif st == "working":  # hacker-screen bubble
                 self._bubble(bx1, by1, bx2, by2, tail, "#0b1220", "#34d399")
                 font = mono(5)
@@ -1864,6 +1921,11 @@ def diagnostics_report(app=None):
         vscode_open_folders(report=rep)
         return "; ".join(rep) or "no VS Code user folder found"
     attempt("vscode_open_folders", test_vscode)
+    if IS_MAC:
+        def test_screens():
+            import mac_statusbar
+            return f"full={mac_statusbar.screen_rects(False)} visible={mac_statusbar.screen_rects(True)}"
+        attempt("screens", test_screens)
     if app:
         r = app.root
         attempt("window", lambda: f"geometry={r.winfo_geometry()} viewable={r.winfo_viewable()} "
@@ -1920,8 +1982,9 @@ _MAC_SCREENS = {"t": 0.0, "v": []}
 
 
 def mac_screen_at(x, y):
-    """macOS: (left, top, right, bottom) in Tk coordinates of the screen holding (x, y), else the nearest one; None if
-    the screens can't be read (callers then don't clamp). Read from NSScreen (cached for 3 s)."""
+    """macOS: (left, top, right, bottom) in Tk coordinates of the visible part of the screen holding (x, y) (without
+    the menu bar and the Dock, which covers windows), else the nearest one; None if the screens can't be read
+    (callers then don't clamp). Read from NSScreen (cached for 3 s)."""
     now = time.time()
     if now - _MAC_SCREENS["t"] > 3:
         try:
@@ -2246,17 +2309,86 @@ def terminal_windows():
     return out
 
 
-def focus_wsl_terminal(d):
-    """Best effort for WSL sessions (the hook can't see Windows process ids): pick the Windows Terminal window
-    whose title mentions the distro or project, else the only/frontmost one."""
-    wins = terminal_windows()
-    if not wins:
-        return False
-    needles = [n.lower() for n in (d.get("distro"), d.get("title")) if n]
-    for hwnd, title in wins:
-        if any(n in title.lower() for n in needles):
-            return focus_hwnd(hwnd)
-    return focus_hwnd(wins[0][0])
+def claude_app_windows(exe_name="claude.exe"):
+    """Visible top-level windows of a desktop app (the Claude app: claude.exe; the Codex app: codex.exe), frontmost
+    first. The CLIs of the same names own no window (their terminal does), so they never show up here."""
+    if os.name != "nt":
+        return []
+    import ctypes
+    from ctypes import wintypes
+    u, k32, out = _user32(), ctypes.windll.kernel32, []
+    u.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    u.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+    u.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+    k32.OpenProcess.restype = wintypes.HANDLE
+    k32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
+                                               ctypes.POINTER(wintypes.DWORD)]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    names = {}
+
+    def exe(pid):
+        if pid not in names:
+            names[pid] = ""
+            h = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+            if h:
+                buf, n = ctypes.create_unicode_buffer(1024), wintypes.DWORD(1024)
+                if k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(n)):
+                    names[pid] = os.path.basename(buf.value).lower()
+                k32.CloseHandle(h)
+        return names[pid]
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def visit(hwnd, _):
+        if u.IsWindowVisible(hwnd) and not u.GetWindow(hwnd, 4) and u.GetWindowTextLengthW(hwnd) > 0:
+            pid = wintypes.DWORD()
+            u.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if exe(pid.value) == exe_name:
+                out.append(int(hwnd))
+        return True
+
+    u.EnumWindows(visit, 0)
+    return out
+
+
+def _folder(d):
+    return os.path.basename(str(d.get("cwd") or "").replace("\\", "/").rstrip("/")).lower()
+
+
+def terminal_agent(title):
+    """Which agent a terminal title looks like: "claude" (Claude Code puts ✳ or a braille spinner in front of its
+    title), "codex", or "" when it doesn't say."""
+    t = (title or "").lstrip()
+    low = t.lower()
+    if "codex" in low:
+        return "codex"
+    if "claude" in low or (t and (t[0] in "\u2733\u2736\u273b\u273d\u2722" or 0x2800 <= ord(t[0]) <= 0x28ff)):
+        return "claude"
+    return ""
+
+
+def focus_wsl_terminal(d, others=()):
+    """Best effort for sessions without a recorded window (WSL hooks can't see Windows process ids). Never picks a
+    window another session recorded as its own (a Codex terminal, say), and keeps Claude and Codex apart: a terminal
+    whose title says it runs the other agent is skipped, one that says it runs this agent is preferred. In order:
+    a terminal whose title mentions the distro or project folder; for sessions run by the desktop app, that app's
+    window; a terminal of this agent, else one that doesn't say; the agent's desktop app."""
+    agent = "codex" if d.get("agent") == "codex" else "claude"
+    claimed = {int(o["hwnd"]) for o in others if o.get("hwnd")}
+    folder = _folder(d)
+    needles = [n.lower() for n in (d.get("distro"), folder, d.get("raw_title")) if n]
+    foreign = {f for f in (_folder(o) for o in others) if f and f != folder}
+    wins = [(h, t, terminal_agent(t)) for h, t in terminal_windows() if h not in claimed]
+    wins = [w for w in wins if w[2] in ("", agent)]  # never the other agent's terminal
+    named = [w for w in wins if any(n in w[1].lower() for n in needles)]
+    if named:  # this agent's own terminal first, then one that doesn't say
+        return focus_hwnd(sorted(named, key=lambda w: w[2] != agent)[0][0])
+    wins = [w for w in wins if not any(f in w[1].lower() for f in foreign)]
+    app = [h for h in claude_app_windows(agent + ".exe") if h not in claimed]
+    if app and (agent == "claude" and "desktop" in (d.get("entry") or "").lower() or not wins):
+        return focus_hwnd(app[0])
+    if wins:
+        return focus_hwnd(sorted(wins, key=lambda w: w[2] != agent)[0][0])
+    return bool(app) and focus_hwnd(app[0])
 
 
 # --------------------------------------------------------------------------- app
@@ -2595,6 +2727,12 @@ class PetApp:
                           command=lambda: self.set_codex_answers(self.codex_answer_var.get()))
         self.compact_var = tk.BooleanVar(value=bool(self.cfg.get("compact")))
         m.add_checkbutton(label="Compact mode (one pet)", variable=self.compact_var, command=self.toggle_compact)
+        self.titles_var = tk.StringVar(value=self.cfg.get("session_titles", "name"))
+        titles = tk.Menu(m, tearoff=0)
+        for value, text in (("name", "Session name"), ("prompt", "Last prompt")):
+            titles.add_radiobutton(label=text, variable=self.titles_var, value=value,
+                                   command=lambda v=value: self.set_session_titles(v))
+        m.add_cascade(label="Session titles", menu=titles)
         m.add_separator()
         m.add_checkbutton(label="Mute sounds", variable=self.muted)
         m.add_command(label="Clear finished", command=self.clear_finished)
@@ -2607,7 +2745,7 @@ class PetApp:
         style_menu(m)
         native_menu_theme()
 
-        self.anchor = [root.winfo_screenwidth() - 24, root.winfo_screenheight() - 60]  # bottom-right
+        self.anchor = self.default_anchor()  # bottom-right of the main screen
         self.size_win, self._menu_xy = None, None
         self.clickthru = ClickThrough(root) if self.cfg.get("click_through", True) else None
         self._pass = None
@@ -2783,7 +2921,7 @@ class PetApp:
             return
         SCALE["v"] = v
         for pet in self.pets.values():
-            pet.canvas.config(width=px(CANVAS_W), height=px(CANVAS_H))
+            pet.canvas.config(width=px(CANVAS_W + getattr(pet, "gutter", 0)), height=px(CANVAS_H))
 
     def _place_above_pet(self, w):
         """Put a small window directly above the pet overlay, centred on it (just below it if there is no room)."""
@@ -2981,7 +3119,9 @@ class PetApp:
             self.open_in_vscode(pet)  # `code <folder>` raises the right VS Code window, then the conversation tab
         elif os.name == "nt":
             if not focus_hwnd(d.get("hwnd")) and (d.get("env") == "wsl" or d.get("agent") == "codex"):
-                focus_wsl_terminal(d)  # no recorded window: match a terminal window by distro / project title
+                own = d.get("focus") or pet.key
+                others = [i for i in self._last_items if i.get("key") != own]
+                focus_wsl_terminal(d, others)  # no recorded window: match by distro / project, never another's
 
     def dismiss_menu_pet(self):
         if self.menu_pet and self.menu_pet.key != "_none":
@@ -3082,9 +3222,37 @@ class PetApp:
         r.geometry(geo(x, y))
         self.anchor = [x + w, y + h]
 
+    def default_anchor(self):
+        """Where the pet's bottom-right corner starts: the main screen's bottom-right corner, just above the Windows
+        taskbar; on macOS just above the Dock (the visible area of the main screen)."""
+        r = self.root
+        if IS_MAC:
+            area = mac_screen_at(1, 1)  # the main screen holds Tk's origin
+            if area:
+                return [area[2] - 24, area[3] - 8]
+        return [r.winfo_screenwidth() - 24, r.winfo_screenheight() - 60]
+
+    def shift_for_width(self, delta):
+        """The overlay is about to become delta px wider (narrower if negative): move it now, before Tk redraws, so the
+        new size and position land together and the pet stays put (reposition() would redraw at the old position
+        first, flashing the pet sideways). Falls back to reposition() before the window is shown."""
+        r = self.root
+        try:
+            w, h = r.winfo_width(), r.winfo_height()
+            if w <= 1 or h <= 1:
+                r.after_idle(self.reposition)
+                return
+            w += delta
+            ref = (r.winfo_x() + r.winfo_width() // 2, r.winfo_y() + h // 2)
+            x, y = fit_on_screen(self.anchor[0] - w, self.anchor[1] - h, w, h, ref, r)
+            r.geometry(geo(x, y))
+            self.anchor = [x + w, y + h]
+        except tk.TclError:
+            r.after_idle(self.reposition)
+
     def reset_position(self):
         """Last resort for a pet lost off screen: back to the main screen's bottom-right corner."""
-        self.anchor = [self.root.winfo_screenwidth() - 24, self.root.winfo_screenheight() - 60]
+        self.anchor = self.default_anchor()
         self.reposition(ref=(self.anchor[0] - 1, self.anchor[1] - 1))
         try:
             self.root.deiconify()
@@ -3203,6 +3371,7 @@ class PetApp:
         keys = [m["key"] for m in shown] + ([None] if len(members) > len(shown) else [])
         g.update(key="_group", focus=focus["key"], members=shown, everyone=members, badges=badges,
                  badge_attention=attention, badge_keys=keys, subagents=0,
+                 badge_titles=[m.get("conv") or "" for m in shown],
                  auto_flash=any(m.get("auto_flash") for m in members))
         return [g]
 
@@ -3225,6 +3394,14 @@ class PetApp:
                 os.remove(flag)
         except OSError:
             pass
+
+    def set_session_titles(self, mode):
+        """Session name (default) or latest prompt as the extra title (same-folder sessions, expanded badges)."""
+        mode = "prompt" if mode == "prompt" else "name"
+        self.cfg["session_titles"] = mode
+        save_setting("session_titles", mode)
+        if hasattr(self, "titles_var") and self.titles_var.get() != mode:
+            self.titles_var.set(mode)
 
     def toggle_compact(self, value=None):
         self.cfg["compact"] = (not self.cfg.get("compact", False)) if value is None else bool(value)
