@@ -124,6 +124,7 @@ A finished session's pet is cleared after the **done timeout**: right-click > *C
   not send `PermissionRequest` events, so its prompts keep the read-only bubble.
 
 ## Theme, diagnostics
+- **Save diagnostics...** (pet right-click) writes `~/.claude-pet/diagnostics.txt` and opens it: versions, sprite loading, image tests, window state and recent errors. No prompts or session contents. Send it along with bug reports from machines that can't be tested here.
 - **Light theme is the default.** Tray menu (or the pet's right-click menu on macOS) > *Dark theme* switches live and is
   saved as `theme` in `config.json`. It covers the name tags, bubbles and tooltips; setup and confirmation dialogs stay native.
 - **Log hook events (debug)** appends one metadata line per hook event to `~/.claude-pet/events.log` (event, tool name, field
