@@ -13,6 +13,7 @@ $PY -m PyInstaller --noconfirm --clean --onedir --name claude-pet-hook claude_pe
 echo "[3/3] Building ClaudePet.app..."
 $PY -m PyInstaller --noconfirm --clean --windowed --name ClaudePet \
   --osx-bundle-identifier com.claudepet.app \
+  --icon assets/claude_pet.icns \
   --add-data "dist/claude-pet-hook:hook" \
   --add-data "claude_pet_hook.py:." \
   --add-data "assets/sprites:assets/sprites" \

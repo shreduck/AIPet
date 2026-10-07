@@ -748,6 +748,7 @@ class TrayApp:
             I("Pet size...", act(self.pet.open_size_slider)),
             I("Reset pet size", act(self.pet.reset_scale)),
             I("Answer timeout...", act(self.pet.open_answer_slider)),
+            I("Clear finished after...", act(self.pet.open_done_slider)),
             I("Log hook events (debug)", act(self.toggle_debug), checked=lambda item: os.path.exists(DEBUG_FLAG)),
             I("Start with Windows", act(self.toggle_autostart), checked=lambda item: self.c_autostart,
               visible=os.name == "nt"),

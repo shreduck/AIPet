@@ -36,7 +36,8 @@ HOOK_EVENTS = [
     ("SubagentStop", None),  # ... and drop it when it finishes
     ("PermissionRequest", None),  # gives the pet the command/description behind a permission prompt (observe only)
 ]
-HOOK_TIMEOUTS = {"PermissionRequest": 310}  # seconds; the hook waits at most 300 s (the slider's maximum) for a click
+HOOK_TIMEOUTS = {"PermissionRequest": 86400}  # seconds; the answer timeout can be "no limit" (the hook
+# still ends as soon as the prompt is answered anywhere, or the pet closes)
 MARKER = re.compile(r"claude[-_]pet[-_]hook", re.I)
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 IGNORED_DISTROS = {"docker-desktop", "docker-desktop-data", "rancher-desktop", "rancher-desktop-data"}

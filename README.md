@@ -61,7 +61,7 @@ Cowork runs its own Claude Code with a private config folder, so it never reads 
 2. In the Claude app: **Customize > Plugins > upload** the zip, and keep the plugin's hooks enabled.
 3. Restart the Claude app and start a new Cowork session.
 
-Cowork ends its session after every reply, so a Cowork pet isn't removed then: it turns *done* and disappears after `hide_done_after_minutes` (30 by default, in `config.json`), like any finished session. Your next message brings it back.
+Cowork ends its session after every reply, so a Cowork pet isn't removed then: it turns *done* and is cleared after the **Clear finished after** time, like any finished session. Your next message brings it back.
 
 Cowork sessions get an orange **CW** badge and are named after the folder you connected to the session (`Name +2` when there are several), or after your first prompt when no folder is connected.
 
@@ -108,13 +108,18 @@ Use it *instead of* the settings.json hooks, never both, or every event reaches 
 ## Answering permission prompts from the pet
 When Claude Code asks for permission, the popup (click the bubble's title) shows **Deny** and **Allow once**. Your click is
 handed to the `PermissionRequest` hook, which prints the decision to Claude Code.
-- The hook waits up to the **answer timeout** (default 3 minutes, set 0 - 5 minutes with right-click > *Answer timeout...*
-  or tray > *Answer timeout...*; 0 turns answering from the pet off) and **only while the pet is running** (it checks a
+- The hook waits up to the **answer timeout** (default 3 minutes, set 0 - 30 minutes with right-click > *Answer timeout...*
+  or tray > *Answer timeout...*; 0 = no limit, it waits until you answer) and **only while the pet is running** (it checks a
   heartbeat file). If you don't click, or the pet is closed, it prints nothing and the normal prompt appears as usual.
+  It also stops waiting as soon as the prompt is answered in Claude Code itself.
   The setting is saved as `answer_wait_seconds` and mirrored into `~/.claude-pet/answer-wait` for the hooks.
 - Claude Code (CLI/desktop) shows its own prompt at the same time and the first answer wins, so you can still answer there.
 - For background subagents Claude Code may wait for the hook before showing its own prompt, so a long timeout also
-  lengthens that delay; lower the slider if you notice it.
+  lengthens that delay (with no limit, until you answer from the pet); lower the slider if you notice it.
+
+## Clearing finished sessions
+A finished session's pet is cleared after the **done timeout**: right-click > *Clear finished after...* (or the tray menu),
+0 - 30 minutes, default 3 minutes; 0 keeps finished pets until you dismiss them. Saved as `done_timeout_minutes`.
 - There is no "always allow" button: that needs a permission-rule format I haven't verified. The VS Code extension does
   not send `PermissionRequest` events, so its prompts keep the read-only bubble.
 

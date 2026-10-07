@@ -48,12 +48,12 @@ DEFAULT_CONFIG = {
     "sound_on_done": True,
     "notifications": False,  # Windows toast notifications; off by default (toggle in the tray menu)
     "theme": "light",  # "light" (default) or "dark"; toggle in the tray / right-click menu
-    "answer_wait_seconds": 180,  # how long a permission prompt can be answered from the pet: 0 (off) - 300
+    "answer_wait_seconds": 180,  # how long a permission prompt can be answered from the pet: 0 (no limit) - 1800
     "pet_style": "robot",  # "robot" (default), "mole" or "cat"
     # "size": 1.0 is written when you use the Size slider (1.0 = 100%, range 0.3 - 3.0); deliberately not a default
     # here, so an old absolute "scale" value in config.json can still be migrated once.
     "remind_seconds": 90,
-    "hide_done_after_minutes": 30,
+    "done_timeout_minutes": 3,  # finished sessions disappear after this: 0 (never) - 30; "Clear finished after..." slider
     "stale_hours": 12,
     "claude_code": {
         "enabled": True,
@@ -125,7 +125,9 @@ SCALE_UNIT = 2.0  # the absolute drawing scale that counts as 100% (it was the o
 SCALE = {"v": SCALE_UNIT}  # absolute drawing scale: 92x122 px per pet at 1.0; the slider shows SCALE / SCALE_UNIT
 
 
-ANSWER_WAIT = {"v": 180}  # seconds; mirrored into <pet dir>/answer-wait for the hook (0 = answering from the pet is off)
+ANSWER_WAIT = {"v": 180}  # seconds; mirrored into <pet dir>/answer-wait for the hook (0 = wait until answered)
+MAX_WAIT = 1800  # every timer: 0 (no limit / never) to 30 minutes
+DONE_TIMEOUT = {"v": 3}  # minutes until a finished session's pet is cleared (0 = never)
 
 
 def answers_dir():
@@ -134,15 +136,22 @@ def answers_dir():
 
 def clamp_wait(v):
     try:
-        return int(max(0, min(300, round(float(v)))))
+        return int(max(0, min(MAX_WAIT, round(float(v)))))
     except (TypeError, ValueError):
         return 180
+
+
+def clamp_done(v):
+    try:
+        return int(max(0, min(MAX_WAIT // 60, round(float(v)))))
+    except (TypeError, ValueError):
+        return 3
 
 
 def fmt_wait(sec):
     sec = int(sec)
     if sec <= 0:
-        return "off"
+        return "no limit"
     m, s = divmod(sec, 60)
     return f"{m} min {s} s" if m and s else (f"{m} min" if m else f"{s} s")
 
@@ -158,7 +167,7 @@ def write_answer_wait(sec):
 
 
 def answers_enabled():
-    return ANSWER_WAIT["v"] > 0 and not os.path.exists(os.path.join(HOME_DIR, "no-answers"))
+    return not os.path.exists(os.path.join(HOME_DIR, "no-answers"))
 
 
 def clamp_scale(v):
@@ -275,7 +284,7 @@ def read_claude_code_sessions(cfg):
                 rec = json.load(f)
         except Exception:
             continue  # mid-write or corrupt; next poll will catch it
-        if rec.get("updated", 0) < cutoff:
+        if rec.get("updated", 0) < cutoff and not (DONE_TIMEOUT["v"] == 0 and rec.get("state") in ("done", "idle")):
             try:
                 os.remove(path)
             except OSError:
@@ -1454,7 +1463,7 @@ class Detail:
                     "This is what Claude is asking, so you know what to approve there. Press Go to window to jump there.")
         elif req:
             if ANSWER_WAIT["v"] <= 0:
-                note = ("Answering from the pet is switched off (Answer timeout = off). "
+                note = ("The pet stopped waiting for this prompt (it was closed or restarted meanwhile). "
                         "Answer in the session window: press Go to window.")
             else:
                 note = (f"The pet's {fmt_wait(ANSWER_WAIT['v'])} answer window has passed. "
@@ -1515,6 +1524,13 @@ class PetApp:
                 size = None
         SCALE["v"] = clamp_scale((size if size is not None else 1.0) * SCALE_UNIT)
         ANSWER_WAIT["v"] = clamp_wait(self.cfg.get("answer_wait_seconds", 180))
+        legacy = self.cfg.get("hide_done_after_minutes")  # the old config key (30 min default, no slider)
+        if legacy is not None:
+            if legacy != 30 and self.cfg.get("done_timeout_minutes") == 3:  # a value the user chose: keep it
+                self.cfg["done_timeout_minutes"] = clamp_done(legacy)
+                save_setting("done_timeout_minutes", self.cfg["done_timeout_minutes"])
+            save_setting("hide_done_after_minutes", None)
+        DONE_TIMEOUT["v"] = clamp_done(self.cfg.get("done_timeout_minutes", 3))
         write_answer_wait(ANSWER_WAIT["v"])
         root = self.root = tk.Tk()
         root.title("Claude Pet")
@@ -1559,6 +1575,7 @@ class PetApp:
         self.size_menu_index = m.index("end")
         m.add_command(label="Reset size", command=self.reset_scale)
         m.add_command(label="Answer timeout...", command=self.open_answer_slider)
+        m.add_command(label="Clear finished after...", command=self.open_done_slider)
         m.add_separator()
         m.add_checkbutton(label="Mute sounds", variable=self.muted)
         m.add_command(label="Clear finished", command=self.clear_finished)
@@ -1578,10 +1595,10 @@ class PetApp:
         items = read_claude_code_sessions(self.cfg)
         if self.wb:
             items += self.wb.items()
-        hide = self.cfg["hide_done_after_minutes"] * 60
+        hide = DONE_TIMEOUT["v"] * 60  # 0 = never
         now = time.time()
         items = [i for i in items
-                 if not (i["state"] in ("done", "idle") and i.get("changed") and now - i["changed"] > hide)]
+                 if not (hide and i["state"] in ("done", "idle") and i.get("changed") and now - i["changed"] > hide)]
         # Stable slots: a pet keeps its place for as long as it exists, whatever its state does. New sessions join
         # on the left, so the pets already on screen don't move (the overlay is anchored bottom-right).
         for it in sorted((i for i in items if i["key"] not in self._slots), key=lambda i: i.get("changed") or 0):
@@ -1790,7 +1807,7 @@ class PetApp:
         val = tk.Label(w, width=10, font=("Segoe UI", 12, "bold"))
 
         def apply(_v=None):
-            ANSWER_WAIT["v"] = clamp_wait(round(var.get() / 5) * 5)  # steps of 5 s
+            ANSWER_WAIT["v"] = clamp_wait(round(var.get() / 15) * 15)  # steps of 15 s
             val.config(text=fmt_wait(ANSWER_WAIT["v"]))
 
         def commit(_e=None):
@@ -1810,14 +1827,68 @@ class PetApp:
 
         tk.Label(w, text="Answer permission prompts from the pet for up to:", font=("Segoe UI", 10, "bold")
                  ).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
-        scale = ttk.Scale(w, from_=0, to=300, orient="horizontal", length=260, variable=var, command=apply)
+        scale = ttk.Scale(w, from_=0, to=MAX_WAIT, orient="horizontal", length=260, variable=var, command=apply)
         scale.grid(row=1, column=0, padx=(14, 6), pady=8)
         scale.bind("<ButtonRelease-1>", commit)
         val.grid(row=1, column=1, padx=(0, 14))
         tk.Label(w, justify="left", wraplength=360, fg="#6b7280", font=("Segoe UI", 8),
-                 text="0 turns it off: the pet only shows the question and you answer in the session window. "
+                 text="0 means no limit: the pet waits until you answer (or until it is closed). "
                       "While the pet waits, Claude Code's own prompt is still shown and the first answer wins, "
-                      "except for background subagents, where Claude Code may hold its prompt until this time is up."
+                      "except for background subagents, where Claude Code may hold its prompt until this time is up "
+                      "- with no limit, until you answer from the pet."
+                 ).grid(row=2, column=0, columnspan=2, sticky="w", padx=14)
+        row = tk.Frame(w)
+        row.grid(row=3, column=0, columnspan=2, sticky="e", padx=14, pady=(8, 12))
+        tk.Button(row, text="Default (3 min)", command=reset).pack(side="left", padx=(0, 6))
+        tk.Button(row, text="Done", width=8, command=close).pack(side="left")
+        w.protocol("WM_DELETE_WINDOW", close)
+        w.bind("<Escape>", lambda e: close())
+        apply()
+        self._place_above_pet(w)
+
+    def open_done_slider(self):
+        """Slider for how long a finished session's pet stays: 0 (never cleared) to 30 minutes."""
+        if getattr(self, "done_win", None) is not None:
+            try:
+                self.done_win.lift()
+                return
+            except tk.TclError:
+                self.done_win = None
+        from tkinter import ttk
+        w = self.done_win = tk.Toplevel(self.root)
+        w.title("Clear finished sessions")
+        w.attributes("-topmost", True)
+        w.resizable(False, False)
+        var = tk.DoubleVar(value=DONE_TIMEOUT["v"])
+        val = tk.Label(w, width=10, font=("Segoe UI", 12, "bold"))
+
+        def apply(_v=None):
+            DONE_TIMEOUT["v"] = clamp_done(var.get())  # whole minutes
+            val.config(text="never" if DONE_TIMEOUT["v"] <= 0 else f"{DONE_TIMEOUT['v']} min")
+
+        def commit(_e=None):
+            apply()
+            self.cfg["done_timeout_minutes"] = DONE_TIMEOUT["v"]
+            save_setting("done_timeout_minutes", DONE_TIMEOUT["v"])
+
+        def reset():
+            var.set(3)
+            commit()
+
+        def close():
+            commit()
+            self.done_win = None
+            w.destroy()
+
+        tk.Label(w, text="Clear a finished session's pet after:", font=("Segoe UI", 10, "bold")
+                 ).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
+        scale = ttk.Scale(w, from_=0, to=MAX_WAIT // 60, orient="horizontal", length=260, variable=var, command=apply)
+        scale.grid(row=1, column=0, padx=(14, 6), pady=8)
+        scale.bind("<ButtonRelease-1>", commit)
+        val.grid(row=1, column=1, padx=(0, 14))
+        tk.Label(w, justify="left", wraplength=360, fg="#6b7280", font=("Segoe UI", 8),
+                 text="Counted from when the session finished. 0 keeps finished pets until you dismiss them "
+                      "(right-click > Dismiss / Clear finished). A new message brings a cleared session back."
                  ).grid(row=2, column=0, columnspan=2, sticky="w", padx=14)
         row = tk.Frame(w)
         row.grid(row=3, column=0, columnspan=2, sticky="e", padx=14, pady=(8, 12))

@@ -11,7 +11,7 @@ which claude_pet.py (running on Windows) watches.
     Notification (permission etc.) -> needs_input
     Stop                           -> done
     SessionStart                   -> idle
-    SessionEnd                     -> (file removed; Cowork: "done", hidden after hide_done_after_minutes)
+    SessionEnd                     -> (file removed; Cowork: "done", cleared after the done timeout)
 
 Environment detection:
     * WSL     -> writes into the *Windows* profile (/mnt/c/Users/<you>/.claude-pet),
@@ -373,15 +373,25 @@ def decision_output(behavior):
     return json.dumps({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": decision}})
 
 
-def await_answer(base, key, seconds):
-    """Wait for the pet to drop <pet dir>/answers/<key>.json ({"behavior": "allow"|"deny"}). None = no answer."""
+MAX_WAIT = 1800.0  # the pet's slider: 0 (no limit) to 30 minutes
+
+
+def await_answer(base, key, seconds, session_path=None, request_id=None):
+    """Wait for the pet to drop <pet dir>/answers/<key>.json ({"behavior": "allow"|"deny"}). None = no answer.
+    seconds <= 0 waits with no limit. Also gives up once the session has moved past this prompt (answered in
+    Claude Code itself), so a waiting hook never outlives its prompt."""
     path = os.path.join(base, "answers", key + ".json")
     try:
         os.remove(path)  # an old answer must never apply to a new prompt
     except OSError:
         pass
-    deadline = time.time() + seconds
-    while time.time() < deadline:
+    deadline = time.time() + seconds if seconds > 0 else None
+    checked = time.time()
+    while deadline is None or time.time() < deadline:
+        if session_path and request_id and time.time() - checked > 2:
+            checked = time.time()
+            if ((read_json(session_path).get("request") or {}).get("id")) != request_id:
+                return None  # answered elsewhere: the record no longer holds this prompt
         if os.path.exists(path):
             time.sleep(0.05)
             data = read_json(path)
@@ -398,7 +408,7 @@ def await_answer(base, key, seconds):
 
 
 def configured_wait(base):
-    """Seconds the user allows for answering from the pet (0 = off). Set with the pet's "Answer timeout" slider,
+    """Seconds the user allows for answering from the pet (0 = no limit). Set with the pet's "Answer timeout" slider,
     which mirrors it into <pet dir>/answer-wait; 3 minutes if it was never set."""
     try:
         raw = os.environ.get("CLAUDE_PET_ANSWER_WAIT")
@@ -408,14 +418,14 @@ def configured_wait(base):
         value = float(raw)
     except (OSError, ValueError):
         value = 180.0
-    return max(0.0, min(300.0, value))
+    return max(0.0, min(MAX_WAIT, value))
 
 
 def answer_flow(base, path, aid):
     """After the request is recorded: give the user a window to answer from the pet, then print the decision.
     Prints nothing (normal prompt) if the pet isn't running, answering is switched off, or nobody clicks in time."""
-    seconds = configured_wait(base)
-    if seconds <= 0 or not pet_alive(base) or os.path.exists(os.path.join(base, "no-answers")):
+    seconds = configured_wait(base)  # 0 = wait until answered
+    if not pet_alive(base) or os.path.exists(os.path.join(base, "no-answers")):
         return  # observe only
     with SessionLock(path):
         record = read_json(path)
@@ -426,7 +436,7 @@ def answer_flow(base, path, aid):
         req["answerable"] = True
         record["request"] = req
         write_atomic(path, record)
-    decision = await_answer(base, key, seconds)  # no lock held while waiting
+    decision = await_answer(base, key, seconds, path, req.get("id"))  # no lock held while waiting
     with SessionLock(path):
         cur = read_json(path)
         if (cur.get("request") or {}).get("id") == req.get("id"):  # still the same prompt: settle the record
@@ -687,7 +697,7 @@ def main():
     if event == "SessionEnd" and (is_cowork() or read_json(path).get("app") == "cowork"):
         # Cowork ends its Claude Code session after every turn (and when the app closes), so removing the pet here
         # would make it vanish as soon as it answers. Mark it done instead: the pet then hides it after
-        # hide_done_after_minutes, like any finished session, and the next message brings it back.
+        # the "Clear finished after" timeout, like any finished session, and the next message brings it back.
         with SessionLock(path):
             rec = read_json(path)
             prev_state = rec.get("state")
