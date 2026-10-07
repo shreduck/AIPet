@@ -988,38 +988,62 @@ class Pet:
         font = fnt(5.4)
         room = PET_W - 14  # inside the tag's rounded border
         everyone = self.data.get("everyone") or []
-        scrolling = False
-        if len(everyone) > 1 and st != "needs_input":
-            name, scrolling = self._title_banner([m.get("title") or "session" for m in everyone], font, room)
+        banner = None
+        if len(everyone) > 1:  # compact mode: the banner always runs; waiting sessions show a red symbol
+            banner = self._title_banner([(m.get("title") or "session", m.get("state")) for m in everyone], font, room)
         elif self._text_w(font, name) > room:  # cut to the real width, not a character count
             while name and self._text_w(font, name + "\u2026") > room:
                 name = name[:-1]
             name = name.rstrip() + "\u2026"
         # just the name: the pet itself already shows the state (face, lights, bubble, hopping)
         y = PET_H - 2 - TAG_H / 2 + 1.5  # a bit low: badges overlap the top
-        if scrolling:  # pinned left, so the text moves smoothly instead of re-centring on every step
-            c.create_text(7, y, text=name, anchor="w", fill=T["tag_fg"], font=font)
+        if banner:  # coloured pieces; pinned left while scrolling so the text doesn't re-centre on every step
+            pieces, scrolling = banner
+            x = 7 if scrolling else PET_W / 2 - sum(self._text_w(font, t_) for t_, _ in pieces) / 2
+            for text, colour in pieces:
+                c.create_text(x, y, text=text, anchor="w", fill=colour, font=font)
+                x += self._text_w(font, text)
         else:
             c.create_text(PET_W / 2, y, text=name, fill=T["tag_fg"], font=font)
 
     EXPAND, COLLAPSE = "\u25b4", "\u25be"  # compact mode's badges: up to expand, down to collapse
-    TITLE_SEP = "  \u25c6  "  # between titles in compact mode's scrolling name tag
+    # compact mode's banner: each title after its state symbol, both in a faded state colour
+    BANNER_STATES = {"working": ("\u273a", "#6a9fd8"), "needs_input": ("\u2749", "#e07b74"),
+                     "error": ("\u2749", "#e07b74"), "done": ("\u2743", "#6fb88a"), "idle": ("\u2743", "#9aa3ad")}
+    BANNER_GAP = "    "
     BANNER_CPS = 5  # characters per second
 
-    def _title_banner(self, titles, font, room):
-        """Compact mode, nobody waiting: every session's title, separated by a diamond, scrolling through the name tag
-        like a banner (one character at a time; Tk canvases can't clip text). Shown whole if it all fits."""
-        whole = self.TITLE_SEP.join(titles)
+    def _title_banner(self, entries, font, room):
+        """Compact mode: every session's title after its state symbol (working, waiting, done), in a
+        faded state colour, scrolling through the name tag like a banner - one character at a time (Tk canvases can't
+        clip text). Shown whole if it all fits. Returns ([(text, colour)], scrolling)."""
+        chars = []  # (character, colour) for one full round
+        for n, (title, state) in enumerate(entries):
+            sym, colour = self.BANNER_STATES.get(state, ("\u2743", "#9aa3ad"))
+            chars += [(ch, colour) for ch in f"{sym} {title}"]
+            if n < len(entries) - 1:
+                chars += [(ch, colour) for ch in self.BANNER_GAP]
+
+        def pieces(seq):
+            out = []
+            for ch, colour in seq:
+                if out and out[-1][1] == colour:
+                    out[-1][0] += ch
+                else:
+                    out.append([ch, colour])
+            return [(t_, c_) for t_, c_ in out]
+        whole = "".join(ch for ch, _ in chars)
         if self._text_w(font, whole) <= room:
-            return whole, False
-        loop = whole + self.TITLE_SEP
+            return pieces(chars), False
+        loop = chars + [(ch, chars[-1][1]) for ch in self.BANNER_GAP]
         i = int(time.time() * self.BANNER_CPS) % len(loop)
-        text, out = loop[i:] + loop, ""
-        for ch in text:
-            if self._text_w(font, out + ch) > room:
+        seen, text = [], ""
+        for ch, colour in loop[i:] + loop:
+            if self._text_w(font, text + ch) > room:
                 break
-            out += ch
-        return out, True
+            text += ch
+            seen.append((ch, colour))
+        return pieces(seen), True
 
     def _draw_badges(self):
         """Where each session runs: one small pixel box per session ("Claude CLI", "Codex WSL VS"...), styled like the
