@@ -157,7 +157,7 @@ def merge_hooks(settings, command, events=None, timeouts=None):
     return settings
 
 
-def remove_hooks(settings):
+def remove_hooks(settings, previous=None, installed=None):
     settings = dict(settings or {})
     hooks = dict(settings.get("hooks") or {})
     for event in list(hooks):
@@ -171,9 +171,17 @@ def remove_hooks(settings):
         settings["hooks"] = hooks
     else:
         settings.pop("hooks", None)
+    return remove_usage(settings, previous, installed)
+
+
+def remove_usage(settings, previous=None, installed=None):
+    settings = dict(settings)
     status = settings.get("statusLine")
     if isinstance(status, dict) and MARKER.search(str(status.get("command", ""))) and "--usage" in status.get("command", ""):
-        previous = status.get("aipet_previous")
+        if installed is not None and status != installed:
+            return settings  # preserve a status line the user has edited
+        if "aipet_previous" in status:
+            previous = status["aipet_previous"]  # one-time migration of v0.3.1 settings
         if previous is None:
             settings.pop("statusLine", None)
         else:
@@ -181,19 +189,82 @@ def remove_hooks(settings):
     return settings
 
 
-def merge_usage(settings, command):
+def merge_usage(settings, command, previous=None):
     settings = dict(settings)
-    previous = settings.get("statusLine")
-    if isinstance(previous, dict) and MARKER.search(str(previous.get("command", ""))) and "--usage" in previous.get("command", ""):
-        previous = previous.get("aipet_previous")
+    current = settings.get("statusLine")
+    if isinstance(current, dict) and MARKER.search(str(current.get("command", ""))) and "--usage" in current.get("command", ""):
+        if "aipet_previous" in current:
+            previous = current["aipet_previous"]
+    else:
+        previous = current
     # Preserve unfamiliar status line types instead of disabling them.
     if previous and (not isinstance(previous, dict) or previous.get("type") != "command"):
         return settings
     forward = (previous or {}).get("command", "")
     encoded = base64.urlsafe_b64encode(forward.encode("utf-8")).decode("ascii")
     settings["statusLine"] = {**(previous or {}), "type": "command", "command": command + " --usage" +
-                              (" --usage-forward=" + encoded if forward else ""), "aipet_previous": previous}
+                              (" --usage-forward=" + encoded if forward else "")}
     return settings
+
+
+def usage_record_path(key):
+    name = re.sub(r"[^a-zA-Z0-9._-]", "_", key)
+    return os.path.join(PET_DIR, "statuslines", name + ".json")
+
+
+def usage_record(key):
+    try:
+        with open(usage_record_path(key), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def usage_enabled(key):
+    try:
+        _, text = read_raw(key)
+        status = parse_settings(text).get("statusLine")
+        return isinstance(status, dict) and bool(MARKER.search(str(status.get("command", "")))) and "--usage" in status.get("command", "")
+    except Exception:
+        return False
+
+
+def set_usage(key, on):
+    if is_codex(key):
+        raise ValueError("The status-line collector is for Claude Code only")
+    _, text = read_raw(key)
+    settings = parse_settings(text)
+    record = usage_record(key)
+    if on:
+        deploy_files()
+        command = windows_hook_command() if key == "windows" else (mac_hook_command() if key == "mac" else wsl_hook_command(_distro(key)))
+        previous = settings.get("statusLine")
+        if usage_enabled(key):
+            previous = (previous or {}).get("aipet_previous", record.get("previous"))
+        if previous and (not isinstance(previous, dict) or previous.get("type") != "command"):
+            raise RuntimeError("This status line type cannot be safely wrapped. Your settings were kept.")
+        if previous and is_local(key):
+            from aipet_hook import find_statusline_bash
+            if not find_statusline_bash():
+                raise RuntimeError("Bash was not found. Install Git Bash before enabling a collector with an existing status line.")
+        result = merge_usage(settings, command, previous=previous)
+        path = usage_record_path(key)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path + ".tmp", "w", encoding="utf-8") as f:
+            json.dump({"previous": previous, "installed": result.get("statusLine")}, f, indent=2)
+        os.replace(path + ".tmp", path)
+        _apply(key, lambda s: result, "before enabling usage status line")
+    else:
+        _apply(key, lambda s: remove_usage(s, record.get("previous"), record.get("installed")), "before restoring status line")
+    return "Claude usage status-line collector " + ("enabled" if on else "disabled") + ". Restart Claude Code to apply."
+
+
+def migrate_legacy_usage(key):
+    _, text = read_raw(key)
+    status = parse_settings(text).get("statusLine")
+    if isinstance(status, dict) and "aipet_previous" in status and usage_enabled(key):
+        return _apply(key, remove_usage, "restore status line changed by v0.3.1")
+    return False
 
 
 def has_hooks(settings):
@@ -419,13 +490,6 @@ def hooks_state(settings, command, events=None, timeouts=None):
         return "outdated"
     if bad_timeout or any(event not in ours for event, _ in events):
         return "partial"
-    if events == HOOK_EVENTS:
-        status = settings.get("statusLine")
-        if not status:
-            return "partial"  # existing installs need the quota collector too
-        if isinstance(status, dict) and status.get("type") == "command":
-            if not any(str(status.get("command", "")).startswith(c + " --usage") for c in ok):
-                return "partial"
     return "current"
 
 
@@ -680,7 +744,7 @@ def install(key, runtime=None):
                                f"Install it there (e.g. sudo apt install python3) and try again.")
         command = wsl_hook_command(distro)
         where = f"Claude Code in WSL '{distro}' (terminal + VS Code Remote-WSL)"
-    changed = _apply(key, lambda s: merge_usage(merge_hooks(s, command), command), "before install")
+    changed = _apply(key, lambda s: merge_hooks(s, command), "before install")
     if not changed:
         return f"Hooks for {where} are already up to date."
     return f"Hooks installed for {where}.\nA backup was taken first. New sessions will appear in the pet."
@@ -711,7 +775,8 @@ def uninstall(key):
     _, text = read_raw(key)
     if not has_hooks(parse_settings(text)):
         return f"No AIPet hooks found in {describe(key)}."
-    _apply(key, remove_hooks, "before remove")
+    record = usage_record(key)
+    _apply(key, lambda s: remove_hooks(s, record.get("previous"), record.get("installed")), "before remove")
     return f"AIPet hooks removed from {describe(key)}.\nA backup was taken first."
 
 

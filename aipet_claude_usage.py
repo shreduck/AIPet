@@ -20,6 +20,12 @@ URL = "https://api.anthropic.com/api/oauth/usage"
 POLL_SECONDS = 300
 
 
+def enabled(target):
+    # Require explicit consent in the shared pet configuration, including in
+    # detached workers that may have been queued before the user switched it off.
+    return read(os.path.join(os.path.dirname(target), "config.json")).get("claude_oauth_usage") is True
+
+
 def paths(target):
     config = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
     identity = sys.platform + "|" + config + "|" + os.environ.get("WSL_DISTRO_NAME", "")
@@ -98,6 +104,8 @@ def publish(target, sid, cache):
 
 
 def schedule(target, sid, command):
+    if not enabled(target):
+        return
     _, cache_path, lock = paths(target)
     cache = read(cache_path)
     publish(target, sid, cache)
@@ -124,6 +132,12 @@ def schedule(target, sid, command):
 def worker(target, sid):
     config, path, lock = paths(target)
     cache = read(path)
+    if not enabled(target):
+        try:
+            os.rmdir(lock)
+        except OSError:
+            pass
+        return
     now = time.time()
     cache["retry_at"] = now + POLL_SECONDS
     try:

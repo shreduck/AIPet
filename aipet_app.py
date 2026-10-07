@@ -304,6 +304,9 @@ class TrayApp:
         m.insert_cascade(m.index("Codex hooks") + 1, label="Auto approve", menu=auto_menu)
         m.entryconfigure(m.index("Quit"), command=self.quit)
         m.insert_command(m.index("Quit"), label="About AIPet...", command=self.show_about)
+        self.claude_oauth_var = tk.BooleanVar(value=bool(self.pet.cfg.get("claude_oauth_usage", False)))
+        m.insert_checkbutton(m.index("Quit"), label="Claude account usage (unofficial)", variable=self.claude_oauth_var,
+                             command=self.toggle_claude_oauth_usage)
         core.style_menu(m)
 
         self.icon = None
@@ -359,6 +362,11 @@ class TrayApp:
         except Exception:
             pass
         self.refresh_targets()
+        for key in [hi.LOCAL] + ["wsl:" + n for n, state in self.distros if state.lower() == "running"]:
+            try:
+                hi.migrate_legacy_usage(key)  # backup and restore v0.3.1's automatic wrapper once
+            except Exception as e:
+                core.log_error(f"restore legacy status line for {key}: {e!r}")
         self.ui(lambda: self.root.after(20000, self.legacy_tick))  # LEGACY: daily reminder about old-name hooks
         self.ui(lambda: self.root.after(30000, self.update_tick))
         self.ui(self._show_update_in_menus)
@@ -698,6 +706,8 @@ class TrayApp:
             sub = tk.Menu(menu, tearoff=0)
             sub.add_command(label="Install / update hooks", command=lambda: self.confirm(key, True))
             sub.add_command(label="Remove hooks", command=lambda: self.confirm(key, False))
+            if not codex:
+                sub.add_command(label="Claude usage status line...", command=lambda: self.confirm_usage(key))
             sub.add_separator()
             rest = tk.Menu(sub, tearoff=0)
             backups = hi.list_backups(key)[:15]
@@ -1169,6 +1179,7 @@ class TrayApp:
             return I(label(name, key), M(
                 I("Install / update hooks", act(self.confirm, key, True)),
                 I("Remove hooks", act(self.confirm, key, False)),
+                I("Claude usage status line...", act(self.confirm_usage, key), visible=not hi.is_codex(key)),
                 M.SEPARATOR,
                 I("Restore backup", M(*restore_items(key))),
                 I("Back up now", act(self.start_job, key, "backup")),
@@ -1238,6 +1249,8 @@ class TrayApp:
             I("Tooltips", M(*[I(label, act(lambda k=kind: self.pet.set_tooltip(k, not self.pet.cfg.get(k + "_tooltips", True))),
                                  checked=lambda item, k=kind: bool(self.pet.cfg.get(k + "_tooltips", True)))
                                 for kind, label in (("session", "Session details"), ("usage", "Usage details"))])),
+            I("Claude account usage (unofficial)", act(self.toggle_claude_oauth_usage),
+              checked=lambda item: bool(self.pet.cfg.get("claude_oauth_usage", False))),
             I("Answer Codex prompts from the pet", act(lambda: self.pet.set_codex_answers(not self.pet.cfg.get("codex_answers"))),
               checked=lambda item: bool(self.pet.cfg.get("codex_answers"))),
             I("Log hook events (debug)", act(self.toggle_debug), checked=lambda item: os.path.exists(DEBUG_FLAG)),
@@ -1268,6 +1281,7 @@ class TrayApp:
             return item(f"{'✓ ' if st.startswith('installed') else ''}{name}  ({st})", submenu=[
                 item("Install / update hooks", lambda: self.confirm(key, True)),
                 item("Remove hooks", lambda: self.confirm(key, False)),
+                *([] if hi.is_codex(key) else [item("Claude usage status line...", lambda: self.confirm_usage(key))]),
                 None,
                 item("Restore backup", submenu=restore),
                 item("Back up now", lambda: self.start_job(key, "backup")),
@@ -1309,6 +1323,8 @@ class TrayApp:
             item("Tooltips", submenu=[item(label, lambda k=kind: self.pet.set_tooltip(k, not cfg.get(k + "_tooltips", True)),
                                            checked=bool(cfg.get(kind + "_tooltips", True)))
                                       for kind, label in (("session", "Session details"), ("usage", "Usage details"))]),
+            item("Claude account usage (unofficial)", self.toggle_claude_oauth_usage,
+                 checked=bool(cfg.get("claude_oauth_usage", False))),
             item("Answer Codex prompts from the pet", lambda: self.pet.set_codex_answers(not cfg.get("codex_answers")),
                  checked=bool(cfg.get("codex_answers"))),
             item("Mute sounds", self.toggle_mute, checked=self.c_muted),
@@ -1359,8 +1375,9 @@ class TrayApp:
             link = tk.Label(win, text=label, fg="#5b8def", bg=bg, cursor="hand2", padx=12, pady=6)
             link.pack()
             link.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
-        tk.Button(win, text="Close", command=win.destroy).pack(pady=(16, 24))
+        tk.Button(win, text="Close", command=win.destroy, **core.button_style("secondary")).pack(pady=(16, 24))
         win.bind("<Escape>", lambda e: win.destroy())
+        core.theme_window(win)
 
     def _dialog_parent(self):
         top = tk.Toplevel(self.root)
@@ -1390,12 +1407,41 @@ class TrayApp:
             finally:
                 p.destroy()
 
+    def toggle_claude_oauth_usage(self):
+        on = not self.pet.cfg.get("claude_oauth_usage", False)
+        if on and not self.ask("Enable experimental Claude account usage?\n\n"
+                               "This reads Claude Code's sign-in token and calls an unofficial endpoint. "
+                               "It is not part of Anthropic's public API and might change or break in the future. "
+                               "Anthropic restricts third-party use of subscription credentials; check that your use is permitted. "
+                               "On macOS, accessing the Keychain may prompt for permission.\n\n"
+                               "Requests run in the background, at most once every five minutes per login store. "
+                               "AIPet saves usage figures, not your token. Disable this toggle at any time."):
+            self.claude_oauth_var.set(False)
+            return
+        self.pet.cfg["claude_oauth_usage"] = bool(on)
+        core.save_setting("claude_oauth_usage", bool(on))
+        self.claude_oauth_var.set(bool(on))
+        self.pet.hide_tip()
+
+    def confirm_usage(self, key):
+        on = not hi.usage_enabled(key)
+        text = (f"Enable Claude's CLI usage collector for {hi.describe(key)}?\n\n"
+                "This changes Claude Code's status line. If you have one, AIPet runs your existing command through Bash "
+                "after recording Claude's usage data, adding a process on each refresh. If you have none, it adds a line "
+                "showing usage percentages. The previous setting is saved in ~/.aipet and restored when disabled.\n\n"
+                "This works in the CLI; VS Code and desktop sessions may not provide usage data. "
+                "AIPet does not read sign-in credentials or the Keychain.") if on else (
+                f"Disable Claude usage collection for {hi.describe(key)} and restore your previous status line?")
+        if self.ask(text):
+            self.start_job(key, "usage", on)
+
     def confirm(self, key, install):
         where = hi.describe(key)
         if install:
             text = (f"Add AIPet hooks to:\n{where}\n\nYour existing hooks and settings are kept, and the "
                     f"current file is backed up first (tray > Claude Code hooks > Restore backup).\n"
                     f"Only sessions started afterwards will show up."
+                    + ("\n\nClaude usage collection is a separate, optional setting in this menu." if not hi.is_codex(key) else "")
                     + ("\n\nCodex then asks you to trust the new hooks once: run /hooks in Codex." if hi.is_codex(key) else ""))
         else:
             text = f"Remove AIPet hooks from:\n{where}\n\nOther hooks are left untouched and a backup is taken first."
@@ -1429,6 +1475,8 @@ class TrayApp:
                 msg = hi.install(key)
             elif action == "remove":
                 msg = hi.uninstall(key)
+            elif action == "usage":
+                msg = hi.set_usage(key, bool(arg))
             elif action == "restore":
                 msg = hi.restore_backup(key, arg)
             else:

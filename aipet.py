@@ -62,6 +62,7 @@ DEFAULT_CONFIG = {
     "click_to_focus": True,  # clicking a pet (or a badge) brings its session's window to the front
     "session_tooltips": True,
     "usage_tooltips": True,
+    "claude_oauth_usage": False,  # experimental credential-based quota requests require explicit consent
     "all_spaces": True,  # show the pet on every virtual desktop / macOS Space
     "session_titles": "name",  # extra title for same-folder sessions: "name" (the harness's name) or "prompt" (latest prompt)
     "codex_answers": True,  # answer Codex permission prompts in the pet's prompt window (Codex waits for it first)  # one pet for all sessions (a robot per session) instead of one pet per session
@@ -155,7 +156,8 @@ BADGE_GUTTER = 0  # extra width on the pet's left (badges now sit on the name ta
 TAG_H = 19  # name tag height (one unit taller than it was, for the name + conversation title lines)
 TOP_TRIM = 14  # the empty strip the badges used to take above the bubble
 CANVAS_W, CANVAS_H = PET_W + BADGE_GUTTER, PET_H - TOP_TRIM
-USAGE_GUTTER = 18  # a narrow quota rail; keep idle / active widths consistent
+USAGE_GUTTER = 0  # individual pets reserve quota space only when they show readings
+USAGE_EDGE_ROOM = 18  # one shared margin keeps the rightmost pet stable as usage appears
 INK = "#1f2937"
 MOUND, MOUND_DARK = "#a16207", "#713f12"
 EMERGE_SECONDS, EMERGE_DEPTH, EMERGE_STAGGER = 0.7, 62, 0.25
@@ -863,7 +865,7 @@ def read_claude_code_sessions(cfg):
             "auto_kind": rec.get("auto_kind", ""),
             "auto_what": rec.get("auto_what", ""),
             "conv": session_title(rec, cfg.get("session_titles", "name")),
-            "usage": usage.load(path),
+            "usage": [r for r in usage.load(path) if cfg.get("claude_oauth_usage", False) or not r.get("provider", "").startswith("Claude Code account")],
             "updated": rec.get("updated", 0),
         })
     return items
@@ -1429,7 +1431,8 @@ class Pet:
             self.gutter = gutter
             self.usage_extra = extra
             c.config(width=px(CANVAS_W + gutter + extra))
-            self.app.shift_for_width(delta)  # move and resize in the same redraw: no flash of the pet sideways
+            delta += self.app._sync_usage_padding()
+            self.app.shift_for_width(delta)  # update the canvas and shared margin in the same redraw
         self._finish()
         self._update_usage_hover()
 
@@ -2873,7 +2876,8 @@ class PetApp:
         self.stack = tk.Frame(root, bg=TRANSPARENT)  # notification bubbles, stacked above the pets
         self.stack.pack(side="top", anchor="e")
         self.frame = tk.Frame(root, bg=TRANSPARENT)
-        self.frame.pack(side="top", anchor="e")
+        self._usage_frame_pad = px(USAGE_EDGE_ROOM)
+        self.frame.pack(side="top", anchor="e", padx=(0, self._usage_frame_pad))
 
         self.pets, self.order, self.prev_states = {}, [], {}
         self.details = {}
@@ -3032,6 +3036,7 @@ class PetApp:
                 for k in keys:
                     self.pets[k].canvas.pack(side="left", padx=2)
                 self.order = keys
+                self._sync_usage_padding()
                 self.reposition()
 
             self.sync_bubbles(real)
@@ -3125,6 +3130,7 @@ class PetApp:
         SCALE["v"] = v
         for pet in self.pets.values():
             pet.canvas.config(width=px(CANVAS_W + getattr(pet, "gutter", 0) + getattr(pet, "usage_extra", 0)), height=px(CANVAS_H))
+        self._sync_usage_padding()
 
     def _place_above_pet(self, w):
         """Put a small window directly above the pet overlay, centred on it (just below it if there is no room)."""
@@ -3486,6 +3492,17 @@ class PetApp:
                 self.dismiss_item(it)
 
     # ---- window
+    def _sync_usage_padding(self):
+        """Share one right margin across the overlay instead of padding every pet."""
+        last = self.pets.get(self.order[-1]) if self.order else None
+        extra = getattr(last, "usage_extra", 0) if last else 0
+        padding = max(0, px(USAGE_EDGE_ROOM - extra))
+        delta = padding - self._usage_frame_pad
+        if delta:
+            self._usage_frame_pad = padding
+            self.frame.pack_configure(padx=(0, padding))
+        return delta
+
     def reposition(self, ref=None):
         """Keep the bottom-right corner (the anchor) where it is while the pets change size, but inside the monitor the
         pet is on. That monitor is found from the middle of the window as it is now, not from the anchor: an anchor

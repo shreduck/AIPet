@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import shutil
 import time
 import unittest
 from unittest.mock import MagicMock, patch
@@ -70,15 +71,27 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(pet.canvas.create_text.call_count, 10)
         self.assertEqual(pet.canvas.create_rectangle.call_count, 10)
 
-    def test_usage_does_not_change_idle_canvas_width(self):
+    def test_unused_pets_do_not_reserve_a_usage_strip(self):
         pet = aipet.Pet.__new__(aipet.Pet)
         pet.canvas = MagicMock()
         pet._char_w = lambda font: 3
         pet.data = {"state": "idle"}
         idle_width = pet._draw_usage()
         pet.data = {"agent": "claude", "usage": [{"window": "5h", "percent": 100}]}
-        self.assertEqual(pet._draw_usage(), idle_width)
+        self.assertGreater(pet._draw_usage(), idle_width)
         self.assertEqual(idle_width, aipet.USAGE_GUTTER)
+        self.assertEqual(idle_width, 0)
+
+    def test_shared_margin_keeps_rightmost_position_stable(self):
+        app = aipet.PetApp.__new__(aipet.PetApp)
+        pet = MagicMock()
+        pet.usage_extra = 0
+        app.pets, app.order = {"pet": pet}, ["pet"]
+        app.frame = MagicMock()
+        app._usage_frame_pad = aipet.px(aipet.USAGE_EDGE_ROOM)
+        pet.usage_extra = 12
+        adjustment = app._sync_usage_padding()
+        self.assertEqual(adjustment + aipet.px(12), 0)
 
     def test_usage_badge_sits_beside_lower_body(self):
         pet = aipet.Pet.__new__(aipet.Pet)
@@ -145,6 +158,7 @@ class UsageTests(unittest.TestCase):
             _, path, lock = claude_usage.paths(target)
             Path(path).parent.mkdir()
             Path(lock).mkdir()
+            (Path(folder) / "config.json").write_text('{"claude_oauth_usage": true}')
             with patch.object(claude_usage, "access_token", return_value="test-credential-placeholder"), patch.object(claude_usage, "fetch", return_value={"five_hour": {"used_percentage": 50, "resets_at": time.time() + 500}}):
                 claude_usage.worker(target, "test")
             self.assertFalse(Path(lock).exists())
@@ -158,6 +172,7 @@ class UsageTests(unittest.TestCase):
             target = str(Path(folder) / "sessions")
             _, path, _ = claude_usage.paths(target)
             Path(path).parent.mkdir()
+            (Path(folder) / "config.json").write_text('{"claude_oauth_usage": true}')
             stamp = time.time() - 40
             Path(path).write_text(json.dumps({"limits": {"five_hour": {"used_percentage": 40}}, "updated": stamp,
                                              "retry_at": time.time() + 200}))
@@ -179,6 +194,7 @@ class UsageTests(unittest.TestCase):
             _, path, lock = claude_usage.paths(target)
             Path(path).parent.mkdir()
             Path(lock).mkdir()
+            (Path(folder) / "config.json").write_text('{"claude_oauth_usage": true}')
             stamp = time.time() - 100
             Path(path).write_text(json.dumps({"limits": {"five_hour": {"used_percentage": 40}}, "updated": stamp}))
             error = aipet_update.urllib.error.HTTPError(claude_usage.URL, 429, "too many requests", {}, None)
@@ -189,14 +205,114 @@ class UsageTests(unittest.TestCase):
             self.assertEqual(cache["updated"], stamp)
             self.assertFalse(Path(lock).exists())
 
+    def test_oauth_is_off_without_explicit_consent(self):
+        self.assertFalse(aipet.DEFAULT_CONFIG["claude_oauth_usage"])
+        with tempfile.TemporaryDirectory() as folder:
+            target = str(Path(folder) / "sessions")
+            with patch.object(claude_usage, "access_token") as credentials, patch.object(claude_usage.subprocess, "Popen") as spawn:
+                claude_usage.schedule(target, "test", ["hook"])
+                claude_usage.worker(target, "test")
+            credentials.assert_not_called()
+            spawn.assert_not_called()
+
+    def test_queued_oauth_worker_rechecks_opt_out(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = str(Path(folder) / "sessions")
+            _, path, lock = claude_usage.paths(target)
+            Path(path).parent.mkdir()
+            Path(lock).mkdir()
+            (Path(folder) / "config.json").write_text('{"claude_oauth_usage": false}')
+            with patch.object(claude_usage, "access_token") as credentials:
+                claude_usage.worker(target, "test")
+            credentials.assert_not_called()
+            self.assertFalse(Path(lock).exists())
+
+    def test_legacy_statusline_migration_restores_previous(self):
+        original = {"type": "command", "command": "echo original", "padding": 2}
+        legacy = {"statusLine": {"type": "command", "command": "aipet-hook --usage", "aipet_previous": original}}
+        self.assertEqual(installer.remove_usage(legacy)["statusLine"], original)
+
+    def test_usage_restore_preserves_manual_edits(self):
+        settings = {"statusLine": {"type": "command", "command": "aipet-hook --usage --manual-edit"}}
+        self.assertEqual(installer.remove_usage(settings, previous={"type": "command", "command": "old"},
+                                               installed={"type": "command", "command": "aipet-hook --usage"}), settings)
+
+    def test_opt_in_statusline_restore_metadata_lives_outside_settings(self):
+        before = installer.merge_hooks({"statusLine": {"type": "command", "command": "printf original", "padding": 2}}, "aipet-hook")
+        state = {"text": json.dumps(before)}
+        def write(key, text):
+            state["text"] = text
+        with tempfile.TemporaryDirectory() as folder, patch.object(installer, "PET_DIR", folder), patch.object(installer, "read_raw", side_effect=lambda key: (True, state["text"])), patch.object(installer, "write_raw", side_effect=write), patch.object(installer, "_save_backup") as backup, patch.object(installer, "deploy_files"), patch.object(installer, "windows_hook_command", return_value="aipet-hook"), patch.object(aipet_hook, "find_statusline_bash", return_value="bash"):
+            installer.set_usage("windows", True)
+            installed = json.loads(state["text"])
+            self.assertNotIn("aipet_previous", installed["statusLine"])
+            record = installer.usage_record("windows")
+            self.assertEqual(record["previous"], before["statusLine"])
+            self.assertIn("statuslines", installer.usage_record_path("windows"))
+            installer.set_usage("windows", False)
+            self.assertEqual(json.loads(state["text"]), before)
+            self.assertEqual(backup.call_count, 2)
+
+    def test_hook_install_keeps_statusline_unchanged(self):
+        before = {"statusLine": {"type": "command", "command": "printf original"}}
+        state = {"text": json.dumps(before)}
+        with patch.object(installer, "read_raw", side_effect=lambda key: (True, state["text"])), patch.object(installer, "write_raw", side_effect=lambda key, text: state.update(text=text)), patch.object(installer, "_save_backup"), patch.object(installer, "deploy_files"), patch.object(installer, "windows_hook_command", return_value="aipet-hook"):
+            installer.install("windows")
+        self.assertEqual(json.loads(state["text"])["statusLine"], before["statusLine"])
+
+    def test_usage_failure_does_not_skip_permission_hook(self):
+        with tempfile.TemporaryDirectory() as folder:
+            data = {"hook_event_name": "PermissionRequest", "session_id": "test", "rate_limits": {"five_hour": {"used_percentage": 40}}}
+            with patch.object(aipet_hook, "read_stdin", return_value=json.dumps(data)), patch.object(aipet_hook, "is_wsl", return_value=False), patch.object(aipet_hook, "sessions_dir", return_value=str(Path(folder) / "sessions")), patch.object(aipet_hook, "AGENT", "claude"), patch.object(usage, "save", side_effect=PermissionError("usage read-only")), patch.object(aipet_hook, "auto_decision", return_value=None), patch.object(aipet_hook, "_update_session", return_value="approval-id") as update, patch.object(aipet_hook, "answer_flow") as answer:
+                aipet_hook.main()
+            update.assert_called_once()
+            answer.assert_called_once()
+
+    def test_hook_operates_without_optional_modules(self):
+        with tempfile.TemporaryDirectory() as folder:
+            script = Path(folder) / "aipet_hook.py"
+            shutil.copyfile(aipet_hook.__file__, script)
+            data = {"hook_event_name": "UserPromptSubmit", "session_id": "isolated", "cwd": folder, "prompt": "test"}
+            result = subprocess.run([sys.executable, str(script)], input=json.dumps(data), text=True, capture_output=True,
+                                    cwd=folder, env={**os.environ, "PYTHONPATH": "", "AIPET_DIR": folder}, timeout=10)
+            self.assertEqual(result.returncode, 0)
+            rec = json.loads((Path(folder) / "sessions" / "isolated.json").read_text())
+            self.assertEqual(rec["state"], "working")
+
+    def test_unchanged_codex_rollout_is_not_read_again(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = str(Path(folder) / "sessions")
+            rollout = Path(folder) / "rollout.jsonl"
+            rollout.write_text(json.dumps({"payload": {"type": "token_count", "rate_limits": {"primary": {"used_percent": 42}}}}))
+            aipet_hook.capture_codex_usage(target, "test", {"transcript_path": str(rollout)}, {})
+            import builtins
+            original = builtins.open
+            def guarded(path, *args, **kwargs):
+                if str(path) == str(rollout):
+                    self.fail("unchanged rollout was opened")
+                return original(path, *args, **kwargs)
+            with patch("builtins.open", side_effect=guarded):
+                aipet_hook.capture_codex_usage(target, "test", {"transcript_path": str(rollout)}, {})
+
+    def test_existing_statusline_runs_in_bash(self):
+        if not aipet_hook.find_statusline_bash():
+            self.skipTest("Bash unavailable")
+        with tempfile.TemporaryDirectory() as folder:
+            encoded = base64.urlsafe_b64encode(b"printf 'bash status line\\n'").decode()
+            result = subprocess.run([sys.executable, aipet_hook.__file__, "--usage", "--usage-forward=" + encoded],
+                                    input=json.dumps({"session_id": "test"}), text=True, capture_output=True,
+                                    env={**os.environ, "AIPET_DIR": folder}, timeout=10)
+            self.assertEqual(result.stdout, "bash status line\n")
+
     def test_statusline_preserved_and_restored(self):
         before = {"statusLine": {"type": "command", "command": "echo original", "padding": 3}, "other": "keep"}
         installed = installer.merge_usage(installer.merge_hooks(before, "aipet-hook"), "aipet-hook")
         encoded = installed["statusLine"]["command"].split("--usage-forward=", 1)[1]
         self.assertEqual(base64.urlsafe_b64decode(encoded).decode(), "echo original")
         self.assertEqual(installed["statusLine"]["padding"], 3)
-        self.assertEqual(installer.remove_hooks(installed), before)
-        self.assertEqual(installer.merge_usage(installed, "aipet-hook"), installed)
+        self.assertNotIn("aipet_previous", installed["statusLine"])
+        self.assertEqual(installer.remove_hooks(installed, previous=before["statusLine"], installed=installed["statusLine"]), before)
+        self.assertEqual(installer.merge_usage(installed, "aipet-hook", previous=before["statusLine"]), installed)
 
     def test_statusline_removal_when_previously_absent(self):
         installed = installer.merge_usage(installer.merge_hooks({}, "aipet-hook"), "aipet-hook")
@@ -207,9 +323,9 @@ class UsageTests(unittest.TestCase):
         installed["statusLine"] = {"type": "command", "command": "echo changed"}
         self.assertEqual(installer.remove_hooks(installed)["statusLine"], installed["statusLine"])
 
-    def test_existing_install_is_marked_for_quota_upgrade(self):
+    def test_hook_status_does_not_require_a_usage_collector(self):
         settings = installer.merge_hooks({}, "aipet-hook")
-        self.assertEqual(installer.hooks_state(settings, "aipet-hook"), "partial")
+        self.assertEqual(installer.hooks_state(settings, "aipet-hook"), "current")
         settings = installer.merge_usage(settings, "aipet-hook")
         self.assertEqual(installer.hooks_state(settings, "aipet-hook"), "current")
         codex = installer.merge_hooks({}, "aipet-hook --codex", installer.CODEX_HOOK_EVENTS, installer.CODEX_HOOK_TIMEOUTS)
@@ -246,6 +362,13 @@ class UsageTests(unittest.TestCase):
             self.assertEqual(aipet_update.latest_release()["tag"], "v1.0.0")
             context.load_verify_locations.assert_called_once_with(cafile="trusted-ca.pem")
             self.assertIs(urlopen.call_args.kwargs["context"], context)
+
+    def test_source_update_check_without_certifi(self):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = b'{"tag_name":"v1.0.0"}'
+        with patch.dict(sys.modules, {"certifi": None}), patch.object(aipet_update.ssl, "create_default_context") as context, patch.object(aipet_update.urllib.request, "urlopen", return_value=response):
+            self.assertEqual(aipet_update.latest_release()["tag"], "v1.0.0")
+            context.return_value.load_verify_locations.assert_not_called()
 
     def test_ci_rate_limit_response_confirms_tls(self):
         error = aipet_update.urllib.error.HTTPError(aipet_update.API_URL, 403, "rate limit exceeded",

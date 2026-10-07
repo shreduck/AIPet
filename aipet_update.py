@@ -66,8 +66,11 @@ def latest_release(timeout=10, token=None):
     context = ssl.create_default_context()
     # Frozen macOS Python often has no system CA path. Keep platform trust and
     # supplement it with the CA bundle shipped with the app.
-    import certifi
-    context.load_verify_locations(cafile=certifi.where())
+    try:
+        import certifi
+        context.load_verify_locations(cafile=certifi.where())
+    except ImportError:  # source installs may rely on the platform's CA store
+        pass
     with urllib.request.urlopen(req, timeout=timeout, context=context) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     tag = str(data.get("tag_name") or "")

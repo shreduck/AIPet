@@ -32,11 +32,18 @@ import base64
 import glob
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
-import aipet_usage as usage
-import aipet_claude_usage as claude_usage
+try:
+    import aipet_usage as usage
+except Exception:  # optional display data must never disable session hooks
+    usage = None
+try:
+    import aipet_claude_usage as claude_usage
+except Exception:
+    claude_usage = None
 
 AGENT = "codex" if "--codex" in sys.argv[1:] else "claude"
 WORKING_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart"}
@@ -1018,7 +1025,22 @@ def codex_raw_log(raw, base):
         pass
 
 
+def find_statusline_bash():
+    if os.name != "nt":
+        return shutil.which("bash")
+    candidates = [os.environ.get("CLAUDE_CODE_GIT_BASH_PATH")]
+    git = shutil.which("git")
+    if git:
+        candidates.append(os.path.join(os.path.dirname(os.path.dirname(git)), "bin", "bash.exe"))
+    for root in (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)"), os.environ.get("LOCALAPPDATA")):
+        if root:
+            candidates += [os.path.join(root, "Git", "bin", "bash.exe"), os.path.join(root, "Programs", "Git", "bin", "bash.exe")]
+    return next((p for p in candidates if p and os.path.isfile(p)), None)
+
+
 def capture_codex_usage(target, sid, data, previous):
+    if usage is None:
+        return
     limits = data.get("rate_limits")
     if isinstance(limits, dict):
         usage.save(target, sid, limits)
@@ -1033,6 +1055,11 @@ def capture_codex_usage(target, sid, data, previous):
     if not transcript:
         return
     try:
+        stat = os.stat(transcript)
+        fingerprint = [transcript, stat.st_mtime_ns, stat.st_size]
+        cache = os.path.join(os.path.dirname(target), "usage", sid + ".rollout.json")
+        if read_json(cache).get("fingerprint") == fingerprint:
+            return
         # Read only the tail: rollouts can contain many megabytes of tool output.
         with open(transcript, "rb") as f:
             f.seek(0, os.SEEK_END)
@@ -1050,6 +1077,8 @@ def capture_codex_usage(target, sid, data, previous):
             if payload.get("type") == "token_count" and isinstance(payload.get("rate_limits"), dict):
                 usage.save(target, sid, payload["rate_limits"])
                 break
+        os.makedirs(os.path.dirname(cache), exist_ok=True)
+        write_atomic(cache, {"fingerprint": fingerprint})
     except OSError:
         pass
 
@@ -1068,33 +1097,40 @@ def main():
     target = sessions_dir(wsl)
     os.makedirs(target, exist_ok=True)
     path = os.path.join(target, safe_name(session_id) + ".json")
-    worker_sid = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--claude-usage-worker=")), None)
-    if worker_sid:
-        claude_usage.worker(target, safe_name(worker_sid))
+    if any(a.startswith("--claude-usage-worker=") for a in sys.argv[1:]):
+        sid = next(a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--claude-usage-worker="))
+        if claude_usage is not None:
+            claude_usage.worker(target, safe_name(sid))
         return
     if "--usage" in sys.argv[1:]:
-        usage.save(target, safe_name(session_id), data.get("rate_limits"))
+        try:
+            if usage is not None:
+                usage.save(target, safe_name(session_id), data.get("rate_limits"))
+        except Exception:
+            pass
         forward = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--usage-forward=")), "")
         if forward:
             command = base64.urlsafe_b64decode(forward).decode("utf-8")
-            result = subprocess.run(command, shell=True, input=raw, text=True, capture_output=True, timeout=5,
+            bash = find_statusline_bash()
+            if not bash:
+                return  # never reinterpret a Bash command through cmd.exe
+            result = subprocess.run([bash, "-c", command], input=raw, text=True, capture_output=True, timeout=5,
                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             write_stdout(result.stdout)
         else:
-            rows = usage.normalize(data.get("rate_limits"))
+            rows = usage.normalize(data.get("rate_limits")) if usage is not None else []
             write_stdout(" · ".join(f"{r['window']} {r['percent']}% used" for r in rows))
         return
-    if AGENT == "codex":
-        capture_codex_usage(target, safe_name(session_id), data, read_json(path))
-    elif event != "SessionEnd":
-        if usage.normalize(data.get("rate_limits")):
-            usage.save(target, safe_name(session_id), data["rate_limits"])
-        else:
-            try:
+    try:
+        if AGENT == "codex":
+            capture_codex_usage(target, safe_name(session_id), data, read_json(path))
+        elif usage is not None and event != "SessionEnd":
+            usage.save(target, safe_name(session_id), data.get("rate_limits"))
+            if not usage.normalize(data.get("rate_limits")) and claude_usage is not None:
                 command = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, os.path.abspath(__file__)]
                 claude_usage.schedule(target, safe_name(session_id), command)
-            except Exception:
-                pass  # quota collection must never affect permission handling
+    except Exception:
+        pass  # usage write/read failures cannot skip session updates or approvals
     codex_raw_log(raw, os.path.dirname(target))  # TEMP (Codex testing)
 
     if event == "SessionEnd" and (is_cowork() or read_json(path).get("app") == "cowork"):
