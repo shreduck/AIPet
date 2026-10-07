@@ -2,6 +2,7 @@
 dist/
 build/
 *.spec
+_build_version.py
 # python
 __pycache__/
 *.pyc

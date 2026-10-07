@@ -227,6 +227,17 @@ A finished session's pet is cleared after the **done timeout**: right-click > *C
 - There is no "always allow" button: that needs a permission-rule format I haven't verified. The VS Code extension does
   not send `PermissionRequest` events, so its prompts keep the read-only bubble.
 
+## New versions
+Once a day (and from *Check for updates...* in the right-click, tray or menu-bar menu) AIPet asks GitHub for the newest
+published release, i.e. the newest `vX.Y.Z` tag (the rolling *latest* pre-release is ignored). If it is newer than the
+running copy, a popup offers *Open release page*, *Later* or *Skip this version*, and the menus show *Update available:
+vX.Y.Z...* until you install it. Nothing is downloaded or installed automatically: download the new `AIPet.exe` /
+`AIPet-mac-arm64.zip`, quit AIPet and replace your copy (settings, hooks and backups in `~/.aipet` are kept).
+- Turn the daily check off with *Check for updates automatically* (saved as `update_check`).
+- The menus show the running version (*AIPet v0.2.4*). Builds take it from `git describe` (`tools/write_version.py`,
+  run by `build.bat`, `build_mac.sh` and CI), so a local build two commits after v0.2.4 reads `v0.2.4-2-g<commit>` and
+  counts as v0.2.4.
+
 ## Theme, diagnostics
 - **Testing on macOS without a Mac:** run the **macOS self-test** workflow by hand (Actions tab). It starts the app on an Apple Silicon runner with fake sessions (`tools/seed_sessions.py`) and uploads screenshots plus the diagnostics report, for the packaged app and for the source.
 - **Save diagnostics...** (pet right-click) writes `~/.aipet/diagnostics.txt` and opens it: versions, sprite loading, image tests, window state and recent errors. No prompts or session contents. Send it along with bug reports from machines that can't be tested here.

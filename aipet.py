@@ -57,6 +57,7 @@ DEFAULT_CONFIG = {
     # here, so an old absolute "scale" value in config.json can still be migrated once.
     "remind_seconds": 90,
     "compact": False,
+    "update_check": True,  # look for a new AIPet release on GitHub once a day (tells you; never installs anything)
     "click_to_focus": True,  # clicking a pet (or a badge) brings its session's window to the front
     "all_spaces": True,  # macOS: show the pet on every desktop (Space), also over full-screen apps
     "session_titles": "name",  # extra title for same-folder sessions: "name" (the harness's name) or "prompt" (latest prompt)
@@ -1991,6 +1992,7 @@ def diagnostics_report(app=None):
             add(name, "FAILED\n    " + traceback.format_exc(limit=3).strip().replace("\n", "\n    "))
 
     add("time", time.strftime("%Y-%m-%d %H:%M:%S"))
+    attempt("version", lambda: __import__("aipet_update").current_version())
     add("platform", f"{platform.platform()} ({platform.machine()})")
     add("python", f"{sys.version.split()[0]} frozen={getattr(sys, 'frozen', False)} exe={sys.executable}")
     add("meipass", getattr(sys, "_MEIPASS", "-"))

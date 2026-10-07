@@ -7,6 +7,9 @@ where py >nul 2>&1 && (set "PY=py -3") || (set "PY=python")
 echo [1/3] Installing build dependencies...
 %PY% -m pip install --upgrade -r requirements.txt || goto :err
 
+echo Version...
+%PY% tools\write_version.py || goto :err
+
 echo [2/3] Building the hook (no console, fast start)...
 %PY% -m PyInstaller --noconfirm --clean --windowed --onedir --name aipet-hook aipet_hook.py || goto :err
 

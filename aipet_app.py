@@ -16,11 +16,13 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 import webbrowser
 from tkinter import messagebox
 
 import aipet as core
+import aipet_update as upd
 import hooks_installer as hi
 import legacy  # LEGACY: moving over from Claude Pet
 
@@ -255,6 +257,11 @@ class TrayApp:
         self.c_notify = bool(self.pet.cfg.get("notifications", False))
         self.c_wb = "off"
         self.c_auto = core.auto_approve_targets()  # hook configs with auto-approval on (all off by default)
+        self.version = upd.current_version()
+        self.update_state = upd.State(core.HOME_DIR)
+        found = self.update_state.load().get("latest") or {}
+        self.update_info = found if upd.is_newer(found.get("tag"), self.version) else None  # a newer release, if any
+        self._update_busy = False
         self._icon_key = None
 
         self.pet.on_alert = self.on_alert
@@ -295,6 +302,8 @@ class TrayApp:
         auto_menu = tk.Menu(m, tearoff=0)
         auto_menu.configure(postcommand=lambda: self._fill_auto_menu(auto_menu))
         m.insert_cascade(m.index("Codex hooks") + 1, label="Auto approve", menu=auto_menu)
+        m.insert_command(m.index("Quit"), label="Check for updates...", command=lambda: self.check_updates(True))
+        self.update_menu_index = m.index("Check for updates...")
         m.entryconfigure(m.index("Quit"), command=self.quit)
         core.style_menu(m)
 
@@ -352,6 +361,8 @@ class TrayApp:
             pass
         self.refresh_targets()
         self.ui(lambda: self.root.after(20000, self.legacy_tick))  # LEGACY: daily reminder about old-name hooks
+        self.ui(lambda: self.root.after(30000, self.update_tick))
+        self.ui(self._show_update_in_menus)
         stale = [k for k, v in self.status.items() if v == hi.STALE]
         if not setup_is_done():
             self.ui(self.show_setup)  # first run: shows what is installed / up to date / outdated per target
@@ -902,6 +913,85 @@ class TrayApp:
         self._icon_key = None  # the tray tooltip says when auto approve is on
         self.refresh_menu()
 
+    # ---- new version check (GitHub releases; tells you and opens the page, never installs anything)
+    def update_tick(self):
+        """Tk thread: check once a day while automatic checks are on (looked at every hour)."""
+        if self.pet.cfg.get("update_check", True) and self.update_state.due():
+            self.check_updates(False)
+        self.root.after(3600 * 1000, self.update_tick)
+
+    def check_updates(self, manual=False):
+        if self._update_busy:
+            return
+        self._update_busy = True
+
+        def job():
+            try:
+                latest = upd.latest_release()
+            except Exception as e:
+                self.update_state.save(last_check=time.time(), error=repr(e)[:200])
+                if manual:
+                    err = f"Couldn't check for a new version:\n{e}\n\nReleases: {upd.RELEASES_URL}"
+                    self.ui(lambda: self.info(err, error=True))
+                return
+            finally:
+                self._update_busy = False
+            state = self.update_state.save(last_check=time.time(), latest=latest, error="")
+            newer = upd.is_newer(latest["tag"], self.version)
+            self.update_info = latest if newer else None
+            self.ui(self._show_update_in_menus)
+            if manual:
+                self.ui(lambda: self._update_dialog(latest, newer, manual=True))
+            elif newer and latest["tag"] not in (state.get("skipped"), state.get("notified")):
+                self.update_state.save(notified=latest["tag"])
+                self.ui(lambda: self._update_dialog(latest, True))
+        threading.Thread(target=job, daemon=True).start()
+
+    def _update_dialog(self, latest, newer, manual=False):
+        if not newer:
+            known = upd.parse(self.version)
+            text = (f"You have the newest version, {upd.short(self.version)}." if known else
+                    f"This copy has no version number (built from source). The newest release is {latest['tag']}.")
+            choice = core.themed_dialog(self.root, f"{APP_NAME} - updates", text, kind="info", heading="No new version",
+                                        buttons=(("Open releases page", "open", "secondary"), ("OK", "ok", "primary")),
+                                        cancel="ok")
+            if choice == "open":
+                webbrowser.open(latest.get("url") or upd.RELEASES_URL)
+            return
+        choice = core.themed_dialog(
+            self.root, f"{APP_NAME} - update", kind="info", heading=f"AIPet {latest['tag']} is available",
+            text=(f"You have {upd.short(self.version)}. The new version is on the release page: download "
+                  f"{'AIPet-mac-arm64.zip' if IS_MAC else 'AIPet.exe'}, quit AIPet (tray > Quit) and replace your copy "
+                  "with it. Your settings, hooks and backups in ~/.aipet are kept.\n\n"
+                  "The menus show the update until you install it."),
+            buttons=(("Skip this version", "skip", "secondary"), ("Later", "later", "secondary"),
+                     ("Open release page", "open", "primary")), cancel="later")
+        if choice == "open":
+            webbrowser.open(latest.get("url") or upd.RELEASES_URL)
+        elif choice == "skip":
+            self.update_state.save(skipped=latest["tag"])
+
+    def open_update(self):
+        if self.update_info:
+            self._update_dialog(self.update_info, True, manual=True)
+        else:
+            self.check_updates(True)
+
+    def _show_update_in_menus(self):
+        """Tk thread: the pet's menu entry says when an update is waiting; the tray / menu bar rebuild on their own."""
+        try:
+            label = f"Update available: {self.update_info['tag']}..." if self.update_info else "Check for updates..."
+            self.pet.menu.entryconfigure(self.update_menu_index, label=label, command=self.open_update)
+        except (tk.TclError, AttributeError):
+            pass
+        self.refresh_menu()
+
+    def toggle_update_check(self):
+        on = not self.pet.cfg.get("update_check", True)
+        self.pet.cfg["update_check"] = on
+        core.save_setting("update_check", on)
+        self.refresh_menu()
+
     def _recheck_setup(self):
         self._close_setup()
         self.show_setup()
@@ -1124,6 +1214,8 @@ class TrayApp:
             return items + [M.SEPARATOR, I("Turn all off", act(self.auto_all_off), enabled=lambda item: bool(self.c_auto))]
 
         return M(
+            I(lambda item: f"Update available: {self.update_info['tag']}..." if self.update_info else "",
+              act(self.open_update), visible=lambda item: bool(self.update_info)),
             I(lambda item: "Show pet" if self.hidden else "Hide pet", act(self.toggle), default=True),
             M.SEPARATOR,
             I("Claude Code hooks", M(hook_items)),
@@ -1154,6 +1246,11 @@ class TrayApp:
               visible=os.name == "nt"),
             I(lambda item: f"Workbench: {self.c_wb}", None, enabled=False),
             I("Open config folder", act(self.open_config)),
+            M.SEPARATOR,
+            I(lambda item: f"AIPet {self.version}", None, enabled=False),
+            I("Check for updates...", act(self.check_updates, True)),
+            I("Check for updates automatically", act(self.toggle_update_check),
+              checked=lambda item: bool(self.pet.cfg.get("update_check", True))),
             M.SEPARATOR,
             I("Quit", act(self.quit)),
         )
@@ -1192,7 +1289,8 @@ class TrayApp:
                 [item("   " + self.auto_label(lab, key), lambda k=key, lab=lab: self.toggle_auto(k, lab),
                       checked=key in self.c_auto) for lab, key in entries] or [item("   not found", enabled=False)])
         auto += [None, item("Turn all off", self.auto_all_off, enabled=bool(self.c_auto))]
-        return [
+        top = [item(f"Update available: {self.update_info['tag']}...", self.open_update), None] if self.update_info else []
+        return top + [
             item("Show pet" if self.hidden else "Hide pet", self.toggle),
             None,
             item("Claude Code hooks", submenu=claude),
@@ -1228,6 +1326,11 @@ class TrayApp:
             item(f"Workbench: {self.c_wb}", enabled=False),
             item("Save diagnostics...", self.pet.save_diagnostics),
             item("Open config folder", self.open_config),
+            None,
+            item(f"AIPet {self.version}", enabled=False),
+            item("Check for updates...", lambda: self.check_updates(True)),
+            item("Check for updates automatically", self.toggle_update_check,
+                 checked=bool(cfg.get("update_check", True))),
             None,
             item("Quit AIPet", self.quit),
         ]

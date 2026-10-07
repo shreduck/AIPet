@@ -22,6 +22,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the tags, for the version baked into the app (tools/write_version.py)
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -38,6 +40,8 @@ jobs:
     runs-on: macos-14  # Apple Silicon runner: native arm64 Python, so PyInstaller builds an arm64 app
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the tags, for the version baked into the app (tools/write_version.py)
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

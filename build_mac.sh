@@ -7,6 +7,8 @@ PY=${PYTHON:-python3}
 echo "[1/3] Installing build dependencies..."
 $PY -m pip install --upgrade pyinstaller pillow
 
+$PY tools/write_version.py
+
 echo "[2/3] Building the built-in hook (console build: no window appears for a non-terminal child)..."
 $PY -m PyInstaller --noconfirm --clean --onedir --name aipet-hook aipet_hook.py
 
