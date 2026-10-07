@@ -3,7 +3,8 @@ name: macOS self-test
 # Run by hand (Actions > macOS self-test > Run workflow). Starts Claude Pet on an Apple Silicon runner with a few fake
 # sessions, takes screenshots and saves the app's diagnostics report, so drawing problems can be checked without a Mac.
 # Two variants: the packaged .app (as users get it) and the plain Python source, to tell packaging problems apart
-# from Tk/drawing ones. Results: the run's "Artifacts" section (selftest-app / selftest-source).
+# from Tk/drawing ones. Results: the run's "Artifacts" section (selftest-app / selftest-source), kept 7 days;
+# nothing is committed.
 on:
   workflow_dispatch:
 
@@ -48,3 +49,4 @@ jobs:
         with:
           name: selftest-${{ matrix.mode }}
           path: out/
+          retention-days: 7  # results live only on the run page, never in the repo
