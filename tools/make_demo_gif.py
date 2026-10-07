@@ -55,10 +55,10 @@ def font(path_names, px):
     return ImageFont.load_default()
 
 
-SANS = font(["DejaVuSans.ttf", "segoeui.ttf", "Arial.ttf"], int(7.6 * U))
-SANS_SMALL = font(["DejaVuSans.ttf", "segoeui.ttf", "Arial.ttf"], int(5.6 * U))
+SANS = font(["DejaVuSans.ttf", "segoeui.ttf", "Arial.ttf"], int(6.8 * U))
+SANS_SMALL = font(["DejaVuSans.ttf", "segoeui.ttf", "Arial.ttf"], int(5.0 * U))
 SANS_Z = font(["DejaVuSans-Bold.ttf", "segoeuib.ttf", "Arial Bold.ttf"], int(8 * U))
-MONO = font(["DejaVuSansMono.ttf", "consola.ttf", "Menlo.ttc"], int(5.6 * U))
+MONO = font(["DejaVuSansMono.ttf", "consola.ttf", "Menlo.ttc"], int(5.0 * U))
 
 
 def paste(canvas, im, w, h, x, y, anchor="nw"):

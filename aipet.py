@@ -114,6 +114,26 @@ def session_badge(agent="Claude", cowork=False, wsl=False, vscode=False, entry="
     return " ".join(parts)
 
 
+def merge_badges(labels):
+    """Compact mode's collapsed badge for several sessions: different agents are listed by name ("Claude + Codex"),
+    one agent gets all its tags ("Claude Cowork+WSL+VS")."""
+    agents, tags = [], {}
+    for label in labels:
+        words = label.split(" ")
+        if not words or words[0].startswith("+"):
+            continue
+        a = words[0]
+        if a not in agents:
+            agents.append(a)
+        for q in words[1:]:
+            if q not in tags.setdefault(a, []):
+                tags[a].append(q)
+    if len(agents) != 1:
+        return " + ".join(agents)
+    a = agents[0]
+    return a + (" " + "+".join(tags.get(a, [])) if tags.get(a) else "")
+
+
 def badge_dot(text):
     return BADGE_DOT_COWORK if text.endswith("Cowork") else BADGE_DOTS.get(text.split(" ")[0], "#6b7280")
 
@@ -948,7 +968,7 @@ class Pet:
         except Exception:  # no Pillow: a plain rectangle
             c.create_rectangle(3, PET_H - 2 - TAG_H, PET_W - 3, PET_H - 2, fill=T["tag_bg"], outline=T["tag_outline"], width=1)
         name = self.data.get("title", "")
-        font = fnt(6)
+        font = fnt(5.4)
         room = PET_W - 14  # inside the tag's rounded border
         if self._text_w(font, name) > room:  # cut to the real width, not a character count
             while name and self._text_w(font, name + "\u2026") > room:
@@ -968,7 +988,15 @@ class Pet:
             return
         flags = self.data.get("badge_attention") or [self.data.get("state") == "needs_input"] * len(texts)
         keys = self.data.get("badge_keys") or [self.data.get("focus", self.key)] * len(texts)  # whose prompt a click opens
-        font = fnt(5)
+        everyone = self.data.get("everyone") or []
+        if len(everyone) > 1:  # compact mode: one merged badge, or every session's badge plus a collapse badge
+            if not self.app.badges_expanded:
+                texts = [merge_badges([(m.get("badges") or ["?"])[0] for m in everyone]) + " \u25b8"]
+                flags = [any(m.get("state") == "needs_input" for m in everyone)]
+                keys = ["__expand"]
+            else:
+                texts, flags, keys = texts + ["\u25c2"], list(flags) + [False], list(keys) + ["__collapse"]
+        font = fnt(4.5)
         h, gap, s_ = 11, 2, SCALE["v"]
         left, right = BADGE_GUTTER + 6, BADGE_GUTTER + PET_W - 6
         rows, x = [[]], left
@@ -1992,6 +2020,7 @@ class PetApp:
         self._slots, self._slot_n = {}, 0
         self._last_items, self._last_size = [], None
         self.ack, self.reminded = {}, {}  # per session: acknowledged (clicked) / last reminder time
+        self.badges_expanded = False  # compact mode: the merged badge is expanded into one badge per session
         self.first_refresh = True
         self.muted = tk.BooleanVar(value=not self.cfg["sounds"])
         self.tip = None
@@ -2530,6 +2559,8 @@ class PetApp:
             self.root.update_idletasks()
             self.anchor = [self.root.winfo_x() + self.root.winfo_width(),
                            self.root.winfo_y() + self.root.winfo_height()]
+        elif on_badge in ("__expand", "__collapse"):  # compact mode: show every session's badge, or the merged one
+            self.badges_expanded = on_badge == "__expand"
         elif on_badge and on_badge != "_none":  # a badge: that session's prompt window, or its window if it isn't waiting
             item = next((i for i in self._last_items if i["key"] == on_badge), None)
             if item:
