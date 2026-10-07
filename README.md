@@ -22,7 +22,7 @@ A floating companion with one creature per Claude Code session. It lives in the 
 
 Pets keep their position: a session stays where it first appeared (new ones join on the left) even when its state changes; only if there are more than `max_pets` are the least urgent dropped.
 
-Each pet shows a badge for where its session runs: `CC` (Windows terminal), `CW` (Cowork in the Claude app), `CX` (Codex), `WSL`, `VS` (VS Code), or `WB` (Workbench). The tray icon takes the colour of the most urgent session, and hovering it shows a summary.
+Each pet shows small badges for where its session runs: **Claude**, **Cowork** (Claude app), **Codex**, **WSL**, **VS Code** or **Workbench** (shortened to `CC`, `CW`, `CX`, `VS`, `WB` when several don't fit). Only the robot and its "needs you" bubble catch clicks; the rest of the pet window lets clicks through to what is behind it (turn off with `"click_through": false` in `config.json`). The tray icon takes the colour of the most urgent session, and hovering it shows a summary.
 
 ## Build the exe
 On Windows with Python 3.10+, double-click **`build.bat`**. It produces `dist\AIPet.exe` (single file).
@@ -204,3 +204,6 @@ From source, the Windows hook runs via `pythonw` and the script, so no exe is ne
 | `hooks_installer.py` | settings.json merge/remove, backups and restore for Windows and WSL |
 | `aipet_hook.py` | The hook Claude Code runs on each event |
 | `build.bat`, `.github/workflows/build.yml` | Build `AIPet.exe` |
+
+## License
+Free for everyone to use, modify and share, including at work. Forks and modified versions must keep the license and credit "AIPet by Duck Code". Selling AIPet, or a product that mainly provides it, needs a written agreement first. See [LICENSE](LICENSE).

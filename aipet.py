@@ -56,6 +56,7 @@ DEFAULT_CONFIG = {
     # "size": 1.0 is written when you use the Size slider (1.0 = 100%, range 0.3 - 3.0); deliberately not a default
     # here, so an old absolute "scale" value in config.json can still be migrated once.
     "remind_seconds": 90,
+    "click_through": True,  # only the robot and its "needs you" bubble take clicks; the rest of the window lets them through
     # clicking a session of the VS Code extension also opens its conversation tab (vscode://anthropic.claude-code/open)
     "vscode_open_conversation": True,
     "done_timeout_minutes": 3,  # finished sessions disappear after this: 0 (never) - 30; "Clear finished after..." slider
@@ -95,6 +96,7 @@ TRANSPARENT = "systemTransparent" if IS_MAC else "#ff00fe"
 COLORS = {"working": "#5b8def", "needs_input": "#f59e0b", "done": "#22c55e", "error": "#ef4444", "idle": "#9ca3af"}
 DARK = {"working": "#2f5bb7", "needs_input": "#b45309", "done": "#15803d", "error": "#991b1b", "idle": "#4b5563"}
 LABELS = {"working": "working…", "needs_input": "needs you!", "done": "done", "error": "error", "idle": "idle"}
+BADGE_NAMES = {"CC": "Claude", "CW": "Cowork", "CX": "Codex", "WSL": "WSL", "VS": "VS Code", "WB": "Workbench"}
 SOURCE_NAMES = {"CC": "Claude Code", "CW": "Cowork", "CX": "Codex", "WB": "Workbench"}
 BADGE_COLORS = {"CC": "#6b7280", "CW": "#c2410c", "CX": "#0f8a6a", "WSL": "#7c3aed", "VS": "#007acc", "WB": "#0f766e"}
 STATE_ORDER = ("needs_input", "error", "done", "working")
@@ -907,16 +909,15 @@ class Pet:
                       3, PET_H - 28, "nw")
         except Exception:  # no Pillow: a plain rectangle
             c.create_rectangle(3, PET_H - 28, PET_W - 3, PET_H - 2, fill=T["tag_bg"], outline=T["tag_outline"], width=1)
-        bx = 3  # environment badges, top-left
-        for b in self.data.get("badges", []):
-            w = 7 + 6 * len(b)
-            c.create_rectangle(bx, 2, bx + w, 14, fill=BADGE_COLORS.get(b, "#6b7280"), outline="")
-            c.create_text(bx + w / 2, 8, text=b, fill="white", font=fnt(6, "bold"))
-            bx += w + 2
+        self._draw_badges()
         name = self.data.get("title", "")
-        if len(name) > 15:
-            name = name[:14] + "\u2026"
-        c.create_text(PET_W / 2, PET_H - 20, text=name, fill=T["tag_fg"], font=fnt(8))
+        font = fnt(7)
+        room = PET_W - 14  # inside the tag's rounded border
+        if self._text_w(font, name) > room:  # cut to the real width, not a character count
+            while name and self._text_w(font, name + "\u2026") > room:
+                name = name[:-1]
+            name = name.rstrip() + "\u2026"
+        c.create_text(PET_W / 2, PET_H - 20, text=name, fill=T["tag_fg"], font=font)
         label = LABELS.get(st, st)
         if self.data.get("subagents"):
             label += f" +{self.data['subagents']}"
@@ -924,6 +925,33 @@ class Pet:
         x0 = int(PET_W / 2 - (6 + self._text_w(font, label)) / 2)
         c.create_rectangle(x0, PET_H - 10, x0 + 3, PET_H - 7, fill=col, outline="")  # the state light
         c.create_text(x0 + 6, PET_H - 9, text=label, anchor="w", fill=dark if T["label_dark"] else col, font=font)
+
+    def _draw_badges(self):
+        """Where the session runs, top-left: small pixel boxes styled like the name tag, a dot in the badge colour and
+        the full name ("Claude", "Codex"...). Later badges fall back to their short code if the row would overflow."""
+        c = self.canvas
+        codes = list(self.data.get("badges", []))
+        font = fnt(5.5)
+        h = 12
+
+        def width(text):
+            return int(round(10 + self._text_w(font, text)))
+        labels = [BADGE_NAMES.get(b, b) for b in codes]
+        for i in range(len(labels) - 1, -1, -1):  # shorten from the right until the row fits
+            if sum(width(t) + 2 for t in labels) <= PET_W - 4:
+                break
+            labels[i] = codes[i]
+        bx, s_ = 2, SCALE["v"]
+        for code, text in zip(codes, labels):
+            w = width(text)
+            try:
+                im = bubble_image(w, h, T["tag_bg"], T["tag_outline"], None)
+                self._put(("badge", w, h, T["tag_bg"], T["tag_outline"]), im, int(round(w * s_)), int(round(h * s_)), bx, 1, "nw")
+            except Exception:  # no Pillow
+                c.create_rectangle(bx, 1, bx + w, 1 + h, fill=T["tag_bg"], outline=T["tag_outline"])
+            c.create_rectangle(bx + 3, 6, bx + 6, 9, fill=BADGE_COLORS.get(code, "#6b7280"), outline="")
+            c.create_text(bx + 8, 7.5, text=text, anchor="w", fill=T["tag_fg"], font=font)
+            bx += w + 2
 
     @staticmethod
     def _text_w(font, text):
@@ -1105,7 +1133,7 @@ class Pet:
             sw = int(round(rw0 * k * 1.1 * s))
             self._put("shadow", shadow, sw, max(2, int(sw * 0.25)), cx, ground + 2, "center")
             im = robot_image(face, light_cycle(st, ph))
-            self._put(("robot", face, light_cycle(st, ph)), im, w, h, cx, ground + dy + rise, "s")
+            self._put(("robot", face, light_cycle(st, ph)), im, w, h, cx, ground + dy + rise, "s", tags=("hit",))
             if main:
                 top_main = ground + dy - rh0 * k * squash
 
@@ -1482,6 +1510,67 @@ def open_uri(uri):
             subprocess.Popen(["open" if IS_MAC else "xdg-open", uri])
     except (AttributeError, OSError) as e:
         log_error(f"couldn't open {uri.split('?')[0]}: {e!r}")
+
+
+class ClickThrough:
+    """Lets mouse clicks pass through the pet window to whatever is behind it, or not. Windows: the WS_EX_TRANSPARENT
+    style on the (already layered) window. macOS: NSWindow.ignoresMouseEvents through the Objective-C runtime (no
+    extra packages). Elsewhere: does nothing."""
+
+    def __init__(self, root):
+        self.root = root
+        self._win = None
+
+    def set(self, through):
+        if os.name == "nt":
+            self._set_windows(through)
+        elif IS_MAC:
+            self._set_mac(through)
+
+    def _set_windows(self, through):
+        import ctypes
+        u = ctypes.windll.user32
+        hwnd = int(self.root.wm_frame(), 16)
+        u.GetWindowLongW.restype = ctypes.c_long
+        ex = u.GetWindowLongW(hwnd, -20)  # GWL_EXSTYLE
+        new = (ex | 0x20 | 0x80000) if through else (ex & ~0x20)  # WS_EX_TRANSPARENT (+ WS_EX_LAYERED)
+        if new != ex:
+            u.SetWindowLongW(hwnd, -20, ctypes.c_long(new))
+
+    def _objc(self):
+        import ctypes
+        import ctypes.util
+        if not hasattr(self, "_lib"):
+            self._lib = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
+            self._lib.objc_getClass.restype = ctypes.c_void_p
+            self._lib.sel_registerName.restype = ctypes.c_void_p
+        return self._lib
+
+    def _send(self, obj, sel, *args, restype=None, argtypes=()):
+        import ctypes
+        lib = self._objc()
+        f = lib.objc_msgSend
+        f.restype = restype
+        f.argtypes = [ctypes.c_void_p, ctypes.c_void_p] + list(argtypes)
+        return f(obj, lib.sel_registerName(sel.encode()), *args)
+
+    def _set_mac(self, through):
+        import ctypes
+        if not self._win:
+            app = self._send(self._objc().objc_getClass(b"NSApplication"), "sharedApplication", restype=ctypes.c_void_p)
+            wins = self._send(app, "windows", restype=ctypes.c_void_p)
+            n = self._send(wins, "count", restype=ctypes.c_ulong)
+            title = self.root.title()
+            for i in range(n):
+                w = self._send(wins, "objectAtIndex:", i, restype=ctypes.c_void_p, argtypes=[ctypes.c_ulong])
+                t = self._send(w, "title", restype=ctypes.c_void_p)
+                name = self._send(t, "UTF8String", restype=ctypes.c_char_p) if t else None
+                if name and name.decode("utf-8", "replace") == title:
+                    self._win = w
+                    break
+            if not self._win:
+                raise RuntimeError("pet window not found")
+        self._send(self._win, "setIgnoresMouseEvents:", bool(through), argtypes=[ctypes.c_bool])
 
 
 # --------------------------------------------------------------------------- window focus (Windows)
@@ -1884,8 +1973,12 @@ class PetApp:
 
         self.anchor = [root.winfo_screenwidth() - 24, root.winfo_screenheight() - 60]  # bottom-right
         self.size_win, self._menu_xy = None, None
+        self.clickthru = ClickThrough(root) if self.cfg.get("click_through", True) else None
+        self._pass = None
         self.refresh()
         self.animate()
+        if self.clickthru:
+            root.after(500, self._pass_tick)
 
     # ---- data
     def collect(self):
@@ -2300,6 +2393,36 @@ class PetApp:
         w, h = self.root.winfo_reqwidth(), self.root.winfo_reqheight()
         ax, ay = self.anchor  # bottom-right corner; keep it on the monitor it is on (not the main one)
         self.root.geometry(geo(*fit_on_screen(ax - w, ay - h, w, h, (ax - 1, ay - 1), self.root)))
+
+    # ---- click-through: the window is one rectangle around all pets, but only the robots and the "needs you" bubbles
+    # should catch clicks. The pointer is polled, and the window passes clicks through whenever it isn't over those.
+    def _over_hit(self, x, y, margin=3):
+        for pet in list(self.pets.values()):
+            c = pet.canvas
+            try:
+                if not c.winfo_ismapped():
+                    continue
+                ox, oy = c.winfo_rootx(), c.winfo_rooty()
+                boxes = [c.bbox(t) for t in ("hit", "ans") if c.find_withtag(t)] or [c.bbox("all")]  # mole/cat: all
+            except tk.TclError:
+                continue
+            for bb in boxes:
+                if bb and ox + bb[0] - margin <= x <= ox + bb[2] + margin and oy + bb[1] - margin <= y <= oy + bb[3] + margin:
+                    return True
+        return False
+
+    def _pass_tick(self):
+        try:
+            x, y = self.root.winfo_pointerxy()
+            want = not (self.drag is not None or self._over_hit(x, y))
+            if want != self._pass:
+                self._pass = want
+                self.clickthru.set(want)
+                if want:
+                    self.hide_tip()
+        except Exception as e:
+            log_error(f"click-through: {e!r}")
+        self.root.after(50, self._pass_tick)
 
     def animate(self):
         t = time.time() - self.t0
