@@ -1002,6 +1002,7 @@ class Pet:
         else:
             c.create_text(PET_W / 2, y, text=name, fill=T["tag_fg"], font=font)
 
+    EXPAND, COLLAPSE = "\u25b4", "\u25be"  # compact mode's badges: up to expand, down to collapse
     TITLE_SEP = "  \u25c6  "  # between titles in compact mode's scrolling name tag
     BANNER_CPS = 5  # characters per second
 
@@ -1035,24 +1036,36 @@ class Pet:
         collapse = False
         if len(everyone) > 1:  # compact mode: one merged badge, or every session's badge plus a collapse badge
             if not self.app.badges_expanded:
-                texts = [merge_badges([(m.get("badges") or ["?"])[0] for m in everyone]) + " \u25b8"]
+                texts = [merge_badges([(m.get("badges") or ["?"])[0] for m in everyone]) + " " + self.EXPAND]
                 flags = [any(m.get("state") == "needs_input" for m in everyone)]
                 keys = ["__expand"]
             else:  # the collapse badge goes on a row of its own, above all the others (see below)
                 collapse = True
         font = fnt(4.5)
+        arrow_font = fnt(4.5 * 1.2)  # the expand / collapse arrows, 20% bigger than the badge text
         h, gap, s_ = 11, 2, SCALE["v"]
         left, right = BADGE_GUTTER + 6, BADGE_GUTTER + PET_W - 6
+
+        def split(text):  # (label, arrow): the merged badge ends with the expand arrow, the collapse badge is one
+            if text and text[-1] in (self.EXPAND, self.COLLAPSE):
+                return text[:-1].rstrip(), text[-1]
+            return text, ""
+
+        def width(text):
+            label, arrow = split(text)
+            dot = 0 if not label else 8  # the arrow-only collapse badge has no dot
+            return int(round(4 + dot + self._text_w(font, label) + (2 if label and arrow else 0)
+                             + (self._text_w(arrow_font, arrow) if arrow else 0)))
         rows, x = [[]], left
         for text, hot, key in zip(texts, flags, keys):
-            w = int(round(12 + self._text_w(font, text)))
+            w = width(text)
             if rows[-1] and x + w > right:  # no more room on this row: wrap to a new one above
                 rows.append([])
                 x = left
             rows[-1].append((text, hot, x, w, key))
             x += w + gap
         if collapse:  # always the topmost row
-            rows.append([("\u25c2", False, left, int(round(12 + self._text_w(font, "\u25c2"))), "__collapse")])
+            rows.append([(self.COLLAPSE, False, left, width(self.COLLAPSE), "__collapse")])
         base = PET_H - 2 - TAG_H - TOP_TRIM - h + 4  # the first row overlaps the tag's top border by 4 units
         for r, row in enumerate(rows):
             y = base - r * (h + gap)
@@ -1065,12 +1078,18 @@ class Pet:
                               tags=tags)
                 except Exception:  # no Pillow
                     c.create_rectangle(bx, y, bx + w, y + h, fill=bg, outline=T["tag_outline"], tags=tags)
-                dot = COLORS["needs_input"] if text.startswith("+") else badge_dot(text)
-                # the dot at the badge's middle; the text a unit higher than its anchor box would put it, because its
-                # visual middle sits below the box's middle (room for descenders)
-                c.create_rectangle(bx + 3, y + 4, bx + 6, y + 7, fill=dot, outline="", tags=tags)
-                c.create_text(bx + 8, y + h / 2 - 0.5, text=text, anchor="w", fill="#111827" if hot else T["tag_fg"],
-                              font=font, tags=tags)
+                label, arrow = split(text)
+                fg = "#111827" if hot else T["tag_fg"]
+                tx = bx + 2
+                if label:
+                    dot = COLORS["needs_input"] if text.startswith("+") else badge_dot(text)
+                    # the dot at the badge's middle; the text a unit higher than its anchor box would put it, because
+                    # its visual middle sits below the box's middle (room for descenders)
+                    c.create_rectangle(bx + 3, y + 4, bx + 6, y + 7, fill=dot, outline="", tags=tags)
+                    c.create_text(bx + 8, y + h / 2 - 0.5, text=label, anchor="w", fill=fg, font=font, tags=tags)
+                    tx = bx + 8 + self._text_w(font, label) + 2
+                if arrow:
+                    c.create_text(tx, y + h / 2 - 0.5, text=arrow, anchor="w", fill=fg, font=arrow_font, tags=tags)
 
     @staticmethod
     def _text_w(font, text):

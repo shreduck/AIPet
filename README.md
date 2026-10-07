@@ -115,7 +115,7 @@ click belong to the session in front:
 - With nobody waiting, the most urgent / most recently active session is in front.
 - The name tag scrolls through every session's title like a banner (`duck-software ◆ ai-pet ◆ notes ◆ …`); while a session needs you it holds still on that session's title.
 - Hover the pet for a list of every session.
-- The badges collapse into one: different agents are listed by name (`Claude + Codex`), a single agent gets all its tags (`Claude Cowork+WSL+VS`); it turns faint red if any session needs you. Click it (`▸`) to show one badge per session, and `◂` to collapse again.
+- The badges collapse into one: different agents are listed by name (`Claude + Codex`), a single agent gets all its tags (`Claude Cowork+WSL+VS`); it turns faint red if any session needs you. Click it (`▴`) to show one badge per session, and `▾` to collapse again.
 
 ## WSL notes
 - The WSL hook is a Python script, so the distro needs `python3`. Ubuntu has it by default. Otherwise the menu shows *needs python3*; install it in the distro (e.g. `sudo apt install python3`).

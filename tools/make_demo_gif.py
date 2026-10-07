@@ -154,9 +154,9 @@ def draw_pet(title, st, badges, t, rnd, heads=None, hot=None, collapse=False):
     h, gap = 11, 2
     hot = hot or [st == "needs_input"] * len(badges)
     x, rowy = G + 6, core.PET_H - 2 - th - TRIM - h + 4
-    for label, red in zip(badges + (["\u25c2"] if collapse else []), hot + [False]):
+    for label, red in zip(badges + (["\u25be"] if collapse else []), hot + [False]):
         w = int(round(12 + text_w(SANS_SMALL, label) / U))
-        if (x + w > G + core.PET_W - 6 and x > G + 6) or label == "\u25c2":  # the collapse tab: its own top row
+        if (x + w > G + core.PET_W - 6 and x > G + 6) or label == "\u25be":  # the collapse tab: its own top row
             x, rowy = G + 6, rowy - (h + gap)
         bg = core.BADGE_ATTENTION_BG if red else T["tag_bg"]
         b = core.bubble_image(w, h, bg, T["tag_outline"], None)
