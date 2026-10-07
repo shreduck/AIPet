@@ -691,9 +691,43 @@ def _update_session(path, target, event, data, wsl):
     return aid
 
 
-def main():
+# TEMP (Codex testing): log EVERYTHING a Codex hook receives to <pet dir>/codex-raw.log - the full payload (prompts,
+# commands, tool output included), argv, platform, cwd and the names of CODEX*/OPENAI* environment variables (names
+# only: values can hold API keys). Remove this block, and its call in main(), once Codex support is verified.
+CODEX_RAW_LOG = True
+
+
+def codex_raw_log(raw, base):
+    if not (CODEX_RAW_LOG and AGENT == "codex"):
+        return
     try:
-        data = json.loads(read_stdin() or "{}")
+        import platform
+        os.makedirs(base, exist_ok=True)
+        path = os.path.join(base, "codex-raw.log")
+        if os.path.exists(path) and os.path.getsize(path) > 5_000_000:  # keep the newest half
+            with open(path, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text[len(text) // 2:])
+        row = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "argv": sys.argv, "os": platform.platform(),
+               "wsl": is_wsl(), "cwd": os.getcwd(), "pid": os.getpid(), "ppid": os.getppid(),
+               "env_names": sorted(k for k in os.environ if k.upper().startswith(("CODEX", "OPENAI"))),
+               "payload_raw": raw}
+        try:
+            row["payload"] = json.loads(raw) if raw else None
+            del row["payload_raw"]
+        except ValueError:
+            pass
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def main():
+    raw = read_stdin()
+    try:
+        data = json.loads(raw or "{}")
     except Exception:
         data = {}
 
@@ -704,6 +738,7 @@ def main():
     target = sessions_dir(wsl)
     os.makedirs(target, exist_ok=True)
     path = os.path.join(target, safe_name(session_id) + ".json")
+    codex_raw_log(raw, os.path.dirname(target))  # TEMP (Codex testing)
 
     if event == "SessionEnd" and (is_cowork() or read_json(path).get("app") == "cowork"):
         # Cowork ends its Claude Code session after every turn (and when the app closes), so removing the pet here

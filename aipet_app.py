@@ -141,8 +141,8 @@ def make_icon(state):
     img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     spr = core.load_sprites() if core.STYLE["v"] == "robot" else False
-    if spr:  # the robot with the state's face, on a dot in the state colour
-        im = core.state_image(state, spr)
+    if spr:  # the robot with the state's face (red while a session needs you), on a dot in the state colour
+        im = robot_icon(state)
         k = min(60 / im.width, 60 / im.height)
         im = im.resize((max(1, int(im.width * k)), max(1, int(im.height * k))), Image.NEAREST)
         img.paste(im, ((64 - im.width) // 2, 62 - im.height), im)
@@ -174,6 +174,34 @@ def make_icon(state):
         d.rectangle((51, 4, 54, 12), fill="white")
         d.rectangle((51, 15, 54, 17), fill="white")
     return img
+
+
+def robot_icon(state):
+    """The robot for the taskbar / tray / Dock at sprite resolution: white normally, red with a "?" face while a
+    session needs you (or a worried face on an error)."""
+    attention = state in ("needs_input", "error")
+    face = "ask" if state == "needs_input" else ("worried" if state == "error" else core.STATE_FACE.get(state, "happy"))
+    im = core.robot_image(face, ("red",) * 3 if attention else core.light_cycle(state, 0)).copy()
+    if attention:
+        px = im.load()
+        for y in range(im.height):
+            for x in range(im.width):
+                r, g, b, a = px[x, y]
+                if a and min(r, g, b) > 120 and max(r, g, b) - min(r, g, b) < 40:  # the white / grey body -> red
+                    v = (r + g + b) / 3 / 255
+                    px[x, y] = (int(150 + 105 * v), int(25 + 45 * v), int(25 + 45 * v), a)
+    return im
+
+
+def dock_image(state, size=256):
+    """macOS Dock icon (see robot_icon), centred on a square canvas."""
+    from PIL import Image  # this module skips the PIL import on macOS (no tray there)
+    im = robot_icon(state)
+    k = max(1, int(size * 0.9 // im.height))
+    big = im.resize((im.width * k, im.height * k), Image.NEAREST)
+    out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    out.paste(big, ((size - big.width) // 2, (size - big.height) // 2), big)
+    return out
 
 
 def setup_is_done():
@@ -745,8 +773,30 @@ class TrayApp:
         text = f"{APP_NAME} - " + (", ".join(parts) if parts else "no active sessions")
         return top, text[:120]
 
+    def update_dock(self):
+        """macOS: the Dock is the taskbar - show the robot there, red while a session needs you, and bounce the icon
+        once when that starts."""
+        top, _ = self.summary()
+        key = "attention" if top in ("needs_input", "error") else "normal"
+        if key == getattr(self, "_dock_key", None):
+            return
+        self._dock_key = key
+        try:
+            import base64
+            import io
+            buf = io.BytesIO()
+            dock_image(top if key == "attention" else "idle").save(buf, "PNG")
+            self._dock_ph = tk.PhotoImage(data=base64.b64encode(buf.getvalue()).decode("ascii"), format="png")
+            self.root.iconphoto(True, self._dock_ph)
+            if key == "attention":
+                self.root.attributes("-notify", True)  # Tk on macOS: bounce the Dock icon
+        except Exception as e:
+            core.log_error(f"dock icon: {e!r}")
+
     def update_tray(self):
         if not self.icon:
+            if IS_MAC:
+                self.update_dock()
             return
         top, text = self.summary()
         if (top, text) != self._icon_key:

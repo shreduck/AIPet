@@ -2351,7 +2351,22 @@ class PetApp:
         self.menu.entryconfigure(self.vscode_menu_index, state="normal" if ok else "disabled")
         self.menu.entryconfigure(self.dismiss_menu_index,
                                  state="normal" if pet and pet.key != "_none" else "disabled")
-        self.menu.tk_popup(e.x_root, e.y_root)
+        x, y = e.x_root, e.y_root
+        if IS_MAC:
+            # A menu only opens in the active app. The pet window never activates AIPet by itself, so a right-click while
+            # another app is in front used to need a left click first. Activate AIPet, then open the menu. Some Tk
+            # versions report a right-click as both Button-2 and Button-3: open it once.
+            now = time.time()
+            if now - getattr(self, "_menu_t", 0) < 0.4:
+                return
+            self._menu_t = now
+            try:
+                self.root.focus_force()  # Tk on macOS: also activates the application
+            except tk.TclError:
+                pass
+            self.root.after(60, lambda: self.menu.tk_popup(x, y))
+            return
+        self.menu.tk_popup(x, y)
 
     def open_in_vscode(self, pet=None):
         """Open/focus the session's folder in VS Code (Remote-WSL for WSL sessions)."""
