@@ -15,7 +15,7 @@ Each pet shows a badge for where its session runs: `CC` (Windows terminal), `CW`
 
 ## Build the exe
 On Windows with Python 3.10+, double-click **`build.bat`**. It produces `dist\ClaudePet.exe` (single file).
-**Prebuilt:** the **Build Claude Pet** GitHub Actions workflow runs on every push to `master` (and on `v*` tags or by hand). It builds `ClaudePet.exe` and an Apple Silicon `ClaudePet.app`, and commits them to [`bin/`](bin/): `bin/ClaudePet.exe` and `bin/ClaudePet-mac-arm64.zip`. The Mac app is unsigned: unzip it, then right-click it and choose *Open* the first time.
+**Prebuilt:** the **Build Claude Pet** GitHub Actions workflow runs on every push to `master` (or by hand) and publishes `ClaudePet.exe` and an Apple Silicon `ClaudePet-mac-arm64.zip` to the rolling **latest** release on the repo's [Releases](../../releases) page; pushing a `v*` tag makes a versioned release. No binaries are committed. The Mac app is unsigned: unzip it, then right-click it and choose *Open* the first time.
 
 The exe is unsigned, so the first time you run it SmartScreen may show "Windows protected your PC". Click *More info → Run anyway*.
 

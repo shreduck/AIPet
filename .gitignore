@@ -11,3 +11,5 @@ events.log
 .claude-pet/
 # Cowork plugin zip generated next to the app (or the script when run from source)
 claude-pet-cowork-plugin.zip
+# builds are published as GitHub Release assets by CI, never committed
+bin/
