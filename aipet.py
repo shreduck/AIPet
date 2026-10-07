@@ -102,7 +102,8 @@ SOURCE_NAMES = {"CC": "Claude Code", "CW": "Cowork", "CX": "Codex", "WB": "Workb
 BADGE_COLORS = {"CC": "#6b7280", "CW": "#c2410c", "CX": "#0f8a6a", "WSL": "#7c3aed", "VS": "#007acc", "WB": "#0f766e"}
 STATE_ORDER = ("needs_input", "error", "done", "working")
 PET_W, PET_H = 92, 122  # the drawing area of one pet, before the badge column and top trim below
-BADGE_GUTTER = 40  # a column on the pet's left for the badges (Claude, Codex, WSL...)
+BADGE_GUTTER = 0  # extra width on the pet's left (badges now sit on the name tag's top edge, so none is needed)
+TAG_H = 18  # name tag height
 TOP_TRIM = 14  # the empty strip the badges used to take above the bubble
 CANVAS_W, CANVAS_H = PET_W + BADGE_GUTTER, PET_H - TOP_TRIM
 INK = "#1f2937"
@@ -907,35 +908,34 @@ class Pet:
         col, dark = COLORS.get(st, COLORS["idle"]), DARK.get(st, DARK["idle"])
         # name label: a pixel-art rounded box like the speech bubbles (solid pixels: no colour fringing on the
         # transparent window), with a small "light" in the state colour like the ones on the robot
-        tw_, th_ = PET_W - 6, 26
+        tw_, th_ = PET_W - 6, TAG_H
         try:
             s_ = SCALE["v"]
             im = bubble_image(tw_, th_, T["tag_bg"], T["tag_outline"], None)
             self._put(("tag", tw_, th_, T["tag_bg"], T["tag_outline"]), im, int(round(tw_ * s_)), int(round(th_ * s_)),
-                      3, PET_H - 28, "nw")
+                      3, PET_H - 2 - TAG_H, "nw")
         except Exception:  # no Pillow: a plain rectangle
-            c.create_rectangle(3, PET_H - 28, PET_W - 3, PET_H - 2, fill=T["tag_bg"], outline=T["tag_outline"], width=1)
+            c.create_rectangle(3, PET_H - 2 - TAG_H, PET_W - 3, PET_H - 2, fill=T["tag_bg"], outline=T["tag_outline"], width=1)
         name = self.data.get("title", "")
-        font = fnt(7)
+        font = fnt(6)
         room = PET_W - 14  # inside the tag's rounded border
         if self._text_w(font, name) > room:  # cut to the real width, not a character count
             while name and self._text_w(font, name + "\u2026") > room:
                 name = name[:-1]
             name = name.rstrip() + "\u2026"
         # just the name: the pet itself already shows the state (face, lights, bubble, hopping)
-        c.create_text(PET_W / 2, PET_H - 15, text=name, fill=T["tag_fg"], font=font)
+        c.create_text(PET_W / 2, PET_H - 2 - TAG_H / 2 + 1.5, text=name, fill=T["tag_fg"], font=font)  # a bit low: badges overlap the top
 
     def _draw_badges(self):
-        """Where the session runs: a column of small pixel boxes on the pet's left, styled like the name tag, each with
-        a dot in the badge colour and the full name ("Claude", "Codex"...). A name too wide for the column falls back to
-        its short code. Called after the pet has been moved right by BADGE_GUTTER, so the column is x 0..BADGE_GUTTER."""
+        """Where the session runs: small pixel boxes styled like the name tag, sitting like tabs on its top edge, each
+        with a dot in the badge colour and the full name ("Claude", "Codex"...). Later badges fall back to their short
+        code when the row would be wider than the tag. Called after the drawing has been moved (see draw())."""
         c = self.canvas
         codes = list(self.data.get("badges", []))
         if not codes:
             return
-        font = fnt(5.5)
-        h, gap = 12, 2
-        room = BADGE_GUTTER - 3
+        font = fnt(5)
+        h, gap = 11, 2
 
         def name(b):
             if b.startswith("Q") and b[1:].isdigit():
@@ -947,24 +947,25 @@ class Pet:
 
         def width(text):
             return int(round(10 + self._text_w(font, text)))
+        labels = [name(b) for b in codes]
+        for i in range(len(labels) - 1, -1, -1):  # shorten from the right until the row fits on the tag
+            if sum(width(t) + gap for t in labels) <= PET_W - 12:
+                break
+            labels[i] = short(codes[i])
         s_ = SCALE["v"]
-        bottom = PET_H - 28 - TOP_TRIM - 3  # just above the name tag, growing upwards
-        y = bottom - len(codes) * (h + gap) + gap
-        for code in codes:
-            text = name(code)
-            if width(text) > room:
-                text = short(code)
-            w = min(room, width(text))
-            bx = BADGE_GUTTER - 2 - w  # right-aligned against the pet
+        bx = BADGE_GUTTER + 6
+        y = PET_H - 2 - TAG_H - TOP_TRIM - h + 4  # overlapping the tag's top border by 4 units
+        for code, text in zip(codes, labels):
+            w = width(text)
             try:
                 im = bubble_image(w, h, T["tag_bg"], T["tag_outline"], None)
                 self._put(("badge", w, h, T["tag_bg"], T["tag_outline"]), im, int(round(w * s_)), int(round(h * s_)), bx, y, "nw")
             except Exception:  # no Pillow
                 c.create_rectangle(bx, y, bx + w, y + h, fill=T["tag_bg"], outline=T["tag_outline"])
             dot = COLORS["needs_input"] if code.startswith("Q") else BADGE_COLORS.get(code, "#6b7280")
-            c.create_rectangle(bx + 3, y + 5, bx + 6, y + 8, fill=dot, outline="")
+            c.create_rectangle(bx + 3, y + 4, bx + 6, y + 7, fill=dot, outline="")
             c.create_text(bx + 8, y + h / 2 + 0.5, text=text, anchor="w", fill=T["tag_fg"], font=font)
-            y += h + gap
+            bx += w + gap
 
     @staticmethod
     def _text_w(font, text):

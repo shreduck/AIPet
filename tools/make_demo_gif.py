@@ -55,8 +55,8 @@ def font(path_names, px):
     return ImageFont.load_default()
 
 
-SANS = font(["DejaVuSans.ttf", "segoeui.ttf", "Arial.ttf"], int(9 * U))
-SANS_SMALL = font(["DejaVuSans.ttf", "segoeui.ttf", "Arial.ttf"], int(6.2 * U))
+SANS = font(["DejaVuSans.ttf", "segoeui.ttf", "Arial.ttf"], int(7.6 * U))
+SANS_SMALL = font(["DejaVuSans.ttf", "segoeui.ttf", "Arial.ttf"], int(5.6 * U))
 SANS_Z = font(["DejaVuSans-Bold.ttf", "segoeuib.ttf", "Arial Bold.ttf"], int(8 * U))
 MONO = font(["DejaVuSansMono.ttf", "consola.ttf", "Menlo.ttc"], int(5.6 * U))
 
@@ -131,29 +131,31 @@ def draw_pet(title, st, badges, t, rnd):
             zf = font(["DejaVuSans-Bold.ttf", "segoeuib.ttf"], int((6 + 4 * ph) * U))
             d.text((X(cx0 + 14 + ph * 14), Y(top_main + 4 - ph * 22)), "z", font=zf, fill="#9ca3af", anchor="mm")
 
-    # name tag
-    tw, th = core.PET_W - 6, 26
+    # name tag: short, at the bottom
+    tw, th = core.PET_W - 6, core.TAG_H
     tag = core.bubble_image(tw, th, T["tag_bg"], T["tag_outline"], None)
-    paste(im, tag, tw * U, th * U, X(3), Y(core.PET_H - 28))
+    paste(im, tag, tw * U, th * U, X(3), Y(core.PET_H - 2 - th))
     name, room = title, (core.PET_W - 14) * U
     while name and text_w(SANS, name) > room:
         name = name[:-2] + "\u2026"
-    d.text((X(core.PET_W / 2), Y(core.PET_H - 15)), name, font=SANS, fill=T["tag_fg"], anchor="mm")
+    d.text((X(core.PET_W / 2), Y(core.PET_H - 2 - th / 2 + 1.5)), name, font=SANS, fill=T["tag_fg"], anchor="mm")
 
-    # badge column (x 0..G), stacked upwards from the tag
-    h, gap, room = 12, 2, G - 3
-    y = core.PET_H - 28 - TRIM - 3 - len(badges) * (h + gap) + gap
-    for code in badges:
-        label = core.BADGE_NAMES.get(code, code)
-        w = int(round(10 + text_w(SANS_SMALL, label) / U))
-        if w > room:
-            label, w = code, int(round(10 + text_w(SANS_SMALL, code) / U))
-        bx = G - 2 - w
+    # badges: tabs on the tag's top edge
+    h, gap = 11, 2
+    labels = [core.BADGE_NAMES.get(b, b) for b in badges]
+    wid = lambda t_: int(round(10 + text_w(SANS_SMALL, t_) / U))  # noqa: E731
+    for k in range(len(labels) - 1, -1, -1):
+        if sum(wid(x) + gap for x in labels) <= core.PET_W - 12:
+            break
+        labels[k] = badges[k]
+    bx, y = G + 6, core.PET_H - 2 - th - TRIM - h + 4
+    for code, label in zip(badges, labels):
+        w = wid(label)
         b = core.bubble_image(w, h, T["tag_bg"], T["tag_outline"], None)
         paste(im, b, w * U, h * U, bx * U, y * U)
-        d.rectangle(((bx + 3) * U, (y + 5) * U, (bx + 6) * U - 1, (y + 8) * U - 1), fill=core.BADGE_COLORS.get(code, "#6b7280"))
+        d.rectangle(((bx + 3) * U, (y + 4) * U, (bx + 6) * U - 1, (y + 7) * U - 1), fill=core.BADGE_COLORS.get(code, "#6b7280"))
         d.text(((bx + 8) * U, (y + h / 2 + 0.5) * U), label, font=SANS_SMALL, fill=T["tag_fg"], anchor="lm")
-        y += h + gap
+        bx += w + gap
     return im
 
 
