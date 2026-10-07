@@ -127,6 +127,9 @@ click belong to the session in front:
 - The hook writes into your Windows `.aipet` folder through `/mnt/c`. That path is set in the hook command, so nothing else needs configuring.
 
 ## Clicking pets, bubbles
+- **Same folder, several sessions:** pets whose sessions share a folder name add the conversation's title to the name
+  (`esign-online · Fix login bug`): the name you gave it with `/rename`, else Claude Code's generated title, else the
+  first prompt (a short session id until there is one). Long names scroll through the tag.
 - **Click a pet** to acknowledge it and bring its window to the front: the terminal or Claude desktop app that hosts the
   session (the hook records the window), or the right VS Code window for VS Code sessions. WSL terminals are best effort
   (matches a Windows Terminal window by distro/project, else the only/frontmost one). It cannot pick the tab inside a
@@ -135,6 +138,9 @@ click belong to the session in front:
   has a parent folder or a `.code-workspace` open), the pet opens that conversation's tab through the extension's
   `vscode://anthropic.claude-code/open?session=<id>` link (Claude Code 2.1.72+). Claude Code run in VS Code's terminal
   only gets its window. Turn it off with `"vscode_open_conversation": false` in `config.json`.
+  The open folders are read from VS Code's live window list (`backupWorkspaces` in `globalStorage/storage.json`), then
+  the older `Backups/workspaces.json`, then the saved window state; on macOS paths are compared case-insensitively and
+  with symlinks resolved. *Save diagnostics...* shows how many folders each source reported.
 - **Click a badge** to open that session's prompt window if it needs you (in compact mode, each badge is one session), or to go to its window otherwise.
 - **Dismiss** a pet from the right-click menu (*Dismiss this pet*) or with *Clear finished*; clicking no longer dismisses.
 - When a session **needs you**, the robot's **check / cross / "?" bubble** is clickable (hand cursor): it opens an
@@ -157,6 +163,9 @@ click belong to the session in front:
 - **Resize** with the slider: right-click the pet > *Size...* (or tray > *Pet size...*) opens a small window with a 30% - 300%
   slider; the pet follows it live and the value is saved as `size` (1.0 = 100%). 100% is the default size (twice the drawing
   size the first versions used; an older `scale` value in `config.json` is converted once). *Reset size* restores 100%.
+  The pet keeps its bottom-right corner while it grows or shrinks, but stays on the screen it is on (on macOS too, where
+  the screens are read from NSScreen). If it is ever lost off screen, *Reset position (main screen)* in the pet's
+  right-click menu, the tray menu or the macOS menu-bar menu puts it back in the main screen's bottom-right corner.
 
 ## Answering permission prompts from the pet
 When Claude Code asks for permission, the popup (click the bubble's title) shows **Deny** and **Allow once**. Your click is
@@ -170,6 +179,33 @@ handed to the `PermissionRequest` hook, which prints the decision to Claude Code
 - For background subagents Claude Code may wait for the hook before showing its own prompt, so a long timeout also
   lengthens that delay (with no limit, until you answer from the pet); lower the slider if you notice it.
 
+## Auto approve
+**Auto approve** (pet right-click, the tray icon's menu, or the macOS menu-bar icon) lists every hook config: *This PC /
+This Mac*, each *WSL* distro, *Cowork* (the Claude app plugin) and each place *Codex* was found. **Everything is off by
+default.** Each entry opens a window for that config:
+- **Auto approve for this config** switches it on or off.
+- **Whitelist** (approve automatically) and **Blacklist** (always ask me): one regex per line; empty lines and lines
+  starting with `#` are ignored. Defaults: the whitelist is empty and the blacklist is `.*`, so nothing is approved
+  until you replace it.
+  - Patterns are matched against the command (or file path, URL, search pattern...), the tool name and `Tool(command)`,
+    for example `git (status|diff)`, `npm test`, `Read` or `Bash\(ls\)`.
+  - Whitelist patterns must match the **whole** text (`re.fullmatch`), so `git status` doesn't also approve
+    `git status; rm -rf ~`. Blacklist patterns match **anywhere** (`re.search`). Tip: `[;&|`$<>]` makes chained and
+    redirected commands ask.
+  - The **blacklist always wins**; anything on neither list asks you as usual. An invalid blacklist pattern counts as a
+    match, so a typo can only make the pet ask more. Save refuses patterns that don't compile.
+- **Allow all** approves every request and greys out both lists.
+- Switching a config on, or turning on Allow all, first shows a warning (Enter and Escape both cancel). *Turn all off*
+  switches every config off and keeps the lists.
+
+Details:
+- Saved in `~/.aipet/auto-approve.json`; hooks read it on every prompt, so changes apply to running sessions at once.
+- It only works **while AIPet is running** (the hooks check the pet's heartbeat) and with AIPet's hooks installed for
+  that config; the menu marks configs without them. The VS Code extension sends no permission events, so it always asks.
+- When the **whitelist** approves something, the robot does a green hop with an `AUTO ✓` bubble and rising check marks
+  for 10 seconds, or until any session needs you. Its tooltip shows what was approved. *Allow all* approvals don't
+  animate (they would never stop). The tray tooltip starts with `AUTO APPROVE ON` while any config is on.
+
 ## Clearing finished sessions
 A finished session's pet is cleared after the **done timeout**: right-click > *Clear finished after...* (or the tray menu),
 0 - 30 minutes, default 3 minutes; 0 keeps finished pets until you dismiss them. Saved as `done_timeout_minutes`.
@@ -180,7 +216,10 @@ A finished session's pet is cleared after the **done timeout**: right-click > *C
 - **Testing on macOS without a Mac:** run the **macOS self-test** workflow by hand (Actions tab). It starts the app on an Apple Silicon runner with fake sessions (`tools/seed_sessions.py`) and uploads screenshots plus the diagnostics report, for the packaged app and for the source.
 - **Save diagnostics...** (pet right-click) writes `~/.aipet/diagnostics.txt` and opens it: versions, sprite loading, image tests, window state and recent errors. No prompts or session contents. Send it along with bug reports from machines that can't be tested here.
 - **Light theme is the default.** Tray menu (or the pet's right-click menu on macOS) > *Dark theme* switches live and is
-  saved as `theme` in `config.json`. It covers the name tags, bubbles and tooltips; setup and confirmation dialogs stay native.
+  saved as `theme` in `config.json`. It covers the name tags, bubbles, tooltips and the permission popup, and also the
+  setup, Cowork, slider and reminder windows, the confirmation / message dialogs (now cards in the pet's style), the
+  pet's right-click menu and, on Windows 10 1903+ / 11, the tray menu and window title bars. macOS keeps its native
+  menus. The one-time *Claude Pet* migration window stays native.
 - **Log hook events (debug)** appends one metadata line per hook event to `~/.aipet/events.log` (event, tool name, field
   names, state change, VS Code detection hints - never prompts, commands or other values). Use it to diagnose odd pet states,
   e.g. a permission prompt that the pet shows as "working" because another subagent's tool call arrived in between.

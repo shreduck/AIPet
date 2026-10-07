@@ -150,3 +150,28 @@ class StatusItem:
                 send(sub, "release", restype=None)
             send(menu, "addItem:", mi, restype=None, argtypes=[c_void_p])
             send(mi, "release", restype=None)
+
+
+class NSRect(ctypes.Structure):
+    _fields_ = [("x", c_double), ("y", c_double), ("width", c_double), ("height", c_double)]
+
+
+def _rect(obj, name):
+    """An NSRect-returning message: objc_msgSend on arm64, objc_msgSend_stret on Intel (structs over 16 bytes)."""
+    import platform
+    fn = _lib.objc_msgSend if platform.machine() == "arm64" else _lib.objc_msgSend_stret
+    f = ctypes.CFUNCTYPE(NSRect, c_void_p, c_void_p)(ctypes.cast(fn, c_void_p).value)
+    return f(obj, sel(name))
+
+
+def screen_rects():
+    """Every screen as (left, top, right, bottom) in Tk's coordinates: origin at the top-left of the main screen, y down
+    (Cocoa puts the origin at the main screen's bottom-left, y up). Whole screens, menu bar and Dock included, like the
+    Windows side."""
+    screens = send(cls("NSScreen"), "screens")
+    n = send(screens, "count", restype=c_ulong)
+    frames = [_rect(send(screens, "objectAtIndex:", i, argtypes=[c_ulong]), "frame") for i in range(n)]
+    if not frames:
+        return []
+    main_h = frames[0].height  # screens[0] is the one with the menu bar: Cocoa's origin
+    return [(int(f.x), int(main_h - f.y - f.height), int(f.x + f.width), int(main_h - f.y)) for f in frames]

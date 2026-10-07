@@ -254,6 +254,7 @@ class TrayApp:
         self.c_autostart = autostart_enabled()
         self.c_notify = bool(self.pet.cfg.get("notifications", False))
         self.c_wb = "off"
+        self.c_auto = core.auto_approve_targets()  # hook configs with auto-approval on (all off by default)
         self._icon_key = None
 
         self.pet.on_alert = self.on_alert
@@ -291,7 +292,11 @@ class TrayApp:
                 m.insert_checkbutton(q + 4, label="Start at login", variable=self.autostart_var,
                                      command=self.toggle_autostart)
             m.insert_command(m.index("Quit"), label="Open config folder", command=self.open_config)
+        auto_menu = tk.Menu(m, tearoff=0)
+        auto_menu.configure(postcommand=lambda: self._fill_auto_menu(auto_menu))
+        m.insert_cascade(m.index("Codex hooks") + 1, label="Auto approve", menu=auto_menu)
         m.entryconfigure(m.index("Quit"), command=self.quit)
+        core.style_menu(m)
 
         self.icon = None
         if pystray:
@@ -477,6 +482,7 @@ class TrayApp:
         tk.Button(buttons, text="Install selected", command=install, default="active", width=16).pack(side="right")
         tk.Button(buttons, text="Skip for now", command=skip, width=12).pack(side="right", padx=(0, 8))
         win.protocol("WM_DELETE_WINDOW", skip)
+        core.theme_window(win)
         win.update_idletasks()
         win.geometry(f"+{max(0, (win.winfo_screenwidth() - win.winfo_reqwidth()) // 2)}"
                      f"+{max(0, (win.winfo_screenheight() - win.winfo_reqheight()) // 3)}")
@@ -597,6 +603,7 @@ class TrayApp:
           "Rebuild and re-upload only if that folder moves.", fg=grey)
         tk.Button(win, text="Close", width=12, command=close, default="active").pack(anchor="e", padx=16, pady=12)
         win.protocol("WM_DELETE_WINDOW", close)
+        core.theme_window(win)
         win.update_idletasks()
         win.geometry(f"+{max(0, (win.winfo_screenwidth() - win.winfo_reqwidth()) // 2)}"
                      f"+{max(0, (win.winfo_screenheight() - win.winfo_reqheight()) // 3)}")
@@ -663,6 +670,7 @@ class TrayApp:
             tk.Button(row, text="Cowork / CLI plugin...", command=lambda: (win.destroy(), self.show_cowork())
                       ).pack(side="right", padx=8)
         tk.Button(row, text="Remind me tomorrow", command=win.destroy).pack(side="left")
+        core.theme_window(win)
         win.update_idletasks()
         win.geometry(f"+{max(0, (win.winfo_screenwidth() - win.winfo_reqwidth()) // 2)}"
                      f"+{max(0, (win.winfo_screenheight() - win.winfo_reqheight()) // 3)}")
@@ -705,6 +713,7 @@ class TrayApp:
             menu.add_command(label="Run setup again...", command=self.show_setup)
             menu.add_command(label="Re-detect / refresh status",
                              command=lambda: threading.Thread(target=self.refresh_targets, daemon=True).start())
+            core.style_menu(menu)
             return
         target("This Mac" if IS_MAC else "This PC (Windows)", hi.LOCAL)
         menu.add_separator()
@@ -719,6 +728,179 @@ class TrayApp:
         menu.add_command(label="Check for old Claude Pet hooks...", command=lambda: self.check_legacy(True))  # LEGACY
         menu.add_command(label="Re-detect / refresh status",
                          command=lambda: threading.Thread(target=self.refresh_targets, daemon=True).start())
+        core.style_menu(menu)
+
+    # ---- Auto approve: answer every permission prompt of chosen hook configs with "allow" (all off by default)
+    def auto_sections(self):
+        """[(section title, [(label, key)])] for every hook config that can be auto-approved, plus any switched-on key
+        that isn't detected right now, so it can always be switched off again."""
+        claude = [("This Mac" if IS_MAC else "This PC (Windows)", hi.LOCAL)]
+        claude += [(f"WSL: {n}", "wsl:" + n) for n, _ in self.distros]
+        if os.name == "nt" or IS_MAC:
+            claude.append(("Cowork (Claude desktop app)", "cowork"))
+        sections = [("Claude Code", claude), ("Codex", list(self.codex_targets))]
+        known = {k for _, items in sections for _, k in items}
+        other = [(k, k) for k in self.c_auto if k not in known]
+        if other:
+            sections.append(("Not detected now", other))
+        return sections
+
+    def auto_label(self, label, key):
+        """Menu text: the config, what its rules do when switched on, and a note when its hooks aren't installed."""
+        rules = core.auto_approve_rules().get(key)
+        text = label
+        if rules and rules.get("enabled"):
+            n = len([x for x in rules.get("whitelist") or [] if x.strip() and not x.strip().startswith("#")])
+            text += " - allow all" if rules.get("allow_all") else f" - {n} whitelist rule{'s' if n != 1 else ''}"
+        st = self.status.get(key, "")
+        if key != "cowork" and st and not st.startswith("installed") and not any(
+                w in st for w in ("unknown", "checking", "n/a")):
+            text += "  (hooks not installed)"
+        return text + "..."
+
+    def _fill_auto_menu(self, menu):
+        """Pet right-click > Auto approve: one entry per hook config, each opening its rules window."""
+        menu.delete(0, "end")
+        self.c_auto = core.auto_approve_targets()
+        menu.add_command(label="Approve permission prompts automatically for:", state="disabled")
+        for title, items in self.auto_sections():
+            menu.add_separator()
+            menu.add_command(label=title, state="disabled")
+            if not items:
+                menu.add_command(label="   not found", state="disabled")
+            for label, key in items:
+                menu.add_command(label=("\u2713 " if key in self.c_auto else "   ") + self.auto_label(label, key),
+                                 command=lambda k=key, lab=label: self.open_auto_rules(k, lab))
+        menu.add_separator()
+        menu.add_command(label="Turn all off", command=self.auto_all_off, state="normal" if self.c_auto else "disabled")
+        core.style_menu(menu)
+
+    def open_auto_rules(self, key, label):
+        """The rules window of one hook config: on/off, Allow all, and a whitelist and a blacklist of regexes."""
+        wins = self.__dict__.setdefault("auto_wins", {})
+        if key in wins:
+            try:
+                wins[key].lift()
+                return
+            except tk.TclError:
+                wins.pop(key, None)
+        old = core.auto_approve_rules().get(key) or core.default_auto_rules()
+        win = wins[key] = tk.Toplevel(self.root)
+        win.title(f"{APP_NAME} - auto approve - {label}")
+        win.attributes("-topmost", True)
+        win.resizable(False, False)
+        grey = "#6b7280"
+        enabled = tk.BooleanVar(value=bool(old.get("enabled")))
+        allow_all = tk.BooleanVar(value=bool(old.get("allow_all")))
+
+        tk.Label(win, text=f"Auto approve - {label}", font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=16, pady=(14, 2))
+        tk.Label(win, fg=grey, justify="left", wraplength=640, font=("Segoe UI", 9),
+                 text="Permission prompts from this hook config that match the whitelist are approved without asking "
+                      "you. Anything on the blacklist always asks you, even if it is also whitelisted; so does anything "
+                      "on neither list.").pack(anchor="w", padx=16)
+        tk.Checkbutton(win, text="Auto approve for this config", variable=enabled, font=("Segoe UI", 10, "bold")
+                       ).pack(anchor="w", padx=12, pady=(10, 0))
+        tk.Checkbutton(win, text="Allow all - approve every request without asking (ignores both lists)",
+                       variable=allow_all, font=("Segoe UI", 10)).pack(anchor="w", padx=12)
+
+        cols = tk.Frame(win)
+        cols.pack(fill="x", padx=16, pady=(8, 0))
+        boxes = {}
+        for col, (name, title, hint, lines) in enumerate((
+                ("whitelist", "Whitelist - approve automatically",
+                 "One regex per line. Must match the WHOLE command (or file path / URL), the tool name, or "
+                 "Tool(command). Examples: git (status|diff)   npm test   Read", old.get("whitelist") or []),
+                ("blacklist", "Blacklist - always ask me",
+                 "One regex per line, matched ANYWHERE in the same texts. Wins over the whitelist. The default .* "
+                 "asks for everything: replace it to let the whitelist work. Tip: [;&|`$<>] asks for chained or "
+                 "redirected commands, so a whitelisted one can't smuggle in another.", old.get("blacklist")
+                 if old.get("blacklist") is not None else core.DEFAULT_BLACKLIST))):
+            box = tk.Frame(cols)
+            box.grid(row=0, column=col, sticky="nw", padx=(0 if col == 0 else 12, 0))
+            tk.Label(box, text=title, font=("Segoe UI", 10, "bold")).pack(anchor="w")
+            tk.Label(box, text=hint, fg=grey, justify="left", wraplength=300, font=("Segoe UI", 8)).pack(anchor="w")
+            text = tk.Text(box, width=40, height=12, wrap="none", font=("Consolas", 10), undo=True, padx=6, pady=4)
+            text.insert("1.0", "\n".join(lines))
+            text.pack(anchor="w", pady=(4, 0))
+            boxes[name] = text
+        tk.Label(win, fg=grey, justify="left", wraplength=640, font=("Segoe UI", 8),
+                 text="Empty lines and lines starting with # are ignored. Only works while AIPet is running and its "
+                      "hooks are installed for this config; the VS Code extension sends no permission events."
+                 ).pack(anchor="w", padx=16, pady=(6, 0))
+        error = tk.Label(win, fg="#b91c1c", justify="left", wraplength=640, font=("Segoe UI", 9))
+        error.pack(anchor="w", padx=16)
+
+        def sync(*_):  # Allow all switches the lists off
+            state = "disabled" if allow_all.get() else "normal"
+            for t in boxes.values():
+                t.configure(state=state, fg=core.T["muted"] if allow_all.get() else core.T["entry_fg"])
+        allow_all.trace_add("write", sync)
+
+        def close():
+            wins.pop(key, None)
+            win.destroy()
+
+        def save():
+            lists = {}
+            for name, t in boxes.items():
+                lists[name] = [ln.rstrip() for ln in t.get("1.0", "end-1c").splitlines() if ln.strip()]
+            bad = [(name, n, pat, err) for name in lists for n, pat, err in core.bad_patterns(lists[name])]
+            if bad:
+                error.configure(text="Fix these patterns first:\n" + "\n".join(
+                    f"{name} line {n}: {pat}  ({err})" for name, n, pat, err in bad[:6]))
+                return
+            rules = {"enabled": enabled.get(), "allow_all": allow_all.get(), **lists}
+            newly_on = rules["enabled"] and not old.get("enabled")
+            all_on = rules["enabled"] and rules["allow_all"] and not (old.get("enabled") and old.get("allow_all"))
+            if (all_on or newly_on) and not self.warn_auto(label, rules):
+                return
+            if not core.save_auto_approve(key, rules):
+                self.info("Couldn't save the auto approve setting (is ~/.aipet writable?).", error=True)
+                return
+            close()
+            self._auto_changed()
+
+        buttons = tk.Frame(win)
+        buttons.pack(fill="x", padx=16, pady=(8, 14))
+        tk.Button(buttons, text="Save", width=12, command=save, default="active").pack(side="right")
+        tk.Button(buttons, text="Cancel", width=10, command=close).pack(side="right", padx=(0, 8))
+        win.protocol("WM_DELETE_WINDOW", close)
+        win.bind("<Escape>", lambda e: close())
+        core.theme_window(win)
+        sync()
+        win.update_idletasks()
+        win.geometry(f"+{max(0, (win.winfo_screenwidth() - win.winfo_reqwidth()) // 2)}"
+                     f"+{max(0, (win.winfo_screenheight() - win.winfo_reqheight()) // 3)}")
+
+    toggle_auto = open_auto_rules  # the menus' entry point
+
+    def warn_auto(self, label, rules):
+        if rules.get("allow_all"):
+            heading = f"Auto approve everything from {label}?"
+            what = (f"Every permission request that reaches AIPet's hook from {label} will be approved at once, "
+                    "without asking you: shell commands, file edits and deletions, web access and any other tool, "
+                    "in every session there, including subagents.")
+        else:
+            n = len([x for x in rules.get("whitelist") or [] if not x.strip().startswith("#")])
+            heading = f"Turn on auto approve for {label}?"
+            what = (f"Requests from {label} that match your {n} whitelist pattern{'s' if n != 1 else ''} and none of "
+                    "your blacklist patterns will be approved without asking you, in every session there, including "
+                    "subagents. A loose pattern can approve more than you meant: check them carefully.")
+        return core.themed_dialog(
+            self.root, f"{APP_NAME} - auto approve", kind="warning", heading=heading,
+            text=(what + "\n\nIt takes effect immediately for running sessions and only while AIPet is running.\n\n"
+                  "Turn it off any time: right-click the pet or the tray icon > Auto approve."),
+            buttons=(("Cancel", False, "secondary"), ("Auto approve", True, "danger")),
+            cancel=False, enter_confirms=False)
+
+    def auto_all_off(self):
+        core.save_auto_approve(None, None)
+        self._auto_changed()
+
+    def _auto_changed(self):
+        self.c_auto = core.auto_approve_targets()
+        self._icon_key = None  # the tray tooltip says when auto approve is on
+        self.refresh_menu()
 
     def _recheck_setup(self):
         self._close_setup()
@@ -807,7 +989,8 @@ class TrayApp:
             counts[st] = counts.get(st, 0) + 1
         top = min(counts, key=lambda s: RANK.get(s, 9)) if counts else "idle"
         parts = [f"{counts[s]} {core.LABELS.get(s, s).rstrip('…!')}" for s in sorted(counts, key=lambda s: RANK.get(s, 9))]
-        text = f"{APP_NAME} - " + (", ".join(parts) if parts else "no active sessions")
+        text = f"{APP_NAME} - " + ("AUTO APPROVE ON - " if self.c_auto else "") + (
+            ", ".join(parts) if parts else "no active sessions")
         return top, text[:120]
 
     def update_dock(self):
@@ -930,11 +1113,22 @@ class TrayApp:
                             I("Re-detect / refresh status",
                               lambda: threading.Thread(target=self.refresh_targets, daemon=True).start())]
 
+        def auto_items():
+            items = [I("Approve permission prompts automatically for:", None, enabled=False)]
+            for title, entries in self.auto_sections():
+                items += [M.SEPARATOR, I(title, None, enabled=False)]
+                if not entries:
+                    items.append(I("   not found", None, enabled=False))
+                items += [I("   " + self.auto_label(lab, key), act(self.toggle_auto, key, lab),
+                            checked=lambda item, k=key: k in self.c_auto) for lab, key in entries]
+            return items + [M.SEPARATOR, I("Turn all off", act(self.auto_all_off), enabled=lambda item: bool(self.c_auto))]
+
         return M(
             I(lambda item: "Show pet" if self.hidden else "Hide pet", act(self.toggle), default=True),
             M.SEPARATOR,
             I("Claude Code hooks", M(hook_items)),
             I("Codex hooks", M(codex_items)),
+            I(lambda item: "Auto approve (ON)" if self.c_auto else "Auto approve", M(auto_items)),
             I("Mute sounds", act(self.toggle_mute), checked=lambda item: self.c_muted),
             I("Windows notifications", act(self.toggle_notify), checked=lambda item: self.c_notify),
             I("Dark theme", act(self.toggle_theme), checked=lambda item: core.T.get("name") == "dark"),
@@ -942,6 +1136,7 @@ class TrayApp:
                                  radio=True) for key, label in PET_STYLES])),
             I("Pet size...", act(self.pet.open_size_slider)),
             I("Reset pet size", act(self.pet.reset_scale)),
+            I("Reset pet position (main screen)", act(self.reset_position)),
             I("Answer timeout...", act(self.pet.open_answer_slider)),
             I("Clear finished after...", act(self.pet.open_done_slider)),
             I("Compact mode (one pet)", act(self.pet.toggle_compact), checked=lambda item: bool(self.pet.cfg.get("compact"))),
@@ -984,11 +1179,18 @@ class TrayApp:
         codex = [target(lab, key) for lab, key in self.codex_targets] or [item("Codex not found", enabled=False)]
         codex += [None, item("Run setup again...", self.show_setup), item("Re-detect / refresh status", refresh)]
         cfg = self.pet.cfg
+        auto = [item("Approve permission prompts automatically for:", enabled=False)]
+        for title, entries in self.auto_sections():
+            auto += [None, item(title, enabled=False)] + (
+                [item("   " + self.auto_label(lab, key), lambda k=key, lab=lab: self.toggle_auto(k, lab),
+                      checked=key in self.c_auto) for lab, key in entries] or [item("   not found", enabled=False)])
+        auto += [None, item("Turn all off", self.auto_all_off, enabled=bool(self.c_auto))]
         return [
             item("Show pet" if self.hidden else "Hide pet", self.toggle),
             None,
             item("Claude Code hooks", submenu=claude),
             item("Codex hooks", submenu=codex),
+            item("Auto approve (ON)" if self.c_auto else "Auto approve", submenu=auto),
             None,
             item("Compact mode (one pet)", self.pet.toggle_compact, checked=bool(cfg.get("compact"))),
             item("Answer Codex prompts from the pet", lambda: self.pet.set_codex_answers(not cfg.get("codex_answers")),
@@ -1000,6 +1202,7 @@ class TrayApp:
                                        for key, label in PET_STYLES]),
             item("Pet size...", self.pet.open_size_slider),
             item("Reset pet size", self.pet.reset_scale),
+            item("Reset pet position (main screen)", self.reset_position),
             item("Answer timeout...", self.pet.open_answer_slider),
             item("Clear finished after...", self.pet.open_done_slider),
             item("Clear finished", self.pet.clear_finished),
@@ -1021,18 +1224,26 @@ class TrayApp:
         return top
 
     def ask(self, text):
-        p = self._dialog_parent()
+        """Yes / No question in the pet's style (follows the light / dark theme)."""
         try:
-            return messagebox.askyesno(APP_NAME, text, parent=p)
-        finally:
-            p.destroy()
+            return bool(core.themed_dialog(self.root, APP_NAME, text, kind="question",
+                                           buttons=(("No", False, "secondary"), ("Yes", True, "primary")), cancel=False))
+        except tk.TclError:
+            p = self._dialog_parent()
+            try:
+                return messagebox.askyesno(APP_NAME, text, parent=p)
+            finally:
+                p.destroy()
 
     def info(self, text, error=False):
-        p = self._dialog_parent()
         try:
-            (messagebox.showerror if error else messagebox.showinfo)(APP_NAME, text, parent=p)
-        finally:
-            p.destroy()
+            core.themed_dialog(self.root, APP_NAME, text, kind="error" if error else "info")
+        except tk.TclError:
+            p = self._dialog_parent()
+            try:
+                (messagebox.showerror if error else messagebox.showinfo)(APP_NAME, text, parent=p)
+            finally:
+                p.destroy()
 
     def confirm(self, key, install):
         where = hi.describe(key)
@@ -1107,6 +1318,12 @@ class TrayApp:
 
     def toggle(self):
         self.show() if self.hidden else self.hide()
+
+    def reset_position(self):
+        """Tray / menu bar: bring a lost pet back to the main screen's bottom-right corner (and show it if hidden)."""
+        if self.hidden:
+            self.show()
+        self.pet.reset_position()
 
     def toggle_mute(self):
         self.pet.muted.set(not self.pet.muted.get())

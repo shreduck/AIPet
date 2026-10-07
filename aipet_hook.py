@@ -24,7 +24,8 @@ Environment detection:
     * VS Code -> the Claude Code extension or VS Code's integrated terminal.
 Override the target folder with AIPET_DIR (path to the .aipet folder).
 
-Never prints and always exits 0, so it can't block Claude Code.
+Always exits 0, so it can't block Claude Code. It prints only a PermissionRequest decision: the user's click on the pet,
+or "allow" at once when auto-approval is on for this hook config (<pet dir>/auto-approve.json, off by default).
 """
 import json
 import os
@@ -410,6 +411,90 @@ def decision_output(behavior):
     return json.dumps({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": decision}})
 
 
+AUTO_APPROVE_FILE = "auto-approve.json"
+# {"targets": {"windows": {"enabled": true, "allow_all": false, "whitelist": ["git status"], "blacklist": [".*"]}, ...}}
+DEFAULT_BLACKLIST = [".*"]  # a config without a blacklist asks for everything
+
+
+def auto_approve_key(wsl):
+    """Which hook config this hook runs under, named like the pet's hook targets: "windows" / "mac" (this machine),
+    "wsl:<distro>", "cowork" (the Cowork plugin), and "codex:" + the same for Codex."""
+    if is_cowork() and AGENT != "codex":
+        return "cowork"
+    if wsl:
+        base = "wsl:" + os.environ.get("WSL_DISTRO_NAME", "")
+    else:
+        base = "windows" if os.name == "nt" else ("mac" if sys.platform == "darwin" else sys.platform)
+    return ("codex:" + base) if AGENT == "codex" else base
+
+
+def auto_approve_rules(base, key):
+    """The auto-approve rules of this hook config, or None when it is off - the default: no file, an unreadable file,
+    a missing or disabled config all mean off. Only honoured while the pet is running, so closing the pet stops it.
+    A plain list of keys (the first version of the setting) means "allow all" for those keys."""
+    try:
+        with open(os.path.join(base, AUTO_APPROVE_FILE), encoding="utf-8") as f:
+            targets = json.load(f).get("targets")
+    except Exception:
+        return None
+    if isinstance(targets, list):
+        rules = {"enabled": True, "allow_all": True} if key in targets else None
+    elif isinstance(targets, dict) and isinstance(targets.get(key), dict):
+        rules = targets[key]
+    else:
+        rules = None
+    if not rules or not rules.get("enabled") or not pet_alive(base):
+        return None
+    return rules
+
+
+def request_subjects(data):
+    """What the patterns are matched against, never truncated: the command (or file path, URL, pattern...), the tool
+    name, and Tool(command) - so 'git status', 'Read' and 'Bash\\(npm test\\)' all work as patterns."""
+    tool = str(data.get("tool_name") or "")
+    inp = data.get("tool_input")
+    if not isinstance(inp, dict):
+        inp = {"input": inp} if inp else {}
+    detail = ""
+    for k in ("command", "file_path", "path", "url", "pattern", "query", "prompt"):
+        if inp.get(k):
+            detail = str(inp[k])
+            break
+    if not detail and inp:
+        detail = json.dumps(inp, ensure_ascii=False, sort_keys=True)
+    return [x for x in (detail, tool, f"{tool}({detail})") if x]
+
+
+def _patterns(lines):
+    return [ln for ln in (str(x).strip() for x in (lines or [])) if ln and not ln.startswith("#")]
+
+
+def auto_decision(rules, data):
+    """'all' (allow all), 'whitelist' (a whitelist pattern matched and no blacklist pattern did) or None (ask the user).
+    Blacklist patterns match anywhere (re.search) and win over the whitelist; an invalid one counts as a match, so a
+    typo can only make the pet ask more. Whitelist patterns must match a whole subject (re.fullmatch), so
+    'git status' doesn't also approve 'git status; rm -rf ~'."""
+    if not rules:
+        return None
+    if rules.get("allow_all"):
+        return "all"
+    subjects = request_subjects(data)
+    black = rules.get("blacklist")
+    for pat in _patterns(DEFAULT_BLACKLIST if black is None else black):
+        try:
+            if any(re.search(pat, sub) for sub in subjects):
+                return None
+        except re.error:
+            return None
+    for pat in _patterns(rules.get("whitelist")):
+        try:
+            if any(re.fullmatch(pat, sub) for sub in subjects):
+                return "whitelist"
+        except re.error:
+            continue
+    return None
+
+
 MAX_WAIT = 1800.0  # the pet's slider: 0 (no limit) to 30 minutes
 
 
@@ -629,8 +714,39 @@ class SessionLock:
                 pass
 
 
-def _update_session(path, target, event, data, wsl):
-    """Apply one hook event to the session file (call under SessionLock). Returns the agent id, if any."""
+def conversation_title(path, max_bytes=400000):
+    """The conversation's title from its transcript: a name the user gave it (/rename), else the title Claude Code
+    generated (summary / ai-title lines). Reads only the end of the file."""
+    try:
+        if not path or not os.path.isfile(path):
+            return ""
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            if size > max_bytes:
+                f.seek(size - max_bytes)
+                f.readline()
+            lines = f.read().decode("utf-8", "replace").splitlines()
+        custom = generated = ""
+        for line in lines:
+            if '"title' not in line.lower() and '"summary"' not in line:
+                continue
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                continue
+            kind = str(obj.get("type", "")) if isinstance(obj, dict) else ""
+            if kind == "custom-title":
+                custom = str(obj.get("customTitle") or obj.get("title") or "") or custom
+            elif kind in ("summary", "ai-title"):
+                generated = str(obj.get("aiTitle") or obj.get("title") or obj.get("summary") or "") or generated
+        return " ".join((custom or generated).split())[:60]
+    except Exception:
+        return ""
+
+
+def _update_session(path, target, event, data, wsl, auto=None):
+    """Apply one hook event to the session file (call under SessionLock). Returns the agent id, if any.
+    auto: this PermissionRequest is being auto-approved ("all" or "whitelist"), so the session keeps working."""
     session_id = data.get("session_id") or "unknown"
     prev = read_json(path)
     state = prev.get("state", "idle")
@@ -648,8 +764,15 @@ def _update_session(path, target, event, data, wsl):
     wait_agent = prev.get("wait_agent", "")
     request = prev.get("request") or {}
     main_stopped = bool(prev.get("main_stopped"))  # the main agent finished its turn while subagents kept running
+    auto_t, auto_n = prev.get("auto_t", 0), prev.get("auto_approved", 0)
+    auto_kind, auto_what = prev.get("auto_kind", ""), prev.get("auto_what", "")
 
-    if event in WORKING_EVENTS:
+    if event == "PermissionRequest" and auto:  # answered "allow" right away: never shows as "needs you"
+        state, message = ("working", "") if prev.get("state") != "needs_input" or wait_agent == aid else (state, message)
+        auto_t, auto_n, auto_kind = t_now, auto_n + 1, auto
+        req = build_request(data)
+        auto_what = (req["tool"] + (": " + req["detail"].splitlines()[0] if req["detail"] else ""))[:120]
+    elif event in WORKING_EVENTS:
         keep = (aid and event != "UserPromptSubmit" and prev.get("state") == "needs_input"
                 and (not wait_agent or wait_agent != aid))
         if not keep:  # otherwise another agent is working while this prompt is still waiting for the user
@@ -668,6 +791,8 @@ def _update_session(path, target, event, data, wsl):
         # fires while background agents run) and informational kinds never become "needs you". Older versions send no type:
         # then a permission message counts.
         actionable = ntype in ACTIONABLE_NOTIFICATIONS or (not ntype and not is_idle_reminder and "permission" in msg.lower())
+        if actionable and (ntype == "permission_prompt" or "permission" in msg.lower()) and t_now - auto_t < 5:
+            actionable = False  # the permission prompt we just auto-approved: Claude Code may still announce it
         if actionable:
             state, message = "needs_input", msg
             wait_agent = aid
@@ -709,6 +834,12 @@ def _update_session(path, target, event, data, wsl):
         title += f" +{len(folders) - 1}"
     pid = prev.get("pid") or find_claude_pid()  # looked up once per session
     topic = prev.get("topic", "")
+    first_prompt = prev.get("first_prompt", "")
+    if not first_prompt and event == "UserPromptSubmit":
+        first_prompt = " ".join(str(data.get("prompt") or "").split())[:60]
+    conv = prev.get("conv", "")
+    if event in ("Stop", "SessionStart", "UserPromptSubmit"):  # not on every tool call: it reads the transcript
+        conv = conversation_title(data.get("transcript_path")) or conv
     if is_home_or_root(cwd) or (cowork and not folders):  # no folder to name it after: use the first prompt
         if not topic and event == "UserPromptSubmit":
             topic = " ".join(str(data.get("prompt") or "").split())[:40]
@@ -734,6 +865,12 @@ def _update_session(path, target, event, data, wsl):
         "cwd": cwd,
         "state": state,
         "message": message,
+        "auto_t": auto_t,
+        "auto_approved": auto_n,  # permission prompts auto-approved in this session (Auto approve menu)
+        "auto_kind": auto_kind,  # how the last one was approved: "all" or "whitelist"
+        "auto_what": auto_what,  # tool and first line of what it ran, shown by the pet for a few seconds
+        "conv": conv,  # the conversation's title, shown when several sessions share a folder name
+        "first_prompt": first_prompt,
         "updated": now,
         "changed": now if state != prev.get("state") else prev.get("changed", now),
     }
@@ -846,6 +983,15 @@ def main():
             os.remove(path)
         except OSError:
             pass
+        return
+
+    auto = None
+    if event == "PermissionRequest":
+        auto = auto_decision(auto_approve_rules(os.path.dirname(target), auto_approve_key(wsl)), data)
+    if auto:
+        with SessionLock(path):
+            _update_session(path, target, event, data, wsl, auto=auto)
+        write_stdout(decision_output("allow"))
         return
 
     with SessionLock(path):

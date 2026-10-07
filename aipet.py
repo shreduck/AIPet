@@ -156,12 +156,30 @@ THEMES = {
     "light": {"tag_bg": "#ffffff", "tag_fg": "#111827", "label_dark": True,
               "bubble_bg": "#ffffff", "bubble_fg": "#111827", "bubble_msg": "#374151", "bubble_muted": "#6b7280",
               "tip_bg": "#ffffff", "tip_fg": "#111827", "tip_border": "#cbd5e1", "tag_outline": "#111827",
-              "code_bg": "#f3f4f6", "code_fg": "#111827"},
+              "code_bg": "#f3f4f6", "code_fg": "#111827",
+              # windows, dialogs and menus
+              "win_bg": "#ffffff", "win_fg": "#111827", "muted": "#6b7280", "border": "#cbd5e1",
+              "btn_bg": "#f3f4f6", "btn_fg": "#111827", "btn_active": "#e5e7eb",
+              "entry_bg": "#f3f4f6", "entry_fg": "#111827", "select_bg": "#dbeafe",
+              "primary": "#2563eb", "primary_active": "#1d4ed8", "primary_fg": "#ffffff",
+              "danger": "#dc2626", "danger_active": "#b91c1c",
+              "menu_bg": "#ffffff", "menu_fg": "#111827", "menu_active_bg": "#e5e7eb", "menu_active_fg": "#111827",
+              "menu_disabled": "#9ca3af"},
     "dark": {"tag_bg": INK, "tag_fg": "#ffffff", "label_dark": False,
              "bubble_bg": "#111827", "bubble_fg": "#ffffff", "bubble_msg": "#e5e7eb", "bubble_muted": "#9ca3af",
              "tip_bg": "#111827", "tip_fg": "#f9fafb", "tip_border": "#111827", "tag_outline": "#0b1220",
-             "code_bg": "#0b1220", "code_fg": "#e5e7eb"},
+             "code_bg": "#0b1220", "code_fg": "#e5e7eb",
+             "win_bg": "#111827", "win_fg": "#f9fafb", "muted": "#9ca3af", "border": "#374151",
+             "btn_bg": "#1f2937", "btn_fg": "#f9fafb", "btn_active": "#374151",
+             "entry_bg": "#0b1220", "entry_fg": "#e5e7eb", "select_bg": "#1e3a8a",
+             "primary": "#3b82f6", "primary_active": "#2563eb", "primary_fg": "#ffffff",
+             "danger": "#ef4444", "danger_active": "#dc2626",
+             "menu_bg": "#1f2937", "menu_fg": "#f9fafb", "menu_active_bg": "#374151", "menu_active_fg": "#ffffff",
+             "menu_disabled": "#6b7280"},
 }
+# Fixed status colours used in the windows (green / amber / red notes) and their readable versions on a dark background
+DARK_TEXT = {"#15803d": "#4ade80", "#b45309": "#fbbf24", "#b91c1c": "#f87171", "#dc2626": "#f87171",
+             "#d97706": "#fbbf24"}
 T = {}  # the active theme; set_theme() mutates it in place so every module sees the change
 
 
@@ -173,7 +191,260 @@ def set_theme(name):
 
 set_theme("light")
 
-STYLE = {"v": "robot"}  # "robot", "mole" or "cat"
+
+# --------------------------------------------------------------------------- themed windows, dialogs and menus
+# The pet's own drawings use T directly. Ordinary Tk windows (setup, sliders, Cowork help...) are styled after they are
+# built by theme_window(), which also remembers them so a theme switch restyles them live. Colours a window set on
+# purpose (green "installed", amber "out of date"...) are kept, brightened on the dark background.
+THEMED = []
+_DEFAULT_FG = {"", "black", "#000000", "systembuttontext", "systemwindowtext", "systemmenutext", "#111827"}
+MUTED_FG = {"#6b7280", "grey", "gray"}
+
+
+def _fg_role(w, opt="fg"):
+    roles = w.__dict__.setdefault("_pet_roles", {})
+    if opt not in roles:
+        try:
+            v = str(w.cget(opt))
+        except tk.TclError:
+            return T["win_fg"]
+        low = v.lower()
+        roles[opt] = "fg" if low in _DEFAULT_FG else ("muted" if low in MUTED_FG else "keep:" + v)
+    role = roles[opt]
+    if role == "fg":
+        return T["win_fg"]
+    if role == "muted":
+        return T["muted"]
+    c = role[5:]
+    return DARK_TEXT.get(c.lower(), c) if T.get("name") == "dark" else c
+
+
+def themed_color(c):
+    """A status colour readable on the current theme's window background."""
+    return DARK_TEXT.get(c.lower(), c) if T.get("name") == "dark" else c
+
+
+def button_style(kind="secondary"):
+    """Options for a tk.Button in the pet's style: 'primary' (filled), 'danger' or 'secondary' (outlined)."""
+    if kind == "primary":
+        return dict(bg=T["primary"], fg=T["primary_fg"], activebackground=T["primary_active"],
+                    activeforeground=T["primary_fg"], relief="flat", bd=0, highlightthickness=0, cursor="hand2",
+                    padx=14, pady=4, font=("Segoe UI", 9, "bold"))
+    if kind == "danger":
+        return dict(bg=T["danger"], fg="#ffffff", activebackground=T["danger_active"], activeforeground="#ffffff",
+                    relief="flat", bd=0, highlightthickness=0, cursor="hand2", padx=14, pady=4,
+                    font=("Segoe UI", 9, "bold"))
+    return dict(bg=T["btn_bg"], fg=T["btn_fg"], activebackground=T["btn_active"], activeforeground=T["btn_fg"],
+                relief="flat", bd=0, highlightthickness=1, highlightbackground=T["border"], highlightcolor=T["border"],
+                cursor="hand2", padx=12, pady=3, disabledforeground=T["menu_disabled"], font=("Segoe UI", 9))
+
+
+def style_menu(menu):
+    """Colour a Tk menu and its submenus like the theme (Windows and Linux; macOS draws menus natively)."""
+    try:
+        menu.configure(bg=T["menu_bg"], fg=T["menu_fg"], activebackground=T["menu_active_bg"],
+                       activeforeground=T["menu_active_fg"], disabledforeground=T["menu_disabled"],
+                       selectcolor=T["menu_fg"], relief="flat", bd=1, activeborderwidth=0)
+    except tk.TclError:
+        return
+    for child in menu.winfo_children():
+        if isinstance(child, tk.Menu):
+            style_menu(child)
+
+
+def _ttk_scale_style(widget):
+    try:
+        from tkinter import ttk
+        s = ttk.Style(widget)
+        s.configure("Pet.Horizontal.TScale", background=T["win_bg"], troughcolor=T["entry_bg"])
+        return "Pet.Horizontal.TScale"
+    except Exception:
+        return None
+
+
+def theme_widget(w):
+    """Style one widget and everything inside it."""
+    cls, bg = w.winfo_class(), T["win_bg"]
+    try:
+        if cls in ("Frame", "Toplevel", "Tk", "Canvas"):
+            w.configure(bg=bg)
+        elif cls == "Labelframe":
+            w.configure(bg=bg, fg=_fg_role(w), highlightbackground=T["border"])
+        elif cls == "Label":
+            w.configure(bg=bg, fg=_fg_role(w))
+        elif cls == "Button":
+            kind = w.__dict__.setdefault("_pet_kind", "primary" if str(w.cget("default")) == "active" else "secondary")
+            opts = button_style(kind)
+            if str(w.cget("font")) != "TkDefaultFont":
+                opts.pop("font")  # keep a font the window chose itself (or the one set on an earlier pass)
+            w.configure(**opts)
+        elif cls in ("Checkbutton", "Radiobutton"):
+            fg = _fg_role(w)
+            w.configure(bg=bg, fg=fg, activebackground=bg, activeforeground=fg, selectcolor=T["entry_bg"],
+                        disabledforeground=T["menu_disabled"], highlightthickness=0)
+        elif cls == "Entry":
+            w.configure(bg=T["entry_bg"], readonlybackground=T["entry_bg"], fg=T["entry_fg"],
+                        insertbackground=T["entry_fg"], relief="flat", highlightthickness=1,
+                        highlightbackground=T["border"], highlightcolor=T["primary"])
+        elif cls == "Text":
+            w.configure(bg=T["entry_bg"], fg=T["entry_fg"], insertbackground=T["entry_fg"], relief="flat",
+                        highlightthickness=1, highlightbackground=T["border"], highlightcolor=T["primary"])
+        elif cls == "Scale":
+            w.configure(bg=bg, fg=T["win_fg"], troughcolor=T["entry_bg"], activebackground=T["primary"],
+                        highlightthickness=0)
+        elif cls == "TScale":
+            style = _ttk_scale_style(w)
+            if style:
+                w.configure(style=style)
+    except tk.TclError:
+        pass
+    for child in w.winfo_children():
+        if isinstance(child, tk.Menu):
+            style_menu(child)
+        else:
+            theme_widget(child)
+
+
+def titlebar_theme(win):
+    """Windows 10/11: a dark title bar for a window while the dark theme is on."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        win.update_idletasks()
+        u32, dwm = ctypes.windll.user32, ctypes.windll.dwmapi
+        u32.GetParent.argtypes, u32.GetParent.restype = [ctypes.c_void_p], ctypes.c_void_p
+        hwnd = u32.GetParent(win.winfo_id()) or win.winfo_id()
+        val = ctypes.c_int(1 if T.get("name") == "dark" else 0)
+        dwm.DwmSetWindowAttribute.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_uint]
+        for attr in (20, 19):  # DWMWA_USE_IMMERSIVE_DARK_MODE (newer builds, then 1809 - 1909)
+            if dwm.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(val), ctypes.sizeof(val)) == 0:
+                break
+        u32.SetWindowPos.argtypes = [ctypes.c_void_p, ctypes.c_void_p] + [ctypes.c_int] * 4 + [ctypes.c_uint]
+        u32.SetWindowPos(hwnd, None, 0, 0, 0, 0, 0x37)  # redraw the frame now (NOMOVE|NOSIZE|NOZORDER|NOACTIVATE|FRAMECHANGED)
+    except Exception:
+        pass
+
+
+def native_menu_theme():
+    """Windows 10 1903+: menus the system draws (the tray icon's menu, menu borders) follow the theme. Uses uxtheme's
+    SetPreferredAppMode / FlushMenuThemes (by ordinal, as they are not exported by name); harmless if unavailable."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        if sys.getwindowsversion().build < 18362:
+            return
+        ux = ctypes.WinDLL("uxtheme")
+        set_mode = ux[135]
+        set_mode.argtypes, set_mode.restype = [ctypes.c_int], ctypes.c_int
+        set_mode(2 if T.get("name") == "dark" else 3)  # ForceDark / ForceLight
+        ux[136]()  # FlushMenuThemes
+    except Exception:
+        pass
+
+
+def theme_window(win):
+    """Style a finished Toplevel like the pet and keep it in step with later theme switches."""
+    theme_widget(win)
+    titlebar_theme(win)
+    if win not in THEMED:
+        THEMED.append(win)
+        win.bind("<Destroy>", lambda e, w=win: THEMED.remove(w) if e.widget is w and w in THEMED else None, add="+")
+    return win
+
+
+def retheme_all():
+    for w in list(THEMED):
+        try:
+            if w.winfo_exists():
+                theme_widget(w)
+                titlebar_theme(w)
+        except tk.TclError:
+            pass
+
+
+DIALOG_ACCENTS = {"info": "#5b8def", "question": "#5b8def", "warning": "#f59e0b", "error": "#ef4444"}
+
+
+def themed_dialog(root, title, text, buttons=(("OK", True, "primary"),), kind="info", heading=None, cancel=None,
+                  enter_confirms=True):
+    """A modal message card in the pet's style (accent border, bold heading, flat buttons), in place of the native
+    message boxes. buttons: (label, value, 'primary' | 'danger' | 'secondary'), left to right; the first primary or
+    danger one is the default (Enter, unless enter_confirms is False: then Enter cancels, for risky choices).
+    Escape or closing returns `cancel`."""
+    accent = DIALOG_ACCENTS.get(kind, DIALOG_ACCENTS["info"])
+    bg, fg = T["win_bg"], T["win_fg"]
+    w = tk.Toplevel(root)
+    w.overrideredirect(True)
+    w.attributes("-topmost", True)
+    w.configure(bg=accent)
+    w.title(title)
+    result = {"v": cancel}
+    card = tk.Frame(w, bg=bg)
+    card.pack(padx=2, pady=2)
+    tk.Frame(card, bg=accent, height=5).pack(fill="x")
+    body = tk.Frame(card, bg=bg)
+    body.pack(fill="both", padx=18, pady=(12, 14))
+    top = tk.Frame(body, bg=bg)
+    top.pack(fill="x")
+    head = tk.Label(top, text=heading or title, bg=bg, fg=fg, anchor="w", font=("Segoe UI", 12, "bold"))
+    head.pack(side="left", fill="x", expand=True)
+    x = tk.Label(top, text="✕", bg=bg, fg=T["muted"], cursor="hand2", font=("Segoe UI", 11), padx=4)
+    x.pack(side="right")
+    if kind in ("warning", "error"):
+        tk.Label(body, text="warning" if kind == "warning" else "something went wrong", bg=bg, fg=accent, anchor="w",
+                 font=("Segoe UI", 9, "bold")).pack(fill="x")
+    tk.Frame(body, bg=T["border"], height=1).pack(fill="x", pady=8)
+    tk.Label(body, text=text, bg=bg, fg=T["bubble_msg"], justify="left", anchor="w", wraplength=440,
+             font=("Segoe UI", 10)).pack(fill="x")
+    row = tk.Frame(body, bg=bg)
+    row.pack(fill="x", pady=(14, 0))
+
+    def done(value):
+        result["v"] = value
+        try:
+            w.grab_release()
+        except tk.TclError:
+            pass
+        w.destroy()
+
+    default = None
+    for label, value, style in reversed(list(buttons)):  # packed from the right, so the last one ends up rightmost
+        b = tk.Button(row, text=label, command=lambda v=value: done(v), **button_style(style))
+        b.pack(side="right", padx=(8, 0))
+        if style in ("primary", "danger") and default is None:
+            default = value
+    if default is None and buttons:
+        default = list(buttons)[-1][1]
+    x.bind("<Button-1>", lambda e: done(cancel))
+    w.bind("<Escape>", lambda e: done(cancel))
+    w.bind("<Return>", lambda e: done(default if enter_confirms else cancel))
+    drag = {}
+    for widget in (top, head):
+        widget.bind("<ButtonPress-1>", lambda e: drag.update(d=(e.x_root - w.winfo_x(), e.y_root - w.winfo_y())))
+        widget.bind("<B1-Motion>", lambda e: w.geometry(f"+{e.x_root - drag['d'][0]}+{e.y_root - drag['d'][1]}")
+                    if "d" in drag else None)
+    w.update_idletasks()
+    ww, wh = w.winfo_reqwidth(), w.winfo_reqheight()
+    try:
+        ref = (root.winfo_x() + root.winfo_width() // 2, root.winfo_y() + root.winfo_height() // 2)
+        left, top_, right, bottom = work_area(*ref, w) or (0, 0, w.winfo_screenwidth(), w.winfo_screenheight())
+    except Exception:
+        left, top_, right, bottom = 0, 0, w.winfo_screenwidth(), w.winfo_screenheight()
+    w.geometry(geo(left + (right - left - ww) // 2, max(top_ + 20, top_ + (bottom - top_ - wh) // 3)))
+    w.deiconify()
+    w.lift()
+    w.focus_force()
+    try:
+        w.grab_set()
+    except tk.TclError:
+        pass
+    root.wait_window(w)
+    return result["v"]
+
+
+STYLE ={"v": "robot"}  # "robot", "mole" or "cat"
 SCALE_UNIT = 2.0  # the absolute drawing scale that counts as 100% (it was the old 200%, the size people settled on)
 SCALE = {"v": SCALE_UNIT}  # absolute drawing scale: 92x122 px per pet at 1.0; the slider shows SCALE / SCALE_UNIT
 
@@ -234,6 +505,76 @@ def write_answer_wait(sec):
             f.write(str(int(sec)))
     except OSError:
         pass
+
+
+AUTO_APPROVE_PATH = os.path.join(HOME_DIR, "auto-approve.json")  # read by every hook (WSL ones through /mnt/c)
+DEFAULT_BLACKLIST = [".*"]  # by default every request still needs you
+AUTO_FLASH_SECONDS = 10  # how long a pet celebrates a whitelist auto-approval
+
+
+def default_auto_rules():
+    return {"enabled": False, "allow_all": False, "whitelist": [], "blacklist": list(DEFAULT_BLACKLIST)}
+
+
+def auto_approve_rules():
+    """{hook config key: rules} as saved by the Auto approve windows. A missing or unreadable file means all off.
+    The first version stored a plain list of keys: those meant "allow all"."""
+    try:
+        with open(AUTO_APPROVE_PATH, encoding="utf-8") as f:
+            targets = json.load(f).get("targets")
+    except Exception:
+        return {}
+    if isinstance(targets, list):
+        return {k: dict(default_auto_rules(), enabled=True, allow_all=True) for k in targets if isinstance(k, str)}
+    if not isinstance(targets, dict):
+        return {}
+    out = {}
+    for k, r in targets.items():
+        if isinstance(r, dict):
+            rules = default_auto_rules()
+            rules.update({x: r[x] for x in ("enabled", "allow_all", "whitelist", "blacklist") if x in r})
+            out[k] = rules
+    return out
+
+
+def auto_approve_targets():
+    """Hook configs with auto-approval switched on (empty = all off, the default)."""
+    return sorted(k for k, r in auto_approve_rules().items() if r.get("enabled"))
+
+
+def save_auto_approve(key, rules):
+    """Save one hook config's rules (key None = switch every config off, keeping their lists). True if saved."""
+    targets = auto_approve_rules()
+    if key is None:
+        for r in targets.values():
+            r["enabled"] = False
+    else:
+        targets[key] = rules
+    try:
+        os.makedirs(HOME_DIR, exist_ok=True)
+        tmp = AUTO_APPROVE_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"targets": targets}, f, indent=2)
+        os.replace(tmp, AUTO_APPROVE_PATH)
+        return True
+    except OSError as e:
+        log_error(f"auto-approve: {e!r}")
+        return False
+
+
+def bad_patterns(lines):
+    """[(line number, pattern, error)] for the regexes that don't compile (blank and # lines are skipped)."""
+    import re
+    out = []
+    for n, ln in enumerate(lines, 1):
+        ln = ln.strip()
+        if not ln or ln.startswith("#"):
+            continue
+        try:
+            re.compile(ln)
+        except re.error as e:
+            out.append((n, ln, str(e)))
+    return out
 
 
 def answers_enabled():
@@ -326,6 +667,20 @@ def ago(ts):
     return f"{s // 3600}h {s % 3600 // 60}m ago"
 
 
+def disambiguate_titles(items):
+    """Sessions named after the same folder ("esign-online", "esign-online") get their conversation's title added
+    ("esign-online · Fix login bug"), or a short session id when there is none yet."""
+    counts = {}
+    for i in items:
+        k = (i.get("title") or "").casefold()
+        counts[k] = counts.get(k, 0) + 1
+    for i in items:
+        if counts.get((i.get("title") or "").casefold(), 0) > 1:
+            extra = i.get("conv") or ("#" + str(i.get("session_id") or i.get("key") or "")[-4:])
+            i["title"] = f"{i.get('title') or 'session'} \u00b7 {extra}"
+            i["dup_title"] = True
+
+
 # --------------------------------------------------------------------------- Claude Code source
 def _active_agents(rec, now=None):
     """How many subagents are running: started (or seen) and not yet stopped, within 15 min (while the session is busy)."""
@@ -410,6 +765,11 @@ def read_claude_code_sessions(cfg):
             "request": rec.get("request") or {},
             "pid": rec.get("pid"),
             "sid": str(rec.get("id")),
+            "auto_approved": rec.get("auto_approved", 0),
+            "auto_t": rec.get("auto_t", 0),
+            "auto_kind": rec.get("auto_kind", ""),
+            "auto_what": rec.get("auto_what", ""),
+            "conv": rec.get("conv") or rec.get("first_prompt") or "",
         })
     return items
 
@@ -731,6 +1091,8 @@ def light_cycle(state, t):
         return tuple("amber" if j == i else ("green" if j == (i + 1) % 3 else "off") for j in range(3))
     if state == "needs_input":  # flashing amber: attention
         return ("amber",) * 3 if int(t * 3) % 2 else ("off", "amber", "off")
+    if state == "auto":  # flashing green: something was just auto-approved
+        return ("green",) * 3 if int(t * 4) % 2 else ("off", "green", "off")
     return {"done": ("green",) * 3, "error": ("red", "amber", "red"), "idle": ("off",) * 3}.get(state, ("off",) * 3)
 
 
@@ -991,6 +1353,9 @@ class Pet:
         banner = None
         if len(everyone) > 1:  # compact mode: the banner always runs; waiting sessions show a red symbol
             banner = self._title_banner([(m.get("title") or "session", m.get("state")) for m in everyone], font, room)
+        elif self.data.get("dup_title") and self._text_w(font, name) > room:
+            # several sessions share the folder name: scroll the whole "name · conversation" instead of cutting it
+            banner = self._title_banner([(name, self.data.get("state"))], font, room)
         elif self._text_w(font, name) > room:  # cut to the real width, not a character count
             while name and self._text_w(font, name + "\u2026") > room:
                 name = name[:-1]
@@ -1281,13 +1646,18 @@ class Pet:
             heads = HEAD_LAYOUTS[min(3, int(self.data.get("subagents", 0) or 0)) + 1]
             states = [(st, self.acked)] * len(heads)
         top_main = ground
+        flash = bool(self.data.get("auto_flash")) and st not in ("needs_input", "error")
         for i, (dx, k) in enumerate(heads):
             main = i == len(heads) - 1
             hst, hacked = states[i]
             ph = t + i * 1.7
             cx, dy, squash = cx0 + dx, 0.0, 1.0
             face = STATE_FACE.get(hst, "sleep")
-            if hst == "working":
+            if main and flash:  # just auto-approved something: a happy green hop
+                hst, face = "auto", "joy"
+                dy = -abs(math.sin(ph * 7)) * 8
+                squash = 1.0 if dy < -1.2 else 0.94
+            elif hst == "working":
                 dy = -abs(math.sin(ph * (5 if main else 4.2))) * 3 * k
                 if (ph % 4) < 0.15:
                     face = "blink"
@@ -1311,7 +1681,16 @@ class Pet:
             by1 = 15.0  # the top of the drawing (the strip above is trimmed off: badges live in a left column)
             by2 = 36.0 if st == "needs_input" else min(top_main + 2, 40.0)  # the hop must not squash the bubble
             tail = cx0 - 6  # off the antenna
-            if st == "working":  # hacker-screen bubble
+            if flash:  # green "AUTO ✓" bubble and rising check marks: approved by the whitelist, nothing to do
+                self._bubble(bx1 + 4, by1, bx2 - 6, by2, tail, "#dcfce7", "#15803d")
+                y, bob = (by1 + by2) / 2, (1 if int(t * 4) % 2 else 0)
+                self._mark("ok", cx0 - 14, y - bob)
+                c.create_text(cx0 + 6, y, text="AUTO", fill="#15803d", font=fnt(5.5, "bold"))
+                for i in range(3):
+                    ph = (t * 0.7 + i / 3) % 1
+                    c.create_text(cx0 + 22 + 6 * math.sin(t * 3 + i), top_main + 6 - ph * 26, text="\u2713",
+                                  fill="#22c55e", font=fnt(6 + 4 * (1 - ph), "bold"))
+            elif st == "working":  # hacker-screen bubble
                 self._bubble(bx1, by1, bx2, by2, tail, "#0b1220", "#34d399")
                 font = mono(5)
                 cw = self._char_w(font)  # real width of one character, in drawing units
@@ -1479,6 +1858,12 @@ def diagnostics_report(app=None):
     attempt("imagetk_photo", test_imagetk)
     attempt("png_photo", test_png)
     attempt("robot_photo", test_robot)
+
+    def test_vscode():  # where the open VS Code folders come from (counts only, no paths)
+        rep = []
+        vscode_open_folders(report=rep)
+        return "; ".join(rep) or "no VS Code user folder found"
+    attempt("vscode_open_folders", test_vscode)
     if app:
         r = app.root
         attempt("window", lambda: f"geometry={r.winfo_geometry()} viewable={r.winfo_viewable()} "
@@ -1527,8 +1912,34 @@ def work_area(x, y, widget):
         except Exception:
             pass
     if IS_MAC:
-        return None
+        return mac_screen_at(x, y)
     return 0, 0, widget.winfo_screenwidth(), widget.winfo_screenheight()
+
+
+_MAC_SCREENS = {"t": 0.0, "v": []}
+
+
+def mac_screen_at(x, y):
+    """macOS: (left, top, right, bottom) in Tk coordinates of the screen holding (x, y), else the nearest one; None if
+    the screens can't be read (callers then don't clamp). Read from NSScreen (cached for 3 s)."""
+    now = time.time()
+    if now - _MAC_SCREENS["t"] > 3:
+        try:
+            import mac_statusbar
+            _MAC_SCREENS["v"] = mac_statusbar.screen_rects()
+        except Exception as e:
+            _MAC_SCREENS["v"] = []
+            log_error(f"mac screens: {e!r}")
+        _MAC_SCREENS["t"] = now
+    rects = _MAC_SCREENS["v"]
+    if not rects:
+        return None
+
+    def dist(r):
+        dx = max(r[0] - x, 0, x - r[2])
+        dy = max(r[1] - y, 0, y - r[3])
+        return dx * dx + dy * dy
+    return min(rects, key=dist)
 
 
 def fit_on_screen(x, y, w, h, ref, widget, margin=0):
@@ -1573,32 +1984,60 @@ def _uri_parts(uri):
     return None, None
 
 
-def vscode_open_folders(user_dirs=None):
+def _backup_uris(b):
+    """(uri, is_workspace_file) from VS Code's backup-workspaces record, in any of its formats."""
+    if not isinstance(b, dict):
+        return []
+    uris = [(x.get("folderUri"), False) for x in b.get("folders") or [] if isinstance(x, dict)]
+    uris += [(x, False) for x in b.get("folderURIWorkspaces") or [] if isinstance(x, str)]  # older format
+    for key in ("workspaces", "rootURIWorkspaces"):  # current format / older one
+        for x in b.get(key) or []:
+            if isinstance(x, dict):
+                ws = x.get("workspace") if isinstance(x.get("workspace"), dict) else x
+                uris.append((ws.get("configURIPath") or ws.get("configPath"), True))
+    return uris
+
+
+def vscode_open_folders(user_dirs=None, report=None):
     """Folders and .code-workspace files open in VS Code windows: [(authority, path, is_workspace_file)].
-    Read from <user data>/Backups/workspaces.json (kept current while windows open and close), falling back to the
-    window state VS Code saves in globalStorage/storage.json."""
+
+    Sources, freshest first: globalStorage/storage.json "backupWorkspaces" (current VS Code keeps the open windows
+    there, updated as they open and close), Backups/workspaces.json (older VS Code), then the window state saved in
+    storage.json (only written when VS Code quits or a window closes, so it can be stale: macOS keeps VS Code running
+    with its windows closed). report, if a list, receives one line per source (counts only, for diagnostics)."""
     found = []
     for d in user_dirs if user_dirs is not None else vscode_user_dirs():
-        uris = []
+        uris, storage = [], {}
+        try:
+            with open(os.path.join(d, "User", "globalStorage", "storage.json"), encoding="utf-8") as f:
+                storage = json.load(f) or {}
+        except (OSError, ValueError):
+            pass
+        live = _backup_uris(storage.get("backupWorkspaces"))
+        legacy_file = []
         try:
             with open(os.path.join(d, "Backups", "workspaces.json"), encoding="utf-8") as f:
-                b = json.load(f)
-            uris += [(x.get("folderUri"), False) for x in b.get("folders") or [] if isinstance(x, dict)]
-            uris += [(x, False) for x in b.get("folderURIWorkspaces") or [] if isinstance(x, str)]  # older format
-            uris += [(x.get("configURIPath"), True) for x in b.get("rootURIWorkspaces") or [] if isinstance(x, dict)]
-        except (OSError, ValueError, AttributeError):
+                legacy_file = _backup_uris(json.load(f))
+        except (OSError, ValueError):
+            pass
+        uris = live + legacy_file
+        saved = []
+        try:
+            ws = storage.get("windowsState") or {}
+            for w in [ws.get("lastActiveWindow") or {}] + list(ws.get("openedWindows") or []):
+                if not isinstance(w, dict):
+                    continue
+                if w.get("folder"):
+                    saved.append((w["folder"], False))
+                elif isinstance(w.get("workspace"), dict) and w["workspace"].get("configPath"):
+                    saved.append((w["workspace"]["configPath"], True))
+        except AttributeError:
             pass
         if not uris:
-            try:
-                with open(os.path.join(d, "User", "globalStorage", "storage.json"), encoding="utf-8") as f:
-                    ws = (json.load(f).get("windowsState") or {})
-                for w in [ws.get("lastActiveWindow") or {}] + list(ws.get("openedWindows") or []):
-                    if w.get("folder"):
-                        uris.append((w["folder"], False))
-                    elif isinstance(w.get("workspace"), dict) and w["workspace"].get("configPath"):
-                        uris.append((w["workspace"]["configPath"], True))
-            except (OSError, ValueError, AttributeError):
-                pass
+            uris = saved
+        if isinstance(report, list):
+            report.append(f"{os.path.basename(d)}: backupWorkspaces={len(live)} workspaces.json={len(legacy_file)} "
+                          f"windowsState={len(saved)}")
         for uri, is_ws in uris:
             if isinstance(uri, str):
                 auth, path = _uri_parts(uri)
@@ -1633,7 +2072,14 @@ def vscode_target(cwd, env="", distro="", user_dirs=None):
     .code-workspace file whose folders contain it. Falls back to cwd itself. Returns (args, path)."""
     wsl = env == "wsl"
     want_auth = f"wsl+{(distro or 'ubuntu').lower()}" if wsl else ""
-    norm = (lambda p: p.rstrip("/") or "/") if wsl else (lambda p: os.path.normcase(os.path.normpath(p)))
+    if wsl:
+        norm = lambda p: p.rstrip("/") or "/"  # noqa: E731
+    elif IS_MAC or sys.platform == "darwin":
+        # macOS: the default file system ignores case, and folders are often reached through symlinks (/var ->
+        # /private/var, a renamed or linked ~/Code); compare resolved, case-folded paths
+        norm = lambda p: os.path.normpath(os.path.realpath(p)).casefold()  # noqa: E731
+    else:
+        norm = lambda p: os.path.normcase(os.path.normpath(p))  # noqa: E731
     target = norm(cwd)
 
     def inside(root):
@@ -1854,7 +2300,7 @@ class Detail:
                  font=("Segoe UI", 9, "bold")).pack(fill="x")
         self.where = tk.Label(right, bg=bg, fg=muted, anchor="w", justify="left", wraplength=430, font=("Segoe UI", 8))
         self.where.pack(fill="x", pady=(2, 0))
-        tk.Frame(right, bg=T["tip_border"], height=1).pack(fill="x", pady=8)
+        tk.Frame(right, bg=T["border"], height=1).pack(fill="x", pady=8)
         for widget in (top, self.head):  # drag the card by its header
             widget.bind("<ButtonPress-1>", self._drag_start)
             widget.bind("<B1-Motion>", self._drag_move)
@@ -1876,11 +2322,15 @@ class Detail:
         self.note = tk.Label(right, bg=bg, fg=muted, anchor="w", justify="left", wraplength=430, font=("Segoe UI", 8))
         self.note.pack(fill="x", pady=(2, 8))
         self.answer_row = tk.Frame(right, bg=bg)
-        self.btn_deny = tk.Button(self.answer_row, text="Deny", width=12, bg=bg, fg="#dc2626", activebackground="#fee2e2",
-                                  activeforeground="#b91c1c", relief="solid", bd=1, cursor="hand2",
+        self.btn_deny = tk.Button(self.answer_row, text="Deny", width=12, bg=bg, fg=themed_color("#dc2626"),
+                                  activebackground=T["btn_active"], activeforeground=themed_color("#b91c1c"),
+                                  relief="flat", bd=0, highlightthickness=1, highlightbackground=themed_color("#dc2626"),
+                                  cursor="hand2",
                                   font=("Segoe UI", 10, "bold"), command=lambda: self.answer("deny"))
-        self.btn_allow = tk.Button(self.answer_row, text="Allow once", width=14, bg="#16a34a", fg="white",
-                                   activebackground="#15803d", activeforeground="white", relief="flat", cursor="hand2",
+        dark = T.get("name") == "dark"  # dark theme: black text on a brighter green
+        allow_fg, allow_bg, allow_active = ("#111827", "#22c55e", "#16a34a") if dark else ("white", "#16a34a", "#15803d")
+        self.btn_allow = tk.Button(self.answer_row, text="Allow once", width=14, bg=allow_bg, fg=allow_fg,
+                                   activebackground=allow_active, activeforeground=allow_fg, relief="flat", cursor="hand2",
                                    font=("Segoe UI", 10, "bold"), command=lambda: self.answer("allow"))
         self.btn_deny.pack(side="left", ipady=3)
         self.btn_allow.pack(side="right", ipady=4)
@@ -2136,6 +2586,7 @@ class PetApp:
         m.add_command(label="Size...", command=self.open_size_slider)
         self.size_menu_index = m.index("end")
         m.add_command(label="Reset size", command=self.reset_scale)
+        m.add_command(label="Reset position (main screen)", command=self.reset_position)
         m.add_command(label="Answer timeout...", command=self.open_answer_slider)
         m.add_command(label="Clear finished after...", command=self.open_done_slider)
         self.codex_answer_var = tk.BooleanVar(value=bool(self.cfg.get("codex_answers")))
@@ -2153,6 +2604,8 @@ class PetApp:
         self.wb_menu_index = m.index("end")
         m.add_separator()
         m.add_command(label="Quit", command=root.destroy)
+        style_menu(m)
+        native_menu_theme()
 
         self.anchor = [root.winfo_screenwidth() - 24, root.winfo_screenheight() - 60]  # bottom-right
         self.size_win, self._menu_xy = None, None
@@ -2172,6 +2625,7 @@ class PetApp:
         now = time.time()
         items = [i for i in items
                  if not (hide and i["state"] in ("done", "idle") and i.get("changed") and now - i["changed"] > hide)]
+        disambiguate_titles(items)
         # Stable slots: a pet keeps its place for as long as it exists, whatever its state does. New sessions join
         # on the left, so the pets already on screen don't move (the overlay is anchored bottom-right).
         for it in sorted((i for i in items if i["key"] not in self._slots), key=lambda i: i.get("changed") or 0):
@@ -2187,6 +2641,7 @@ class PetApp:
     def refresh(self):
         try:
             real = self.collect()  # one item per session
+            self._mark_auto_flash(real)
             items = (self._compact_items(real) if self.cfg.get("compact") and real else real) or [{
                 "key": "_none", "source": "", "title": "no sessions", "state": "idle",
                 "message": "Waiting for Claude Code / Workbench activity", "detail": "", "changed": 0}]
@@ -2247,6 +2702,21 @@ class PetApp:
         finally:
             self.root.after(self.cfg["poll_ms"], self.refresh)
 
+    def _mark_auto_flash(self, real):
+        """A session whose last permission prompt the whitelist approved celebrates for AUTO_FLASH_SECONDS, unless
+        (or until) any session needs the user: then that celebration is over for good."""
+        now = time.time()
+        cut = self.__dict__.setdefault("_flash_cut", {})
+        attention = any(i.get("state") in ("needs_input", "error") for i in real)
+        for it in real:
+            t = it.get("auto_t") or 0
+            fresh = it.get("auto_kind") == "whitelist" and 0 <= now - t < AUTO_FLASH_SECONDS
+            if fresh and attention:
+                cut[(it["key"], t)] = now
+            it["auto_flash"] = fresh and not attention and (it["key"], t) not in cut
+        for k in [k for k, v in cut.items() if now - v > 120]:
+            del cut[k]
+
     # ---- bubbles
     def sync_bubbles(self, items):
         """The popups follow their sessions: refreshed while they need you, closed when they no longer do."""
@@ -2297,8 +2767,14 @@ class PetApp:
         """Switch theme live: name tags and tooltips pick it up on their own; bubbles are rebuilt."""
         set_theme(name)
         self.cfg["theme"] = T["name"]
-        for d in list(self.details.values()):  # their colours are fixed at creation
+        reopen = list(self.details)
+        for d in list(self.details.values()):  # their colours are fixed at creation: rebuild them in the new theme
             d.destroy()
+        for key in reopen:
+            self.open_detail(key)
+        retheme_all()
+        style_menu(self.menu)
+        native_menu_theme()
 
     # ---- resizing (the Size... slider in the right-click menu)
     def set_scale(self, v):
@@ -2367,10 +2843,11 @@ class PetApp:
         row = tk.Frame(w)
         row.grid(row=2, column=0, columnspan=2, sticky="e", padx=14, pady=(0, 12))
         tk.Button(row, text="100%", width=8, command=reset).pack(side="left", padx=(0, 6))
-        tk.Button(row, text="Done", width=8, command=close).pack(side="left")
+        tk.Button(row, text="Done", width=8, command=close, default="active").pack(side="left")
         w.protocol("WM_DELETE_WINDOW", close)
         w.bind("<Escape>", lambda e: close())
         apply()
+        theme_window(w)
         self._place_above_pet(w)
 
     def open_answer_slider(self):
@@ -2423,10 +2900,11 @@ class PetApp:
         row = tk.Frame(w)
         row.grid(row=3, column=0, columnspan=2, sticky="e", padx=14, pady=(8, 12))
         tk.Button(row, text="Default (3 min)", command=reset).pack(side="left", padx=(0, 6))
-        tk.Button(row, text="Done", width=8, command=close).pack(side="left")
+        tk.Button(row, text="Done", width=8, command=close, default="active").pack(side="left")
         w.protocol("WM_DELETE_WINDOW", close)
         w.bind("<Escape>", lambda e: close())
         apply()
+        theme_window(w)
         self._place_above_pet(w)
 
     def open_done_slider(self):
@@ -2476,10 +2954,11 @@ class PetApp:
         row = tk.Frame(w)
         row.grid(row=3, column=0, columnspan=2, sticky="e", padx=14, pady=(8, 12))
         tk.Button(row, text="Default (3 min)", command=reset).pack(side="left", padx=(0, 6))
-        tk.Button(row, text="Done", width=8, command=close).pack(side="left")
+        tk.Button(row, text="Done", width=8, command=close, default="active").pack(side="left")
         w.protocol("WM_DELETE_WINDOW", close)
         w.bind("<Escape>", lambda e: close())
         apply()
+        theme_window(w)
         self._place_above_pet(w)
 
     def reset_scale(self):
@@ -2584,11 +3063,35 @@ class PetApp:
                 self.dismiss_item(it)
 
     # ---- window
-    def reposition(self):
-        self.root.update_idletasks()
-        w, h = self.root.winfo_reqwidth(), self.root.winfo_reqheight()
-        ax, ay = self.anchor  # bottom-right corner; keep it on the monitor it is on (not the main one)
-        self.root.geometry(geo(*fit_on_screen(ax - w, ay - h, w, h, (ax - 1, ay - 1), self.root)))
+    def reposition(self, ref=None):
+        """Keep the bottom-right corner (the anchor) where it is while the pets change size, but inside the monitor the
+        pet is on. That monitor is found from the middle of the window as it is now, not from the anchor: an anchor
+        just across a monitor edge used to pull a growing pet onto the neighbouring screen. The anchor follows any
+        clamping, so the next resize starts from where the pet really is."""
+        r = self.root
+        r.update_idletasks()
+        w, h = r.winfo_reqwidth(), r.winfo_reqheight()
+        ax, ay = self.anchor
+        if ref is None:
+            try:
+                cw, ch = r.winfo_width(), r.winfo_height()
+                ref = (r.winfo_x() + cw // 2, r.winfo_y() + ch // 2) if cw > 1 and ch > 1 else (ax - 1, ay - 1)
+            except tk.TclError:
+                ref = (ax - 1, ay - 1)
+        x, y = fit_on_screen(ax - w, ay - h, w, h, ref, r)
+        r.geometry(geo(x, y))
+        self.anchor = [x + w, y + h]
+
+    def reset_position(self):
+        """Last resort for a pet lost off screen: back to the main screen's bottom-right corner."""
+        self.anchor = [self.root.winfo_screenwidth() - 24, self.root.winfo_screenheight() - 60]
+        self.reposition(ref=(self.anchor[0] - 1, self.anchor[1] - 1))
+        try:
+            self.root.deiconify()
+            self.root.lift()
+            self.root.attributes("-topmost", True)
+        except tk.TclError:
+            pass
 
     # ---- click-through: the window is one rectangle around all pets, but only the robots and the "needs you" bubbles
     # should catch clicks. The pointer is polled, and the window passes clicks through whenever it isn't over those.
@@ -2699,7 +3202,8 @@ class PetApp:
             attention.append(any(m["state"] == "needs_input" for m in members[len(shown):]))
         keys = [m["key"] for m in shown] + ([None] if len(members) > len(shown) else [])
         g.update(key="_group", focus=focus["key"], members=shown, everyone=members, badges=badges,
-                 badge_attention=attention, badge_keys=keys, subagents=0)
+                 badge_attention=attention, badge_keys=keys, subagents=0,
+                 auto_flash=any(m.get("auto_flash") for m in members))
         return [g]
 
     def set_codex_answers(self, on):
@@ -2752,6 +3256,7 @@ class PetApp:
                 pass
             self.root.after(60, lambda: self.menu.tk_popup(x, y))
             return
+        style_menu(self.menu)  # submenus added since (hooks, auto approve) pick up the theme too
         self.menu.tk_popup(x, y)
 
     def open_in_vscode(self, pet=None):
@@ -2796,6 +3301,10 @@ class PetApp:
             lines.append("since " + ago(d["changed"]))
         if d.get("pid"):
             lines.append(f"PID {d['pid']}" + (" (WSL)" if d.get("env") == "wsl" else ""))
+        if d.get("auto_what") and time.time() - (d.get("auto_t") or 0) < 120:
+            lines.append(f"Auto-approved {ago(d['auto_t'])}: {d['auto_what'][:90]}")
+        if d.get("auto_approved"):
+            lines.append(f"Auto-approved {d['auto_approved']} permission prompt{'s' if d['auto_approved'] != 1 else ''}")
         tip = self.tip = tk.Toplevel(self.root)
         tip.overrideredirect(True)
         tip.attributes("-topmost", True)
