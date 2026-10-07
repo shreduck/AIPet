@@ -575,7 +575,7 @@ def load_sprites(directory=None):
         img["shadow"] = _solid_shadow(Image.open(os.path.join(d, "shadow.png")).convert("RGBA"))
         res = {"meta": meta, "img": img, "faces": {}}
     except Exception as e:
-        print(f"[claude-pet] robot sprites unavailable ({e}); using the mole", file=sys.stderr)
+        log_error(f"robot sprites unavailable in {directory or SPRITE_DIR!r} ({e!r}); using the mole")
         res = False
     if directory is None:
         _SPR["state"] = res
@@ -639,17 +639,54 @@ def light_cycle(state, t):
     return {"done": ("green",) * 3, "error": ("red", "amber", "red"), "idle": ("off",) * 3}.get(state, ("off",) * 3)
 
 
+_PNG_PHOTOS = {"on": IS_MAC}  # macOS: Pillow's ImageTk bridge often can't reach the app's Tk, so hand Tk a PNG instead
+
+
+def _to_photo(im):
+    if not _PNG_PHOTOS["on"]:
+        try:
+            from PIL import ImageTk
+            return ImageTk.PhotoImage(im)
+        except Exception as e:  # e.g. TclError: invalid command name "PyImagingPhoto"
+            log_error(f"ImageTk unavailable, using PNG images: {e!r}")
+            _PNG_PHOTOS["on"] = True
+    import base64
+    import io
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    return tk.PhotoImage(data=base64.b64encode(buf.getvalue()).decode("ascii"), format="png")  # Tk 8.6+ reads PNG
+
+
 def sprite_photo(key, image, w, h):
     """Nearest-neighbour resize + PhotoImage, cached by (key, w, h)."""
-    from PIL import ImageTk
     k = (key, w, h)
     ph = _PHOTOS.get(k)
     if ph is None:
         if len(_PHOTOS) > 400:
             _PHOTOS.clear()
         from PIL import Image
-        ph = _PHOTOS[k] = ImageTk.PhotoImage(image.resize((max(1, w), max(1, h)), Image.NEAREST))
+        ph = _PHOTOS[k] = _to_photo(image.resize((max(1, w), max(1, h)), Image.NEAREST))
     return ph
+
+
+_LOGGED = set()
+
+
+def log_error(msg):
+    """Append a message (once per run) to ~/.claude-pet/error.log: a windowed app has no console to print to."""
+    if msg in _LOGGED:
+        return
+    _LOGGED.add(msg)
+    print(f"[claude-pet] {msg}", file=sys.stderr)
+    try:
+        os.makedirs(HOME_DIR, exist_ok=True)
+        path = os.path.join(HOME_DIR, "error.log")
+        if os.path.exists(path) and os.path.getsize(path) > 200_000:
+            os.remove(path)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + msg + "\n")
+    except OSError:
+        pass
 
 
 def mono(size):
@@ -1100,6 +1137,52 @@ class Pet:
         self._draw_tag()
 
 
+# --------------------------------------------------------------------------- multi-monitor placement
+def work_area(x, y, widget):
+    """(left, top, right, bottom) of the monitor nearest to screen point (x, y) (the whole monitor, taskbar included,
+    so a pet parked over the taskbar stays there).
+    Windows asks the OS (monitors left of / above the main one have negative coordinates). macOS returns None: Tk
+    gives no per-monitor geometry there, so callers don't clamp and trust positions that came from a drag.
+    Elsewhere (X11) the root window spans every monitor."""
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class MONITORINFO(ctypes.Structure):
+                _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                            ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+            u = ctypes.windll.user32
+            u.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+            u.MonitorFromPoint.restype = wintypes.HMONITOR
+            u.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MONITORINFO)]
+            mon = u.MonitorFromPoint(wintypes.POINT(int(x), int(y)), 2)  # MONITOR_DEFAULTTONEAREST
+            mi = MONITORINFO()
+            mi.cbSize = ctypes.sizeof(MONITORINFO)
+            if mon and u.GetMonitorInfoW(mon, ctypes.byref(mi)):
+                r = mi.rcMonitor
+                return r.left, r.top, r.right, r.bottom
+        except Exception:
+            pass
+    if IS_MAC:
+        return None
+    return 0, 0, widget.winfo_screenwidth(), widget.winfo_screenheight()
+
+
+def fit_on_screen(x, y, w, h, ref, widget, margin=0):
+    """Clamp a w x h window at (x, y) into the monitor holding screen point ref (on macOS: unchanged)."""
+    r = work_area(ref[0], ref[1], widget)
+    if not r:
+        return int(x), int(y)
+    left, top, right, bottom = r
+    return (int(max(left, min(x, right - w - margin))), int(max(top, min(y, bottom - h - margin))))
+
+
+def geo(x, y):
+    """Tk geometry offset that also works for negative coordinates (monitors left of / above the main one)."""
+    return f"+{int(x)}+{int(y)}"
+
+
 # --------------------------------------------------------------------------- window focus (Windows)
 def _user32():
     import ctypes
@@ -1265,9 +1348,12 @@ class Detail:
             return
         n = len(self.app.details) - (0 if self.key in self.app.details else 0)
         n = max(0, n - (1 if self.key in self.app.details else 0))
-        x = (w.winfo_screenwidth() - size[0]) // 2 + 28 * n
-        y = max(20, (w.winfo_screenheight() - size[1]) // 2 - 30 + 28 * n)
-        w.geometry(f"+{x}+{y}")
+        root = self.app.root  # centre on the monitor the pets are on
+        ref = (root.winfo_x() + root.winfo_width() // 2, root.winfo_y() + root.winfo_height() // 2)
+        left, top, right, bottom = work_area(*ref, w) or (0, 0, w.winfo_screenwidth(), w.winfo_screenheight())
+        x = left + (right - left - size[0]) // 2 + 28 * n
+        y = max(top + 20, top + (bottom - top - size[1]) // 2 - 30 + 28 * n)
+        w.geometry(geo(x, y))
 
     def _fit_code(self):
         """Size the command box to its real wrapped line count (long paths wrap mid-word, so estimates clip)."""
@@ -1627,14 +1713,14 @@ class PetApp:
         """Put a small window directly above the pet overlay, centred on it (just below it if there is no room)."""
         w.update_idletasks()
         self.root.update_idletasks()
-        sw, sh = w.winfo_screenwidth(), w.winfo_screenheight()
         ww, wh = w.winfo_reqwidth(), w.winfo_reqheight()
         ox, oy, ow, oh = self.root.winfo_x(), self.root.winfo_y(), self.root.winfo_width(), self.root.winfo_height()
-        x = max(0, min(ox + ow // 2 - ww // 2, sw - ww - 10))
-        y = oy - wh - 10
-        if y < 0:
-            y = max(0, min(oy + oh + 10, sh - wh - 60))
-        w.geometry(f"+{x}+{y}")
+        ref = (ox + ow // 2, oy + oh // 2)  # the pet's monitor
+        area = work_area(*ref, w)
+        x, y = ox + ow // 2 - ww // 2, oy - wh - 10
+        if area and y < area[1]:
+            y = oy + oh + 10  # no room above: just below
+        w.geometry(geo(*fit_on_screen(x, y, ww, wh, ref, w, margin=10)))
 
     def open_size_slider(self):
         """A small window with a slider (30% - 300%; 100% = SCALE_UNIT). The pet follows it live, saved on release."""
@@ -1817,13 +1903,20 @@ class PetApp:
     def reposition(self):
         self.root.update_idletasks()
         w, h = self.root.winfo_reqwidth(), self.root.winfo_reqheight()
-        self.root.geometry(f"+{max(0, int(self.anchor[0] - w))}+{max(0, int(self.anchor[1] - h))}")
+        ax, ay = self.anchor  # bottom-right corner; keep it on the monitor it is on (not the main one)
+        self.root.geometry(geo(*fit_on_screen(ax - w, ay - h, w, h, (ax - 1, ay - 1), self.root)))
 
     def animate(self):
         t = time.time() - self.t0
-        for p in self.pets.values():
-            p.draw(t)
-        self.root.after(50, self.animate)
+        try:
+            for p in self.pets.values():
+                try:
+                    p.draw(t)
+                except Exception:  # one bad frame must not stop every pet's animation
+                    import traceback
+                    log_error("draw failed:\n" + traceback.format_exc(limit=4))
+        finally:
+            self.root.after(50, self.animate)
 
     def on_press(self, e):
         self.drag = [e.x_root, e.y_root, self.root.winfo_x(), self.root.winfo_y(), False]
@@ -1906,7 +1999,8 @@ class PetApp:
         tip.update_idletasks()
         x = pet.canvas.winfo_rootx()
         y = pet.canvas.winfo_rooty() - tip.winfo_reqheight() - 6
-        tip.geometry(f"+{max(0, x)}+{max(0, y)}")
+        tip.geometry(geo(*fit_on_screen(x, y, tip.winfo_reqwidth(), tip.winfo_reqheight(),
+                                        (pet.canvas.winfo_rootx() + 10, pet.canvas.winfo_rooty() + 10), tip)))
 
     def hide_tip(self):
         if self.tip:
