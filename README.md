@@ -94,6 +94,10 @@ Use it *instead of* the settings.json hooks, never both, or every event reaches 
   session (the hook records the window), or the right VS Code window for VS Code sessions. WSL terminals are best effort
   (matches a Windows Terminal window by distro/project, else the only/frontmost one). It cannot pick the tab inside a
   Windows Terminal window or the conversation inside the desktop app.
+- **VS Code extension sessions** go one step further: after raising the window that holds the folder (also when VS Code
+  has a parent folder or a `.code-workspace` open), the pet opens that conversation's tab through the extension's
+  `vscode://anthropic.claude-code/open?session=<id>` link (Claude Code 2.1.72+). Claude Code run in VS Code's terminal
+  only gets its window. Turn it off with `"vscode_open_conversation": false` in `config.json`.
 - **Dismiss** a pet from the right-click menu (*Dismiss this pet*) or with *Clear finished*; clicking no longer dismisses.
 - When a session **needs you**, the robot's **check / cross / "?" bubble** is clickable (hand cursor): it opens an
   **independent popup** with what Claude wants to run (the tool, its description and the command), where it runs and how

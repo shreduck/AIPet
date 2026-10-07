@@ -661,6 +661,7 @@ def _update_session(path, target, event, data, wsl):
         "env": "wsl" if wsl else ("windows" if os.name == "nt" else sys.platform),
         "distro": os.environ.get("WSL_DISTRO_NAME", "") if wsl else "",
         "ide": detect_ide() or prev.get("ide", ""),
+        "entry": os.environ.get("CLAUDE_CODE_ENTRYPOINT", "") or prev.get("entry", ""),  # e.g. cli, claude-vscode
         "title": title,
         "topic": topic,
         "hwnd": hwnd,

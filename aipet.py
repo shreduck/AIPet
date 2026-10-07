@@ -56,6 +56,8 @@ DEFAULT_CONFIG = {
     # "size": 1.0 is written when you use the Size slider (1.0 = 100%, range 0.3 - 3.0); deliberately not a default
     # here, so an old absolute "scale" value in config.json can still be migrated once.
     "remind_seconds": 90,
+    # clicking a session of the VS Code extension also opens its conversation tab (vscode://anthropic.claude-code/open)
+    "vscode_open_conversation": True,
     "done_timeout_minutes": 3,  # finished sessions disappear after this: 0 (never) - 30; "Clear finished after..." slider
     "stale_hours": 12,
     "claude_code": {
@@ -326,6 +328,8 @@ def read_claude_code_sessions(cfg):
             "env": env,
             "distro": rec.get("distro", ""),
             "ide": ide,
+            "session_id": sid,
+            "entry": rec.get("entry", ""),
             "cwd": rec.get("cwd", ""),
             "title": rec.get("title") or "session",
             "state": rec.get("state", "idle"),
@@ -1456,6 +1460,28 @@ def vscode_target(cwd, env="", distro="", user_dirs=None):
     return (["--remote", f"wsl+{distro or 'Ubuntu'}", path] if wsl else [path]), path
 
 
+def vscode_conversation_uri(d, code_path=""):
+    """vscode://anthropic.claude-code/open?session=<id>: the Claude Code extension (v2.1.72+) opens that conversation's
+    tab. Only for sessions that run in the extension (entry point claude-vscode), not the CLI in VS Code's terminal,
+    where it would open a second copy of the conversation in the extension."""
+    sid = d.get("session_id") or ""
+    if not sid or sid == "unknown" or "vscode" not in (d.get("entry") or "").lower():
+        return None
+    import urllib.parse
+    scheme = "vscode-insiders" if "insiders" in (code_path or "").lower() else "vscode"
+    return f"{scheme}://anthropic.claude-code/open?session={urllib.parse.quote(sid, safe='')}"
+
+
+def open_uri(uri):
+    try:
+        if os.name == "nt":
+            os.startfile(uri)
+        else:
+            subprocess.Popen(["open" if IS_MAC else "xdg-open", uri])
+    except (AttributeError, OSError) as e:
+        log_error(f"couldn't open {uri.split('?')[0]}: {e!r}")
+
+
 # --------------------------------------------------------------------------- window focus (Windows)
 def _user32():
     import ctypes
@@ -2181,7 +2207,7 @@ class PetApp:
         if d.get("source") != "CC":
             return
         if d.get("ide") == "vscode":
-            self.open_in_vscode(pet)  # `code <folder>` raises the right VS Code window
+            self.open_in_vscode(pet)  # `code <folder>` raises the right VS Code window, then the conversation tab
         elif os.name == "nt":
             if not focus_hwnd(d.get("hwnd")) and d.get("env") == "wsl":
                 focus_wsl_terminal(d)
@@ -2342,6 +2368,11 @@ class PetApp:
             subprocess.Popen(args, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except OSError:
             self.root.bell()
+            return
+        uri = vscode_conversation_uri(d, code)
+        if uri and self.cfg.get("vscode_open_conversation", True):
+            # VS Code hands a vscode:// link to its active window, so give `code` a moment to raise the right one
+            self.root.after(1200, lambda: open_uri(uri))
 
     def show_tip(self, pet):
         self.hide_tip()
