@@ -11,11 +11,11 @@ A floating companion with one creature per Claude Code session. It lives in the 
 
 Pets keep their position: a session stays where it first appeared (new ones join on the left) even when its state changes; only if there are more than `max_pets` are the least urgent dropped.
 
-Each pet shows a badge for where its session runs: `CC` (Windows terminal), `WSL`, `VS` (VS Code), or `WB` (Workbench). The tray icon takes the colour of the most urgent session, and hovering it shows a summary.
+Each pet shows a badge for where its session runs: `CC` (Windows terminal), `CW` (Cowork in the Claude app), `WSL`, `VS` (VS Code), or `WB` (Workbench). The tray icon takes the colour of the most urgent session, and hovering it shows a summary.
 
 ## Build the exe
 On Windows with Python 3.10+, double-click **`build.bat`**. It produces `dist\ClaudePet.exe` (single file).
-If the repo is on GitHub, you can instead run the **Build ClaudePet.exe** workflow and download the artifact.
+**Prebuilt:** the **Build Claude Pet** GitHub Actions workflow runs on every push to `master` (and on `v*` tags or by hand). It builds `ClaudePet.exe` and an Apple Silicon `ClaudePet.app`, and commits them to [`bin/`](bin/): `bin/ClaudePet.exe` and `bin/ClaudePet-mac-arm64.zip`. The Mac app is unsigned: unzip it, then right-click it and choose *Open* the first time.
 
 The exe is unsigned, so the first time you run it SmartScreen may show "Windows protected your PC". Click *More info → Run anyway*.
 

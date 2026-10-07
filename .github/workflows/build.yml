@@ -1,8 +1,21 @@
 name: Build Claude Pet
+
+# Builds ClaudePet.exe (Windows) and ClaudePet.app (macOS, Apple Silicon), then commits both into bin/ on the
+# default branch so the latest build is always in the repo. Commits made with GITHUB_TOKEN don't start new
+# workflow runs, and bin/ is ignored below as well, so publishing never loops.
 on:
   workflow_dispatch:
   push:
+    branches: [master]
     tags: ["v*"]
+    paths-ignore:
+      - "bin/**"
+      - "**.md"
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   windows:
     runs-on: windows-latest
@@ -16,10 +29,12 @@ jobs:
         run: build.bat
       - uses: actions/upload-artifact@v4
         with:
-          name: ClaudePet
+          name: ClaudePet-windows
           path: dist/ClaudePet.exe
-  macos:
-    runs-on: macos-latest
+          if-no-files-found: error
+
+  macos-arm64:
+    runs-on: macos-14  # Apple Silicon runner: native arm64 Python, so PyInstaller builds an arm64 app
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -27,9 +42,49 @@ jobs:
           python-version: "3.12"
       - name: Build
         run: bash build_mac.sh
+      - name: Check architecture
+        run: file dist/ClaudePet.app/Contents/MacOS/ClaudePet | tee /dev/stderr | grep -q arm64
       - name: Zip app
-        run: ditto -c -k --keepParent dist/ClaudePet.app ClaudePet-mac.zip
+        run: ditto -c -k --keepParent dist/ClaudePet.app ClaudePet-mac-arm64.zip  # keeps the bundle's symlinks
       - uses: actions/upload-artifact@v4
         with:
-          name: ClaudePet-mac
-          path: ClaudePet-mac.zip
+          name: ClaudePet-mac-arm64
+          path: ClaudePet-mac-arm64.zip
+          if-no-files-found: error
+
+  publish:
+    needs: [windows, macos-arm64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: publish-bin  # one commit to bin/ at a time
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Copy builds into bin/
+        run: |
+          mkdir -p bin
+          cp artifacts/ClaudePet-windows/ClaudePet.exe bin/ClaudePet.exe
+          cp artifacts/ClaudePet-mac-arm64/ClaudePet-mac-arm64.zip bin/ClaudePet-mac-arm64.zip
+          ls -la bin
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bin
+          if git diff --cached --quiet; then
+            echo "bin/ unchanged"
+            exit 0
+          fi
+          git commit -m "Update builds in bin/ from ${GITHUB_SHA::7} [skip ci]"
+          for i in 1 2 3; do
+            git pull --rebase origin "${{ github.event.repository.default_branch }}" && git push && exit 0
+            sleep 5
+          done
+          exit 1
