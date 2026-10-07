@@ -56,6 +56,8 @@ CODEX_HOOK_EVENTS = [
 ]
 CODEX_HOOK_TIMEOUTS = {e: 10 for e, _ in CODEX_HOOK_EVENTS}
 CODEX_HOOK_TIMEOUTS.update({"SessionEnd": 3, "Interrupt": 3})  # Codex caps these two at 3 s
+CODEX_HOOK_TIMEOUTS["PermissionRequest"] = 86400  # long enough to answer from the pet when that is switched on
+# (off, the hook returns at once and Codex shows its own prompt immediately)
 CODEX_FLAG = "--codex"  # appended to the hook command so the hook knows the agent
 MARKER = re.compile(r"(aipet|claude[-_]pet)[-_]hook", re.I)  # LEGACY: claude-pet = the old name (see legacy.py)
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)

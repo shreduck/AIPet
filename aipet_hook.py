@@ -15,7 +15,8 @@ which aipet.py (running on Windows) watches.
     Interrupt (Codex)              -> done
 
 Codex (OpenAI) sends the same events and fields; its hooks call this script with --codex. Codex runs PermissionRequest
-hooks before showing its own approval prompt, so for Codex the pet only observes (never waits for a click).
+hooks before showing its own approval prompt, so for Codex the pet only waits for a click when the user opted in
+(<pet dir>/codex-answers); then Codex's own prompt appears only if nobody answers on the pet in time.
 
 Environment detection:
     * WSL     -> writes into the *Windows* profile (/mnt/c/Users/<you>/.aipet),
@@ -811,7 +812,10 @@ def main():
 
     with SessionLock(path):
         aid = _update_session(path, target, event, data, wsl)
-    if event == "PermissionRequest" and AGENT != "codex":  # Codex: observe only (see the module docstring)
+    # Codex asks its hooks BEFORE showing its own prompt, so the pet only waits for a click if the user opted in
+    # (Answer Codex prompts from the pet -> <pet dir>/codex-answers); otherwise Codex's prompt appears right away.
+    if event == "PermissionRequest" and (AGENT != "codex" or os.path.exists(os.path.join(os.path.dirname(target),
+                                                                                          "codex-answers"))):
         answer_flow(os.path.dirname(target), path, aid or "")
 
 

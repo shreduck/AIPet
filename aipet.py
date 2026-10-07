@@ -56,7 +56,8 @@ DEFAULT_CONFIG = {
     # "size": 1.0 is written when you use the Size slider (1.0 = 100%, range 0.3 - 3.0); deliberately not a default
     # here, so an old absolute "scale" value in config.json can still be migrated once.
     "remind_seconds": 90,
-    "compact": False,  # one pet for all sessions (a robot per session) instead of one pet per session
+    "compact": False,
+    "codex_answers": False,  # answer Codex permission prompts from the pet (Codex then waits for the pet first)  # one pet for all sessions (a robot per session) instead of one pet per session
     "click_through": True,  # only the robot and its "needs you" bubble take clicks; the rest of the window lets them through
     # clicking a session of the VS Code extension also opens its conversation tab (vscode://anthropic.claude-code/open)
     "vscode_open_conversation": True,
@@ -890,6 +891,17 @@ class Pet:
         c.tag_bind("ans", "<Enter>", lambda e: c.config(cursor="hand2"))
         c.tag_bind("ans", "<Leave>", lambda e: c.config(cursor=""))
         c.tag_bind("ans", "<ButtonPress-1>", lambda e: setattr(self, "_on_bubble", True))
+        self._on_badge = None  # a badge's session key, when a badge was pressed (it opens that session's prompt)
+        c.tag_bind("badge", "<Enter>", lambda e: c.config(cursor="hand2"))
+        c.tag_bind("badge", "<Leave>", lambda e: c.config(cursor=""))
+        c.tag_bind("badge", "<ButtonPress-1>", lambda e: setattr(self, "_on_badge", self._badge_under_pointer()))
+
+    def _badge_under_pointer(self):
+        c = self.canvas
+        for tag in c.gettags("current"):
+            if tag.startswith("badge:"):
+                return tag[6:] or None
+        return None
 
     def destroy(self):
         self.canvas.destroy()
@@ -955,33 +967,36 @@ class Pet:
         if not texts:
             return
         flags = self.data.get("badge_attention") or [self.data.get("state") == "needs_input"] * len(texts)
+        keys = self.data.get("badge_keys") or [self.data.get("focus", self.key)] * len(texts)  # whose prompt a click opens
         font = fnt(5)
         h, gap, s_ = 11, 2, SCALE["v"]
         left, right = BADGE_GUTTER + 6, BADGE_GUTTER + PET_W - 6
         rows, x = [[]], left
-        for text, hot in zip(texts, flags):
+        for text, hot, key in zip(texts, flags, keys):
             w = int(round(12 + self._text_w(font, text)))
             if rows[-1] and x + w > right:  # no more room on this row: wrap to a new one above
                 rows.append([])
                 x = left
-            rows[-1].append((text, hot, x, w))
+            rows[-1].append((text, hot, x, w, key))
             x += w + gap
         base = PET_H - 2 - TAG_H - TOP_TRIM - h + 4  # the first row overlaps the tag's top border by 4 units
         for r, row in enumerate(rows):
             y = base - r * (h + gap)
-            for text, hot, bx, w in row:
+            for text, hot, bx, w, key in row:
                 bg = BADGE_ATTENTION_BG if hot else T["tag_bg"]
+                tags = ("badge", "badge:" + (key or ""))
                 try:
                     im = bubble_image(w, h, bg, T["tag_outline"], None)
-                    self._put(("badge", w, h, bg, T["tag_outline"]), im, int(round(w * s_)), int(round(h * s_)), bx, y, "nw")
+                    self._put(("badge", w, h, bg, T["tag_outline"]), im, int(round(w * s_)), int(round(h * s_)), bx, y, "nw",
+                              tags=tags)
                 except Exception:  # no Pillow
-                    c.create_rectangle(bx, y, bx + w, y + h, fill=bg, outline=T["tag_outline"])
+                    c.create_rectangle(bx, y, bx + w, y + h, fill=bg, outline=T["tag_outline"], tags=tags)
                 dot = COLORS["needs_input"] if text.startswith("+") else badge_dot(text)
                 # the dot at the badge's middle; the text a unit higher than its anchor box would put it, because its
                 # visual middle sits below the box's middle (room for descenders)
-                c.create_rectangle(bx + 3, y + 4, bx + 6, y + 7, fill=dot, outline="")
+                c.create_rectangle(bx + 3, y + 4, bx + 6, y + 7, fill=dot, outline="", tags=tags)
                 c.create_text(bx + 8, y + h / 2 - 0.5, text=text, anchor="w", fill="#111827" if hot else T["tag_fg"],
-                              font=font)
+                              font=font, tags=tags)
 
     @staticmethod
     def _text_w(font, text):
@@ -1878,8 +1893,9 @@ class Detail:
             note = ("Allow once or Deny answers this prompt right from here, or answer in the session window "
                     "(Go to window). If you do neither, the normal prompt appears.")
         elif item.get("agent") == "codex" and req:
-            note = ("Codex shows its own approval prompt; answer it there (Go to window). The pet shows what Codex is "
-                    "asking but doesn't answer for Codex.")
+            note = ("Answer this one in Codex (Go to window). To answer Codex prompts here instead, switch on "
+                    "Answer Codex prompts from the pet in the menu; Codex then shows its own prompt only if you "
+                    "don't answer on the pet in time.")
         elif req.get("source") == "transcript":
             note = ("This session type (the VS Code extension) sends no permission events, so the pet can't answer for it. "
                     "This is what Claude is asking, so you know what to approve there. Press Go to window to jump there.")
@@ -1999,6 +2015,10 @@ class PetApp:
         m.add_command(label="Reset size", command=self.reset_scale)
         m.add_command(label="Answer timeout...", command=self.open_answer_slider)
         m.add_command(label="Clear finished after...", command=self.open_done_slider)
+        self.codex_answer_var = tk.BooleanVar(value=bool(self.cfg.get("codex_answers")))
+        self._write_codex_flag()
+        m.add_checkbutton(label="Answer Codex prompts from the pet", variable=self.codex_answer_var,
+                          command=lambda: self.set_codex_answers(self.codex_answer_var.get()))
         self.compact_var = tk.BooleanVar(value=bool(self.cfg.get("compact")))
         m.add_checkbutton(label="Compact mode (one pet)", variable=self.compact_var, command=self.toggle_compact)
         m.add_separator()
@@ -2456,7 +2476,7 @@ class PetApp:
                 if not c.winfo_ismapped():
                     continue
                 ox, oy = c.winfo_rootx(), c.winfo_rooty()
-                boxes = [c.bbox(t) for t in ("hit", "ans") if c.find_withtag(t)] or [c.bbox("all")]  # mole/cat: all
+                boxes = [c.bbox(t) for t in ("hit", "ans", "badge") if c.find_withtag(t)] or [c.bbox("all")]  # mole/cat: all
             except tk.TclError:
                 continue
             for bb in boxes:
@@ -2505,10 +2525,20 @@ class PetApp:
 
     def on_release(self, e, pet):
         on_bubble, pet._on_bubble = pet._on_bubble, False
+        on_badge, pet._on_badge = pet._on_badge, None
         if self.drag and self.drag[4]:
             self.root.update_idletasks()
             self.anchor = [self.root.winfo_x() + self.root.winfo_width(),
                            self.root.winfo_y() + self.root.winfo_height()]
+        elif on_badge and on_badge != "_none":  # a badge: that session's prompt window, or its window if it isn't waiting
+            item = next((i for i in self._last_items if i["key"] == on_badge), None)
+            if item:
+                self.ack[on_badge] = True
+                if item.get("state") == "needs_input":
+                    self.open_detail(on_badge)
+                else:
+                    import types
+                    self.focus_session(types.SimpleNamespace(key=on_badge, data=item))
         elif on_bubble and pet.key != "_none":
             self._acknowledge(pet)
             self.open_detail(pet.data.get("focus", pet.key))  # the bubble: the full question and the answer buttons
@@ -2542,9 +2572,30 @@ class PetApp:
         if len(members) > len(shown):
             badges.append(f"+{len(members) - len(shown)}")
             attention.append(any(m["state"] == "needs_input" for m in members[len(shown):]))
+        keys = [m["key"] for m in shown] + ([None] if len(members) > len(shown) else [])
         g.update(key="_group", focus=focus["key"], members=shown, everyone=members, badges=badges,
-                 badge_attention=attention, subagents=0)
+                 badge_attention=attention, badge_keys=keys, subagents=0)
         return [g]
+
+    def set_codex_answers(self, on):
+        """Codex asks its hooks before showing its own prompt: with this on, the pet waits for your click first (up to
+        the answer timeout), so Codex's prompt only appears if you don't answer on the pet."""
+        self.cfg["codex_answers"] = bool(on)
+        save_setting("codex_answers", self.cfg["codex_answers"])
+        if self.codex_answer_var.get() != self.cfg["codex_answers"]:
+            self.codex_answer_var.set(self.cfg["codex_answers"])
+        self._write_codex_flag()
+
+    def _write_codex_flag(self):
+        flag = os.path.join(HOME_DIR, "codex-answers")  # read by the hooks, including WSL ones (shared folder)
+        try:
+            if self.cfg.get("codex_answers"):
+                os.makedirs(HOME_DIR, exist_ok=True)
+                open(flag, "w").close()
+            elif os.path.exists(flag):
+                os.remove(flag)
+        except OSError:
+            pass
 
     def toggle_compact(self, value=None):
         self.cfg["compact"] = (not self.cfg.get("compact", False)) if value is None else bool(value)

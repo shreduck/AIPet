@@ -77,8 +77,11 @@ Claude Code, kept in `~/.codex/hooks.json` (or `$CODEX_HOME/hooks.json`):
   with `~/.codex` or `codex` on the PATH. Install / update / remove / backups work like the Claude Code targets.
 - **Trust step:** Codex only runs hooks you have trusted. After installing, start Codex, type `/hooks` and trust the AIPet
   hooks (Codex asks again only if they change).
-- The pet **observes** Codex permission prompts (shows what Codex wants to run) but doesn't answer them: Codex runs its
-  permission hook before showing its own prompt, so waiting for a click would hold that prompt back. Answer in Codex.
+- Codex permission prompts show on the pet. By default you answer them in Codex: Codex asks its permission hook
+  *before* showing its own prompt, so a pet waiting for a click would hold that prompt back. Switch on **Answer Codex
+  prompts from the pet** (menu or tray) to answer them on the pet like Claude's; Codex then shows its own prompt only if
+  you don't answer on the pet within the answer timeout. This needs the Codex hooks updated once (they get a longer
+  permission timeout) and trusted again in `/hooks`.
 - Events: start, prompt, tool use, permission, stop, **Interrupt** (shows as done), session end and subagents. Codex has no
   `Notification` event.
 
@@ -125,6 +128,7 @@ click belong to the session in front:
   has a parent folder or a `.code-workspace` open), the pet opens that conversation's tab through the extension's
   `vscode://anthropic.claude-code/open?session=<id>` link (Claude Code 2.1.72+). Claude Code run in VS Code's terminal
   only gets its window. Turn it off with `"vscode_open_conversation": false` in `config.json`.
+- **Click a badge** to open that session's prompt window if it needs you (in compact mode, each badge is one session), or to go to its window otherwise.
 - **Dismiss** a pet from the right-click menu (*Dismiss this pet*) or with *Clear finished*; clicking no longer dismisses.
 - When a session **needs you**, the robot's **check / cross / "?" bubble** is clickable (hand cursor): it opens an
   **independent popup** with what Claude wants to run (the tool, its description and the command), where it runs and how

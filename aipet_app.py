@@ -911,6 +911,8 @@ class TrayApp:
             I("Answer timeout...", act(self.pet.open_answer_slider)),
             I("Clear finished after...", act(self.pet.open_done_slider)),
             I("Compact mode (one pet)", act(self.pet.toggle_compact), checked=lambda item: bool(self.pet.cfg.get("compact"))),
+            I("Answer Codex prompts from the pet", act(lambda: self.pet.set_codex_answers(not self.pet.cfg.get("codex_answers"))),
+              checked=lambda item: bool(self.pet.cfg.get("codex_answers"))),
             I("Log hook events (debug)", act(self.toggle_debug), checked=lambda item: os.path.exists(DEBUG_FLAG)),
             I("Start with Windows", act(self.toggle_autostart), checked=lambda item: self.c_autostart,
               visible=os.name == "nt"),
