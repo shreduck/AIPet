@@ -22,7 +22,7 @@ from tkinter import messagebox
 
 import aipet as core
 import hooks_installer as hi
-import legacy
+import legacy  # LEGACY: moving over from Claude Pet
 
 IS_MAC = sys.platform == "darwin"
 try:
@@ -287,6 +287,7 @@ class TrayApp:
         except Exception:
             pass
         self.refresh_targets()
+        self.ui(lambda: self.root.after(20000, self.legacy_tick))  # LEGACY: daily reminder about old-name hooks
         stale = [k for k, v in self.status.items() if v == hi.STALE]
         if not setup_is_done():
             self.ui(self.show_setup)  # first run: shows what is installed / up to date / outdated per target
@@ -541,6 +542,72 @@ class TrayApp:
         win.geometry(f"+{max(0, (win.winfo_screenwidth() - win.winfo_reqwidth()) // 2)}"
                      f"+{max(0, (win.winfo_screenheight() - win.winfo_reqheight()) // 3)}")
 
+    # ---- LEGACY: daily reminder about hooks / plugins still on the old name (see legacy.py)
+    def legacy_tick(self):
+        """Tk thread: check once now (if not yet reminded today), then every hour, so a pet running for days still
+        reminds on each new day."""
+        if legacy.due_today():
+            self.check_legacy()
+        self.root.after(3600 * 1000, self.legacy_tick)
+
+    def check_legacy(self, force=False):
+        targets = {hi.LOCAL: "This Mac" if IS_MAC else "This PC (Windows)"} if (os.name == "nt" or IS_MAC) else {}
+        targets.update({"wsl:" + n: f"WSL: {n}" for n, st in self.distros if st.lower() == "running"})
+        pets = [p.data for p in self.pet.pets.values()]
+
+        def job():
+            try:
+                found = legacy.findings(targets, pets)
+            except Exception as e:
+                found = []
+                core.log_error(f"legacy check failed: {e!r}")
+            if found or force:
+                self.ui(lambda: self._legacy_window(found))
+            if found:
+                legacy.mark_warned()
+        threading.Thread(target=job, daemon=True).start()
+
+    def _legacy_window(self, found):
+        if not found:
+            self.info("Nothing uses the old Claude Pet name any more. You can delete the old folder "
+                      f"({legacy.LEGACY_DIR}) if it still exists.")
+            return
+        win = tk.Toplevel(self.root)
+        win.title(f"{APP_NAME}: update old hooks")
+        win.attributes("-topmost", True)
+        win.resizable(False, False)
+        tk.Label(win, text="Some hooks still use the old Claude Pet name", font=("Segoe UI", 12, "bold")
+                 ).pack(anchor="w", padx=16, pady=(14, 2))
+        tk.Label(win, fg="#6b7280", justify="left", wraplength=480,
+                 text="They keep working for now, but support for the old name will be removed in a future version. "
+                      "This reminder shows once a day while anything is left.").pack(anchor="w", padx=16)
+        body = tk.Frame(win)
+        body.pack(fill="x", padx=16, pady=8)
+        for what, how in found:
+            tk.Label(body, text=what, font=("Segoe UI", 9, "bold"), justify="left", wraplength=480).pack(anchor="w", pady=(6, 0))
+            tk.Label(body, text=how, font=("Segoe UI", 9), justify="left", wraplength=480).pack(anchor="w")
+        row = tk.Frame(win)
+        row.pack(fill="x", padx=16, pady=(6, 14))
+        keys = [k for k in [hi.LOCAL] + ["wsl:" + n for n, _ in self.distros] if any(
+            f.startswith(("This PC", "This Mac") if k == hi.LOCAL else f"WSL: {k[4:]}:") for f, _ in found)]
+
+        def update():
+            win.destroy()
+            if self.busy:
+                self.info("Another hook operation is still running - try again in a moment.")
+                return
+            self.busy = True
+            threading.Thread(target=self._update_job, args=(keys,), daemon=True).start()
+        if keys:
+            tk.Button(row, text="Update these hooks now", default="active", command=update).pack(side="right")
+        if any("Cowork" in f or "CLI" in f for f, _ in found):
+            tk.Button(row, text="Cowork / CLI plugin...", command=lambda: (win.destroy(), self.show_cowork())
+                      ).pack(side="right", padx=8)
+        tk.Button(row, text="Remind me tomorrow", command=win.destroy).pack(side="left")
+        win.update_idletasks()
+        win.geometry(f"+{max(0, (win.winfo_screenwidth() - win.winfo_reqwidth()) // 2)}"
+                     f"+{max(0, (win.winfo_screenheight() - win.winfo_reqheight()) // 3)}")
+
     # ---- pet right-click: the same "Claude Code hooks" menu as the tray
     def _fill_hooks_menu(self, menu):
         menu.delete(0, "end")
@@ -575,6 +642,7 @@ class TrayApp:
         menu.add_separator()
         menu.add_command(label="Cowork (Claude desktop app)...", command=self.show_cowork)
         menu.add_command(label="Run setup again...", command=self.show_setup)
+        menu.add_command(label="Check for old Claude Pet hooks...", command=lambda: self.check_legacy(True))  # LEGACY
         menu.add_command(label="Re-detect / refresh status",
                          command=lambda: threading.Thread(target=self.refresh_targets, daemon=True).start())
 
@@ -734,6 +802,7 @@ class TrayApp:
             items += [M.SEPARATOR,
                       I("Cowork (Claude desktop app)...", act(self.show_cowork)),
                       I("Run setup again...", act(self.show_setup)),
+                      I("Check for old Claude Pet hooks...", act(self.check_legacy, True)),  # LEGACY
                       I("Re-detect / refresh status", lambda: threading.Thread(target=self.refresh_targets, daemon=True).start())]
             return items
 
@@ -1053,7 +1122,7 @@ def main():
         return
     if not single_instance():
         return  # already running in the tray
-    if legacy.needs_migration() and not migration_window():
+    if legacy.needs_migration() and not migration_window():  # LEGACY
         return
     TrayApp().root.mainloop()
 

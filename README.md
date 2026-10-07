@@ -7,6 +7,11 @@ A floating companion with one creature per Claude Code session. It lives in the 
 > folder is kept and still read until every hook is updated), moves *Start with Windows / at login*, and then offers
 > to update the hooks in `settings.json` (old `claude-pet-hook` entries are recognised and replaced, with backups).
 > Re-upload the Cowork plugin (`aipet-cowork-plugin.zip`) after uninstalling the old one.
+>
+> Hooks and plugins still on the old name keep working, but once a day AIPet lists what is left and how to update it
+> (`settings.json` hooks, the old Cowork / CLI plugin, sessions still arriving through `~/.claude-pet`); *Claude Code
+> hooks > Check for old Claude Pet hooks...* runs the check on demand. All of this lives in `legacy.py` plus lines
+> marked `LEGACY`, so it can be removed in a later version.
 
 | Pet | Meaning |
 |---|---|

@@ -76,7 +76,7 @@ def resolve_wsl_windows_dir():
 
 
 def sessions_dir(wsl):
-    base = os.environ.get("AIPET_DIR") or os.environ.get("CLAUDE_PET_DIR")  # the old name still works
+    base = os.environ.get("AIPET_DIR") or os.environ.get("CLAUDE_PET_DIR")  # LEGACY: the old name still works
     if not base and wsl:
         base = resolve_wsl_windows_dir()
     return os.path.join(base or LOCAL_PET_DIR, "sessions")
@@ -411,7 +411,7 @@ def configured_wait(base):
     """Seconds the user allows for answering from the pet (0 = no limit). Set with the pet's "Answer timeout" slider,
     which mirrors it into <pet dir>/answer-wait; 3 minutes if it was never set."""
     try:
-        raw = os.environ.get("AIPET_ANSWER_WAIT") or os.environ.get("CLAUDE_PET_ANSWER_WAIT")
+        raw = os.environ.get("AIPET_ANSWER_WAIT") or os.environ.get("CLAUDE_PET_ANSWER_WAIT")  # LEGACY
         if not raw:
             with open(os.path.join(base, "answer-wait"), encoding="utf-8") as f:
                 raw = f.read().strip()

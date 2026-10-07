@@ -38,7 +38,7 @@ HOOK_EVENTS = [
 ]
 HOOK_TIMEOUTS = {"PermissionRequest": 86400}  # seconds; the answer timeout can be "no limit" (the hook
 # still ends as soon as the prompt is answered anywhere, or the pet closes)
-MARKER = re.compile(r"(aipet|claude[-_]pet)[-_]hook", re.I)  # also the hooks of Claude Pet, the old name
+MARKER = re.compile(r"(aipet|claude[-_]pet)[-_]hook", re.I)  # LEGACY: claude-pet = the old name (see legacy.py)
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 IGNORED_DISTROS = {"docker-desktop", "docker-desktop-data", "rancher-desktop", "rancher-desktop-data"}
 IS_MAC = sys.platform == "darwin"
@@ -815,3 +815,4 @@ def build_plugin():
 def cli_plugin_commands(market_dir=PLUGIN_MARKET_DIR):
     return [f'claude plugin marketplace add "{market_dir}"',
             f"claude plugin install {PLUGIN_NAME}@{PLUGIN_MARKET}"]
+

@@ -41,7 +41,7 @@ HOME_DIR = os.path.join(os.path.expanduser("~"), ".aipet")
 SESSIONS_DIR = os.path.join(HOME_DIR, "sessions")
 # Claude Pet (the old name) kept its files in ~/.claude-pet. Hooks not yet updated to AIPet still write their sessions
 # there, so the pet keeps reading that folder while it exists.
-LEGACY_SESSIONS_DIR = os.path.join(os.path.expanduser("~"), ".claude-pet", "sessions")
+LEGACY_SESSIONS_DIR = os.path.join(os.path.expanduser("~"), ".claude-pet", "sessions")  # LEGACY
 CONFIG_PATH = os.path.join(HOME_DIR, "config.json")
 
 DEFAULT_CONFIG = {
@@ -273,7 +273,7 @@ def read_claude_code_sessions(cfg):
     if not cfg["claude_code"]["enabled"]:
         return items
     cutoff = time.time() - cfg["stale_hours"] * 3600
-    dirs = [SESSIONS_DIR] + ([LEGACY_SESSIONS_DIR] if os.path.isdir(LEGACY_SESSIONS_DIR) else [])
+    dirs = [SESSIONS_DIR] + ([LEGACY_SESSIONS_DIR] if os.path.isdir(LEGACY_SESSIONS_DIR) else [])  # LEGACY
     dirs += list(cfg["claude_code"].get("extra_session_dirs") or [])
     paths = []
     for d in dirs:
@@ -323,6 +323,8 @@ def read_claude_code_sessions(cfg):
             "detail": rec.get("cwd", ""),
             "changed": rec.get("changed", rec.get("updated", 0)),
             "path": path,
+            "legacy": os.path.dirname(path) == LEGACY_SESSIONS_DIR,  # LEGACY: written by a hook on the old name
+            "app": rec.get("app", ""),
             "hwnd": rec.get("hwnd"),
             "subagents": _active_agents(rec),
             "request": rec.get("request") or {},

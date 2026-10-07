@@ -11,16 +11,25 @@ macOS LaunchAgent com.claudepet.app) and named its hooks claude-pet-hook. On fir
 * leaves a note in the old folder.
 
 Hooks in settings.json are updated by the normal "hooks point at an older location" prompt afterwards (they are
-recognised by name, see hooks_installer.MARKER).
+recognised by name, see hooks_installer.MARKER). Anything still on the old name keeps working; AIPet reminds the
+user once a day what to update (findings()).
+
+Everything about the old name lives here, plus lines marked "LEGACY" elsewhere: dropping legacy support later means
+deleting this file and those lines.
 """
+import glob
 import os
+import re
 import shutil
 import subprocess
 import sys
 import time
 
+import hooks_installer as hi
+
 IS_MAC = sys.platform == "darwin"
 HOME = os.path.expanduser("~")
+WARNED = os.path.join(os.path.expanduser("~"), ".aipet", "legacy-warned")  # date of the last daily reminder
 LEGACY_DIR = os.path.join(HOME, ".claude-pet")
 NEW_DIR = os.path.join(HOME, ".aipet")
 MARKER = os.path.join(NEW_DIR, "migrated-from-claude-pet")
@@ -167,6 +176,7 @@ def migrate(set_new_autostart=None):
     except OSError:
         pass
     mark_done()
+    mark_warned()  # the migration window already explained everything today
     return done
 
 
@@ -174,3 +184,110 @@ def mark_done():
     os.makedirs(NEW_DIR, exist_ok=True)
     with open(MARKER, "w", encoding="utf-8") as f:
         f.write(time.strftime("%Y-%m-%d %H:%M:%S\n"))
+
+
+# --------------------------------------------------------------------------- hooks still on the old name (Claude Pet)
+LEGACY_HOOK = re.compile(r"claude[-_]pet[-_]hook", re.I)
+
+
+def uses_legacy_hook(key):
+    """True if the target's settings.json still calls claude-pet-hook (they keep working, but should be updated)."""
+    try:
+        return bool(LEGACY_HOOK.search(hi.read_raw(key)[1]))
+    except Exception:
+        return False
+
+
+def _hooks_files(base, max_depth):
+    """hooks/hooks.json files under base, at most max_depth folders deep."""
+    found = []
+    base = os.path.normpath(base)
+    for root, dirs, files in os.walk(base):
+        depth = root[len(base):].count(os.sep)
+        if depth >= max_depth:
+            dirs[:] = []
+        if os.path.basename(root) == "hooks" and "hooks.json" in files:
+            found.append(os.path.join(root, "hooks.json"))
+    return found
+
+
+def legacy_plugins():
+    """Installed copies of the plugin built by Claude Pet, whose hooks still call claude-pet-hook:
+    [("cowork" | "cli", path)]. Cowork plugins live in the Claude app's data folder, CLI ones in ~/.claude/plugins."""
+    roots = []
+    if IS_MAC:
+        roots.append(("cowork", os.path.expanduser("~/Library/Application Support/Claude/local-agent-mode-sessions")))
+    elif os.name == "nt":
+        if os.environ.get("APPDATA"):
+            roots.append(("cowork", os.path.join(os.environ["APPDATA"], "Claude", "local-agent-mode-sessions")))
+        if os.environ.get("LOCALAPPDATA"):
+            roots += [("cowork", p) for p in glob.glob(os.path.join(
+                os.environ["LOCALAPPDATA"], "Packages", "Claude_*", "LocalCache", "Roaming", "Claude",
+                "local-agent-mode-sessions"))]
+    roots.append(("cli", os.path.join(HOME, ".claude", "plugins")))
+    out = []
+    for kind, root in roots:
+        if not os.path.isdir(root):
+            continue
+        for f in _hooks_files(root, 7):
+            try:
+                with open(f, encoding="utf-8") as fh:
+                    if LEGACY_HOOK.search(fh.read()):
+                        out.append((kind, f))
+            except OSError:
+                pass
+    return out
+
+
+def findings(targets, pets):
+    """What still uses the old name, each as (what, how to fix). targets: {key: label} of reachable settings.json
+    targets; pets: current session items (their "legacy" flag says they arrived through ~/.claude-pet)."""
+    out, seen = [], set()
+    for key, label in targets.items():
+        if uses_legacy_hook(key):
+            out.append((f"{label}: Claude Code hooks still call claude-pet-hook",
+                        f"Menu: Claude Code hooks > {label} > Install / update hooks (backed up first)."))
+            seen.add(key)
+    kinds = {k for k, _ in legacy_plugins()}
+    if "cowork" in kinds:
+        out.append(("Claude app (Cowork): the old pet-hooks plugin is installed",
+                    "Claude app > Customize > Plugins: uninstall pet-hooks, then upload aipet-cowork-plugin.zip "
+                    "(menu: Claude Code hooks > Cowork shows where it is)."))
+    if "cli" in kinds:
+        out.append(("Claude Code CLI: the old pet-hooks plugin is installed",
+                    "In a terminal: claude plugin uninstall pet-hooks@desktop-pet-local, then run the two commands "
+                    "from Claude Code hooks > Cowork."))
+    for it in pets:
+        if not it.get("legacy"):
+            continue
+        if it.get("app") == "cowork":
+            if "cowork" not in kinds:
+                out.append((f"Cowork session '{it.get('title')}' reports through the old plugin",
+                            "Claude app > Customize > Plugins: uninstall pet-hooks, upload aipet-cowork-plugin.zip."))
+                kinds.add("cowork")
+        elif it.get("env") == "wsl" and ("wsl:" + it.get("distro", "")) not in seen:
+            seen.add("wsl:" + it.get("distro", ""))
+            out.append((f"WSL {it.get('distro')}: sessions still use the old hook",
+                        f"Menu: Claude Code hooks > WSL: {it.get('distro')} > Install / update hooks."))
+        elif "other" not in seen:
+            seen.add("other")
+            out.append((f"Session '{it.get('title')}' still reports through the old hook",
+                        "Menu: Claude Code hooks > Run setup again, and update every target marked out of date."))
+    return out
+
+
+def due_today():
+    try:
+        with open(WARNED, encoding="utf-8") as f:
+            return f.read().strip() != time.strftime("%Y-%m-%d")
+    except OSError:
+        return True
+
+
+def mark_warned():
+    try:
+        os.makedirs(os.path.dirname(WARNED), exist_ok=True)
+        with open(WARNED, "w", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d"))
+    except OSError:
+        pass
