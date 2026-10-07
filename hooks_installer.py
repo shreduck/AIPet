@@ -38,6 +38,25 @@ HOOK_EVENTS = [
 ]
 HOOK_TIMEOUTS = {"PermissionRequest": 86400}  # seconds; the answer timeout can be "no limit" (the hook
 # still ends as soon as the prompt is answered anywhere, or the pet closes)
+# Codex (OpenAI's coding agent) has a hook system with the same events, payload fields and file layout as Claude Code
+# (~/.codex/hooks.json or $CODEX_HOME/hooks.json). No Notification event; Interrupt is Codex-only. Timeouts are short:
+# the pet only observes Codex (its PermissionRequest hook runs BEFORE Codex shows its own approval prompt, so waiting
+# for a click would hold that prompt back). PostToolUse has no matcher: Codex matchers are regexes and no matcher
+# means every tool.
+CODEX_HOOK_EVENTS = [
+    ("SessionStart", None),
+    ("UserPromptSubmit", None),
+    ("PostToolUse", None),
+    ("PermissionRequest", None),
+    ("Stop", None),
+    ("Interrupt", None),
+    ("SessionEnd", None),
+    ("SubagentStart", None),
+    ("SubagentStop", None),
+]
+CODEX_HOOK_TIMEOUTS = {e: 10 for e, _ in CODEX_HOOK_EVENTS}
+CODEX_HOOK_TIMEOUTS.update({"SessionEnd": 3, "Interrupt": 3})  # Codex caps these two at 3 s
+CODEX_FLAG = "--codex"  # appended to the hook command so the hook knows the agent
 MARKER = re.compile(r"(aipet|claude[-_]pet)[-_]hook", re.I)  # LEGACY: claude-pet = the old name (see legacy.py)
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 IGNORED_DISTROS = {"docker-desktop", "docker-desktop-data", "rancher-desktop", "rancher-desktop-data"}
@@ -45,8 +64,33 @@ IS_MAC = sys.platform == "darwin"
 LOCAL = "mac" if IS_MAC else "windows"  # key of the machine this app runs on
 
 
+# Target keys: "windows" / "mac" / "wsl:<distro>" for Claude Code, the same with a "codex:" prefix for Codex.
+def is_codex(key):
+    return key.startswith("codex:")
+
+
+def _base(key):
+    return key[6:] if is_codex(key) else key
+
+
 def is_local(key):
-    return key in ("windows", "mac")
+    return _base(key) in ("windows", "mac")
+
+
+def _distro(key):
+    return _base(key)[4:]
+
+
+def events_for(key):
+    return (CODEX_HOOK_EVENTS, CODEX_HOOK_TIMEOUTS) if is_codex(key) else (HOOK_EVENTS, HOOK_TIMEOUTS)
+
+
+def codex_home():
+    return os.environ.get("CODEX_HOME") or os.path.join(os.path.expanduser("~"), ".codex")
+
+
+WSL_CODEX_FILE = '"${CODEX_HOME:-$HOME/.codex}/hooks.json"'
+WSL_CLAUDE_FILE = '"$HOME/.claude/settings.json"'
 
 
 HOME = os.path.expanduser("~")
@@ -93,13 +137,15 @@ def _strip_ours(groups):
     return out
 
 
-def merge_hooks(settings, command):
+def merge_hooks(settings, command, events=None, timeouts=None):
+    events = HOOK_EVENTS if events is None else events
+    timeouts = HOOK_TIMEOUTS if timeouts is None else timeouts
     settings = dict(settings or {})
     hooks = dict(settings.get("hooks") or {})
-    for event, matcher in HOOK_EVENTS:
+    for event, matcher in events:
         groups = _strip_ours(hooks.get(event) or [])
         entry = {"hooks": [{"type": "command", "command": command,
-                            **({"timeout": HOOK_TIMEOUTS[event]} if event in HOOK_TIMEOUTS else {})}]}
+                            **({"timeout": timeouts[event]} if event in timeouts else {})}]}
         if matcher:
             entry = {"matcher": matcher, **entry}
         groups.append(entry)
@@ -319,7 +365,7 @@ def migrate_legacy_backups():
     return copied
 
 
-def hooks_state(settings, command):
+def hooks_state(settings, command, events=None, timeouts=None):
     """Compare the AIPet hook entries with the command we would install now.
 
     "missing"   no AIPet hooks at all
@@ -327,6 +373,8 @@ def hooks_state(settings, command):
     "partial"   right command, but some of the events are not hooked
     "current"   every event uses exactly `command`
     """
+    events = HOOK_EVENTS if events is None else events
+    timeouts = HOOK_TIMEOUTS if timeouts is None else timeouts
     ok = {command} if isinstance(command, str) else set(command)
     ours, bad_timeout = {}, False
     for event, groups in ((settings or {}).get("hooks") or {}).items():
@@ -336,23 +384,55 @@ def hooks_state(settings, command):
             for h in (g.get("hooks") or []) if isinstance(g, dict) else []:
                 if isinstance(h, dict) and MARKER.search(str(h.get("command", ""))):
                     ours.setdefault(event, []).append(h.get("command", ""))
-                    if event in HOOK_TIMEOUTS and h.get("timeout") != HOOK_TIMEOUTS[event]:
+                    if event in timeouts and h.get("timeout") != timeouts[event]:
                         bad_timeout = True
     if not ours:
         return "missing"
     if any(c not in ok for cmds in ours.values() for c in cmds):
         return "outdated"
-    if bad_timeout or any(event not in ours for event, _ in HOOK_EVENTS):
+    if bad_timeout or any(event not in ours for event, _ in events):
         return "partial"
     return "current"
 
 
 def _expected_command(key):
+    if is_codex(key):
+        if _base(key) == "windows":
+            return codex_windows_command(check=False)
+        if _base(key) == "mac":
+            return {c + " " + CODEX_FLAG for c in mac_hook_commands()}
+        return wsl_hook_command(_distro(key)) + " " + CODEX_FLAG
     if key == "windows":
         return windows_hook_command(check=False)
     if key == "mac":
         return mac_hook_commands()
     return wsl_hook_command(key[4:])
+
+
+def codex_windows_command(check=True):
+    """The hook command for Codex on Windows. Codex's docs don't say which shell runs hook commands there, so use a
+    form every shell runs as-is: an unquoted path with backslashes (a quoted path is only a string in PowerShell).
+    Folders with spaces get their 8.3 short name; the file name is kept so the hook stays recognisable."""
+    cmd = windows_hook_command(check)
+    parts = [p.strip('"') for p in re.findall(r'"[^"]*"|\S+', cmd)]
+    out = []
+    for p in parts:
+        p = p.replace("/", "\\")
+        if " " in p:
+            p = os.path.join(_short_path(os.path.dirname(p)), os.path.basename(p))
+        out.append(p)
+    return " ".join(out + [CODEX_FLAG])
+
+
+def _short_path(path):
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(1024)
+        if ctypes.windll.kernel32.GetShortPathNameW(path, buf, 1024):
+            return buf.value
+    except Exception:
+        pass
+    return path
 
 
 # --------------------------------------------------------------------------- raw file access per target
@@ -366,20 +446,26 @@ def _wsl(args, input_bytes=None, timeout=60):
                           timeout=timeout, creationflags=NO_WINDOW)
 
 
+def local_file(key):
+    return os.path.join(codex_home(), "hooks.json") if is_codex(key) else WINDOWS_SETTINGS
+
+
 def describe(key):
-    return WINDOWS_SETTINGS if is_local(key) else f"~/.claude/settings.json in WSL '{key[4:]}'"
+    if is_local(key):
+        return local_file(key)
+    return f"{'~/.codex/hooks.json' if is_codex(key) else '~/.claude/settings.json'} in WSL '{_distro(key)}'"
 
 
 def read_raw(key):
     """Return (exists, text) of the target's settings.json, byte-exact."""
     if is_local(key):
         try:
-            with open(WINDOWS_SETTINGS, "rb") as f:
+            with open(local_file(key), "rb") as f:
                 return True, f.read().decode("utf-8")
         except FileNotFoundError:
             return False, ""
-    distro = key[4:]
-    rc, out, err = _sh(distro, 'f="$HOME/.claude/settings.json"; '
+    distro = _distro(key)
+    rc, out, err = _sh(distro, f'f={WSL_CODEX_FILE if is_codex(key) else WSL_CLAUDE_FILE}; '
                                'if [ -f "$f" ]; then printf "EXISTS\\n"; cat "$f"; else printf "ABSENT\\n"; fi')
     if rc != 0 or "\n" not in out:
         raise RuntimeError(f"WSL '{distro}' didn't respond: {err.strip()[:200]}")
@@ -390,24 +476,26 @@ def read_raw(key):
 def write_raw(key, text):
     """Write text to the target's settings.json; text=None deletes the file."""
     if is_local(key):
+        target = local_file(key)
         if text is None:
             try:
-                os.remove(WINDOWS_SETTINGS)
+                os.remove(target)
             except FileNotFoundError:
                 pass
             return
-        os.makedirs(os.path.dirname(WINDOWS_SETTINGS), exist_ok=True)
-        tmp = WINDOWS_SETTINGS + ".tmp"
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        tmp = target + ".tmp"
         with open(tmp, "wb") as f:
             f.write(text.encode("utf-8"))
-        os.replace(tmp, WINDOWS_SETTINGS)
+        os.replace(tmp, target)
         return
-    distro = key[4:]
+    distro = _distro(key)
+    f = WSL_CODEX_FILE if is_codex(key) else WSL_CLAUDE_FILE
     if text is None:
-        rc, _, err = _sh(distro, 'rm -f "$HOME/.claude/settings.json"')
+        rc, _, err = _sh(distro, f'rm -f {f}')
     else:
-        rc, _, err = _sh(distro, 'mkdir -p "$HOME/.claude" && f="$HOME/.claude/settings.json" && '
-                                 'cat > "$f.tmp" && mv "$f.tmp" "$f"', text.encode("utf-8"))
+        rc, _, err = _sh(distro, f'f={f}; mkdir -p "$(dirname "$f")" && cat > "$f.tmp" && mv "$f.tmp" "$f"',
+                         text.encode("utf-8"))
     if rc != 0:
         raise RuntimeError(f"Writing settings in WSL '{distro}' failed: {err.strip()[:200]}")
 
@@ -521,7 +609,7 @@ def _apply(key, transform, reason):
 
 def status(key):
     try:
-        if not is_local(key) and not _has_python(key[4:]):
+        if not is_local(key) and not _has_python(_distro(key)):
             return "needs python3"
         _, text = read_raw(key)
         settings = parse_settings(text)
@@ -529,7 +617,7 @@ def status(key):
             return "not installed"
         if getattr(sys, "frozen", False):  # a source run would use a different command; don't flag that
             try:
-                if hooks_state(settings, _expected_command(key)) != "current":
+                if hooks_state(settings, _expected_command(key), *events_for(key)) != "current":
                     return STALE
             except Exception:
                 pass
@@ -543,6 +631,8 @@ def status(key):
 def install(key, runtime=None):
     """runtime only matters on macOS: "python" or "builtin" (see mac_hook_command)."""
     deploy_files()
+    if is_codex(key):
+        return _install_codex(key, runtime)
     if key == "windows":
         command = windows_hook_command()
         where = "Claude Code on Windows (terminal + VS Code)"
@@ -560,6 +650,27 @@ def install(key, runtime=None):
     if not changed:
         return f"Hooks for {where} are already up to date."
     return f"Hooks installed for {where}.\nA backup was taken first. New sessions will appear in the pet."
+
+
+def _install_codex(key, runtime=None):
+    base = _base(key)
+    if base == "windows":
+        command, where = codex_windows_command(), "Codex on Windows"
+    elif base == "mac":
+        command, where = mac_hook_command(runtime) + " " + CODEX_FLAG, "Codex on this Mac"
+    else:
+        distro = _distro(key)
+        if not _has_python(distro):
+            raise RuntimeError(f"python3 isn't installed in WSL '{distro}'.\n"
+                               f"Install it there (e.g. sudo apt install python3) and try again.")
+        command, where = wsl_hook_command(distro) + " " + CODEX_FLAG, f"Codex in WSL '{distro}'"
+    events, timeouts = events_for(key)
+    changed = _apply(key, lambda s: merge_hooks(s, command, events, timeouts), "before install")
+    trust = ("\n\nOne more step in Codex: hooks only run once you trust them. Start Codex, type /hooks, and trust "
+             "the AIPet hooks (Codex asks again only if they change).")
+    if not changed:
+        return f"Codex hooks for {where} are already up to date." + trust
+    return f"Hooks installed for {where} ({describe(key)}).\nA backup was taken first." + trust
 
 
 def uninstall(key):
@@ -637,12 +748,26 @@ def detect_windows():
 def probe_wsl(distro):
     """One wsl call -> {"python": bool, "claude": bool}. Only call this for a distro that is already running
     (or that the user agreed to start)."""
-    rc, out, err = _sh(distro, 'p=no; c=no; command -v python3 >/dev/null 2>&1 && p=yes; '
+    rc, out, err = _sh(distro, 'p=no; c=no; x=no; command -v python3 >/dev/null 2>&1 && p=yes; '
                                '{ [ -d "$HOME/.claude" ] || [ -x "$HOME/.local/bin/claude" ] || '
-                               'command -v claude >/dev/null 2>&1; } && c=yes; echo "python=$p claude=$c"', timeout=60)
+                               'command -v claude >/dev/null 2>&1; } && c=yes; '
+                               '{ [ -d "${CODEX_HOME:-$HOME/.codex}" ] || command -v codex >/dev/null 2>&1; } && x=yes; '
+                               'echo "python=$p claude=$c codex=$x"', timeout=60)
     if rc != 0:
         raise RuntimeError(f"WSL '{distro}' didn't respond: {err.strip()[:200]}")
-    return {"python": "python=yes" in out, "claude": "claude=yes" in out}
+    return {"python": "python=yes" in out, "claude": "claude=yes" in out, "codex": "codex=yes" in out}
+
+
+def detect_codex_local():
+    """True if Codex looks present on this machine: its home folder or the CLI on PATH."""
+    return os.path.isdir(codex_home()) or bool(shutil.which("codex"))
+
+
+def codex_in_wsl(distro):
+    """Quick check for a running distro (used by the menus)."""
+    rc, out, _ = _sh(distro, '{ [ -d "${CODEX_HOME:-$HOME/.codex}" ] || command -v codex >/dev/null 2>&1; } '
+                             '&& echo yes || echo no', timeout=30)
+    return rc == 0 and out.strip().endswith("yes")
 
 
 def _kind(st):
@@ -682,6 +807,10 @@ def detect_targets(check_stopped=False):
                             "note": "terminal, VS Code and the Claude desktop app's Code tab"})
         else:
             targets.append({"key": "windows", "label": label, "kind": "missing", "note": "Claude Code not found"})
+    if (os.name == "nt" or IS_MAC) and detect_codex_local():
+        key = "codex:" + LOCAL
+        targets.append({"key": key, "label": "Codex - " + ("This Mac" if IS_MAC else "This PC (Windows)"),
+                        "kind": _kind(status(key)), "note": CODEX_NOTE})
     for name, state in list_distros():
         key, label = "wsl:" + name, f"WSL: {name}"
         if state.lower() != "running" and not check_stopped:
@@ -693,15 +822,24 @@ def detect_targets(check_stopped=False):
         except Exception:
             targets.append({"key": key, "label": label, "kind": "unknown", "note": "didn't respond"})
             continue
-        if not info["claude"]:
+        if not info["claude"] and not info.get("codex"):
             hidden += 1
-        elif not info["python"]:
-            targets.append({"key": key, "label": label, "kind": "needs_python",
-                            "note": "Claude Code found, but python3 is missing (sudo apt install python3)"})
-        else:
-            targets.append({"key": key, "label": label, "kind": _kind(status(key)),
-                            "note": "terminal and VS Code Remote-WSL"})
+            continue
+        for agent, present in (("Claude Code", info["claude"]), ("Codex", info.get("codex"))):
+            if not present:
+                continue
+            k = key if agent == "Claude Code" else "codex:" + key
+            lab = label if agent == "Claude Code" else f"Codex - {label}"
+            if not info["python"]:
+                targets.append({"key": k, "label": lab, "kind": "needs_python",
+                                "note": f"{agent} found, but python3 is missing (sudo apt install python3)"})
+            else:
+                targets.append({"key": k, "label": lab, "kind": _kind(status(k)),
+                                "note": "terminal and VS Code Remote-WSL" if agent == "Claude Code" else CODEX_NOTE})
     return targets, hidden
+
+
+CODEX_NOTE = "Codex CLI. After installing, run /hooks in Codex once and trust the AIPet hooks."
 
 
 # --------------------------------------------------------------------------- Claude desktop app (Cowork) + CLI plugin

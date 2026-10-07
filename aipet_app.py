@@ -199,6 +199,7 @@ class TrayApp:
         self.busy = False
         self.setup_win = None
         self.distros = []          # [(name, state)]
+        self.codex_targets = []    # [(label, key)] where Codex was found (this machine, running WSL distros)
         self.probed = False
         self.status = {hi.LOCAL: "checking…"}
         # caches read by the tray thread (never touch Tk from there)
@@ -640,6 +641,13 @@ class TrayApp:
         else:
             menu.add_command(label="No WSL distros found" if self.probed else "Detecting WSL distros…", state="disabled")
         menu.add_separator()
+        menu.add_command(label="Codex", state="disabled")
+        for lab, key in self.codex_targets:
+            target(f"Codex: {lab}", key)
+        if not self.codex_targets:
+            menu.add_command(label="Codex not found (running WSL distros are checked)" if self.probed else "Detecting…",
+                             state="disabled")
+        menu.add_separator()
         menu.add_command(label="Cowork (Claude desktop app)...", command=self.show_cowork)
         menu.add_command(label="Run setup again...", command=self.show_setup)
         menu.add_command(label="Check for old Claude Pet hooks...", command=lambda: self.check_legacy(True))  # LEGACY
@@ -704,6 +712,18 @@ class TrayApp:
         for name, state in self.distros:
             # Only probe running distros so we never boot one just to show a menu.
             self.status["wsl:" + name] = hi.status("wsl:" + name) if state.lower() == "running" else f"{state.lower()} · status unknown"
+        codex = []
+        if (os.name == "nt" or IS_MAC) and hi.detect_codex_local():
+            codex.append(("This Mac" if IS_MAC else "This PC (Windows)", "codex:" + hi.LOCAL))
+        for name, state in self.distros:
+            try:
+                if state.lower() == "running" and hi.codex_in_wsl(name):
+                    codex.append((f"WSL: {name}", "codex:wsl:" + name))
+            except Exception:
+                pass
+        for _, key in codex:
+            self.status[key] = hi.status(key)
+        self.codex_targets = codex
         self.refresh_menu()
 
     def refresh_menu(self):
@@ -799,6 +819,12 @@ class TrayApp:
                 items += [target_menu(f"WSL: {n}", "wsl:" + n) for n, _ in self.distros]
             else:
                 items.append(I("No WSL distros found" if self.probed else "Detecting WSL distros…", None, enabled=False))
+            items += [M.SEPARATOR, I("Codex", None, enabled=False)]
+            if self.codex_targets:
+                items += [target_menu(f"Codex: {lab}", key) for lab, key in self.codex_targets]
+            else:
+                items.append(I("Codex not found (running WSL distros are checked)" if self.probed else "Detecting…",
+                               None, enabled=False))
             items += [M.SEPARATOR,
                       I("Cowork (Claude desktop app)...", act(self.show_cowork)),
                       I("Run setup again...", act(self.show_setup)),
@@ -854,7 +880,8 @@ class TrayApp:
         if install:
             text = (f"Add AIPet hooks to:\n{where}\n\nYour existing hooks and settings are kept, and the "
                     f"current file is backed up first (tray > Claude Code hooks > Restore backup).\n"
-                    f"Only Claude Code sessions started afterwards will show up.")
+                    f"Only sessions started afterwards will show up."
+                    + ("\n\nCodex then asks you to trust the new hooks once: run /hooks in Codex." if hi.is_codex(key) else ""))
         else:
             text = f"Remove AIPet hooks from:\n{where}\n\nOther hooks are left untouched and a backup is taken first."
         if self.ask(text):

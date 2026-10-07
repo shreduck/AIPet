@@ -95,8 +95,8 @@ TRANSPARENT = "systemTransparent" if IS_MAC else "#ff00fe"
 COLORS = {"working": "#5b8def", "needs_input": "#f59e0b", "done": "#22c55e", "error": "#ef4444", "idle": "#9ca3af"}
 DARK = {"working": "#2f5bb7", "needs_input": "#b45309", "done": "#15803d", "error": "#991b1b", "idle": "#4b5563"}
 LABELS = {"working": "working…", "needs_input": "needs you!", "done": "done", "error": "error", "idle": "idle"}
-SOURCE_NAMES = {"CC": "Claude Code", "CW": "Cowork", "WB": "Workbench"}
-BADGE_COLORS = {"CC": "#6b7280", "CW": "#c2410c", "WSL": "#7c3aed", "VS": "#007acc", "WB": "#0f766e"}
+SOURCE_NAMES = {"CC": "Claude Code", "CW": "Cowork", "CX": "Codex", "WB": "Workbench"}
+BADGE_COLORS = {"CC": "#6b7280", "CW": "#c2410c", "CX": "#0f8a6a", "WSL": "#7c3aed", "VS": "#007acc", "WB": "#0f766e"}
 STATE_ORDER = ("needs_input", "error", "done", "working")
 PET_W, PET_H = 92, 122
 INK = "#1f2937"
@@ -312,10 +312,11 @@ def read_claude_code_sessions(cfg):
         sid = str(rec.get("id"))
         env, ide = rec.get("env", ""), rec.get("ide", "")
         cowork = rec.get("app") == "cowork"
-        badges = ["CW"] if cowork else (["WSL"] if env == "wsl" else [])
+        codex = rec.get("agent") == "codex"
+        badges = ["CW"] if cowork else (["CX"] if codex else []) + (["WSL"] if env == "wsl" else [])
         if ide == "vscode":
             badges.append("VS")
-        where = ["Claude app · Cowork" if cowork else "Claude Code"]
+        where = ["Claude app · Cowork" if cowork else ("Codex" if codex else "Claude Code")]
         if env == "wsl":
             where.append(f"WSL ({rec['distro']})" if rec.get("distro") else "WSL")
         if ide == "vscode":
@@ -329,6 +330,7 @@ def read_claude_code_sessions(cfg):
             "distro": rec.get("distro", ""),
             "ide": ide,
             "session_id": sid,
+            "agent": rec.get("agent", "claude"),
             "entry": rec.get("entry", ""),
             "cwd": rec.get("cwd", ""),
             "title": rec.get("title") or "session",
@@ -1722,7 +1724,8 @@ class Detail:
         for widget in (self.ask, self.desc, self.code):
             widget.pack_forget()
         if req:
-            self.ask.config(text=f"Allow Claude to use {req.get('tool') or 'this tool'}?")
+            who = "Codex" if item.get("agent") == "codex" else "Claude"
+            self.ask.config(text=f"Allow {who} to use {req.get('tool') or 'this tool'}?")
             self.ask.pack(fill="x")
             if req.get("description"):
                 self.desc.config(text=req["description"])
@@ -1748,6 +1751,9 @@ class Detail:
         elif can_answer:
             note = ("Allow once or Deny answers this prompt right from here, or answer in the session window "
                     "(Go to window). If you do neither, the normal prompt appears.")
+        elif item.get("agent") == "codex" and req:
+            note = ("Codex shows its own approval prompt; answer it there (Go to window). The pet shows what Codex is "
+                    "asking but doesn't answer for Codex.")
         elif req.get("source") == "transcript":
             note = ("This session type (the VS Code extension) sends no permission events, so the pet can't answer for it. "
                     "This is what Claude is asking, so you know what to approve there. Press Go to window to jump there.")

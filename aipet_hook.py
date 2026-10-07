@@ -12,6 +12,10 @@ which aipet.py (running on Windows) watches.
     Stop                           -> done
     SessionStart                   -> idle
     SessionEnd                     -> (file removed; Cowork: "done", cleared after the done timeout)
+    Interrupt (Codex)              -> done
+
+Codex (OpenAI) sends the same events and fields; its hooks call this script with --codex. Codex runs PermissionRequest
+hooks before showing its own approval prompt, so for Codex the pet only observes (never waits for a click).
 
 Environment detection:
     * WSL     -> writes into the *Windows* profile (/mnt/c/Users/<you>/.aipet),
@@ -28,6 +32,7 @@ import subprocess
 import sys
 import time
 
+AGENT = "codex" if "--codex" in sys.argv[1:] else "claude"
 WORKING_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart"}
 # Notification kinds that ask the user to act. Everything else (idle reminders, auth_success, agent_completed, elicitation_complete,
 # quota_auto_resume_fired, ...) is informational and must not raise a "needs you".
@@ -332,7 +337,7 @@ def build_request(data):
     if not detail and inp:
         detail = "\n".join(f"{k}: {str(v)[:200]}" for k, v in list(inp.items())[:6])
     return {"tool": str(data.get("tool_name") or ""), "description": str(inp.get("description") or "")[:300],
-            "detail": detail[:1500], "id": str(data.get("tool_use_id") or ""), "t": time.time()}
+            "detail": detail[:1500], "id": str(data.get("tool_use_id") or data.get("turn_id") or ""), "t": time.time()}
 
 
 def pet_alive(base):
@@ -602,7 +607,7 @@ def _update_session(path, target, event, data, wsl):
             main_stopped = False  # the main agent itself is active again
     elif event == "PermissionRequest":  # observe only: print nothing, so the normal prompt is untouched
         request = build_request(data)
-        state, message = "needs_input", f"Claude needs your permission to use {request['tool'] or 'a tool'}"
+        state, message = "needs_input", f"{'Codex' if AGENT == 'codex' else 'Claude'} needs your permission to use {request['tool'] or 'a tool'}"
         wait_agent = aid
     elif event == "Notification":
         msg = data.get("message", "") or ""
@@ -619,6 +624,9 @@ def _update_session(path, target, event, data, wsl):
                 request = {}  # a transcript guess is recomputed; a real PermissionRequest one is kept whatever its age
             if not request and (ntype == "permission_prompt" or "permission" in msg.lower()):
                 request = request_from_transcript(data.get("transcript_path"))  # sessions without PermissionRequest
+    elif event == "Interrupt":  # Codex: the user interrupted the turn
+        state, message, main_stopped = "done", "", False
+        request, wait_agent = {}, ""
     elif event == "Stop":
         if agents:  # the turn is over but background subagents are still running: not done yet
             if prev.get("state") != "needs_input":
@@ -657,6 +665,7 @@ def _update_session(path, target, event, data, wsl):
     record = {
         "id": session_id,
         "source": "claude-code",
+        "agent": AGENT,
         "app": "cowork" if cowork else "",
         "env": "wsl" if wsl else ("windows" if os.name == "nt" else sys.platform),
         "distro": os.environ.get("WSL_DISTRO_NAME", "") if wsl else "",
@@ -688,7 +697,8 @@ def main():
     except Exception:
         data = {}
 
-    event = data.get("hook_event_name") or (sys.argv[1] if len(sys.argv) > 1 else "")
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    event = data.get("hook_event_name") or (args[0] if args else "")
     session_id = data.get("session_id") or "unknown"
     wsl = is_wsl()
     target = sessions_dir(wsl)
@@ -721,7 +731,7 @@ def main():
 
     with SessionLock(path):
         aid = _update_session(path, target, event, data, wsl)
-    if event == "PermissionRequest":
+    if event == "PermissionRequest" and AGENT != "codex":  # Codex: observe only (see the module docstring)
         answer_flow(os.path.dirname(target), path, aid or "")
 
 

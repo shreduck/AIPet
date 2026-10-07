@@ -22,7 +22,7 @@ A floating companion with one creature per Claude Code session. It lives in the 
 
 Pets keep their position: a session stays where it first appeared (new ones join on the left) even when its state changes; only if there are more than `max_pets` are the least urgent dropped.
 
-Each pet shows a badge for where its session runs: `CC` (Windows terminal), `CW` (Cowork in the Claude app), `WSL`, `VS` (VS Code), or `WB` (Workbench). The tray icon takes the colour of the most urgent session, and hovering it shows a summary.
+Each pet shows a badge for where its session runs: `CC` (Windows terminal), `CW` (Cowork in the Claude app), `CX` (Codex), `WSL`, `VS` (VS Code), or `WB` (Workbench). The tray icon takes the colour of the most urgent session, and hovering it shows a summary.
 
 ## Build the exe
 On Windows with Python 3.10+, double-click **`build.bat`**. It produces `dist\AIPet.exe` (single file).
@@ -64,6 +64,19 @@ Each target's submenu also has **Restore backup**, **Back up now** and **Open ba
 Backups are plain copies of your `settings.json`. If you keep secrets in it (e.g. under `env`), the copies contain them too. They stay in your own user profile.
 
 **Pet:** hover for details, click to acknowledge a pet that needs input (or dismiss a done one), drag to move. Right-click opens the menu, including *Open in VS Code*.
+
+## Codex
+AIPet also shows **Codex** (OpenAI's coding agent) sessions, with a green `CX` badge. Codex has the same kind of hooks as
+Claude Code, kept in `~/.codex/hooks.json` (or `$CODEX_HOME/hooks.json`):
+
+- The setup window and *Claude Code hooks > Codex* list every place Codex is found: this PC and each running WSL distro
+  with `~/.codex` or `codex` on the PATH. Install / update / remove / backups work like the Claude Code targets.
+- **Trust step:** Codex only runs hooks you have trusted. After installing, start Codex, type `/hooks` and trust the AIPet
+  hooks (Codex asks again only if they change).
+- The pet **observes** Codex permission prompts (shows what Codex wants to run) but doesn't answer them: Codex runs its
+  permission hook before showing its own prompt, so waiting for a click would hold that prompt back. Answer in Codex.
+- Events: start, prompt, tool use, permission, stop, **Interrupt** (shows as done), session end and subagents. Codex has no
+  `Notification` event.
 
 ## Cowork (Claude desktop app)
 Cowork runs its own Claude Code with a private config folder, so it never reads `settings.json` and the hooks above don't reach it. It does run plugin hooks, on Windows itself (not in its Linux sandbox), so AIPet ships its hooks as a plugin. Only the Claude app can install plugins, so this step is manual:
