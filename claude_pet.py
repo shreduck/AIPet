@@ -678,6 +678,49 @@ def sprite_photo(key, image, w, h):
     return ph
 
 
+# macOS Tk paints no images at all on a transparent canvas (systemTransparent), whatever the image format, while
+# rectangles and text do render (found with tools/mac_image_probe.py on CI). So on macOS the pet window draws its pixel
+# art as rectangles: each image becomes merged runs of same-coloured pixels, computed once per image.
+RECT_SPRITES = IS_MAC
+_RUNS = {}
+
+
+def pixel_rects(key, image):
+    """[(x0, y0, x1, y1, "#rrggbb")] covering the opaque pixels of a PIL RGBA image, in image pixels. Horizontal runs
+    of one colour are merged, then identical runs on consecutive rows, so a sprite needs a few hundred rectangles."""
+    rects = _RUNS.get(key)
+    if rects is not None:
+        return rects
+    im = image.convert("RGBA")
+    px = im.load()
+    w, h = im.size
+    open_runs, rects = {}, []  # (x0, x1, colour) -> y where the run started
+    for y in range(h + 1):
+        row = set()
+        if y < h:
+            x = 0
+            while x < w:
+                r, g, b, a = px[x, y]
+                if a < 128:
+                    x += 1
+                    continue
+                col = f"#{r:02x}{g:02x}{b:02x}"
+                x1 = x + 1
+                while x1 < w and px[x1, y][3] >= 128 and px[x1, y][:3] == (r, g, b):
+                    x1 += 1
+                row.add((x, x1, col))
+                x = x1
+        for run in list(open_runs):
+            if run not in row:  # the run ends above this row: close its rectangle
+                rects.append((run[0], open_runs.pop(run), run[1], y, run[2]))
+        for run in row:
+            open_runs.setdefault(run, y)
+    if len(_RUNS) > 600:
+        _RUNS.clear()
+    _RUNS[key] = rects
+    return rects
+
+
 _LOGGED = set()
 
 
@@ -838,8 +881,8 @@ class Pet:
         try:
             s_ = SCALE["v"]
             im = bubble_image(tw_, th_, T["tag_bg"], T["tag_outline"], None)
-            ph = sprite_photo(("tag", tw_, th_, T["tag_bg"], T["tag_outline"]), im, int(round(tw_ * s_)), int(round(th_ * s_)))
-            c.create_image(3, PET_H - 28, image=ph, anchor="nw")
+            self._put(("tag", tw_, th_, T["tag_bg"], T["tag_outline"]), im, int(round(tw_ * s_)), int(round(th_ * s_)),
+                      3, PET_H - 28, "nw")
         except Exception:  # no Pillow: a plain rectangle
             c.create_rectangle(3, PET_H - 28, PET_W - 3, PET_H - 2, fill=T["tag_bg"], outline=T["tag_outline"], width=1)
         bx = 3  # environment badges, top-left
@@ -969,20 +1012,36 @@ class Pet:
                     tx["rows"][i] = tx["rows"][i][1:] + random.choice(TERMINAL_CHARS)
         return tx["rows"]
 
+    def _put(self, key, image, w, h, x, y, anchor="nw", tags=()):
+        """Draw a PIL image scaled to w x h (final pixels) at canvas point (x, y). Canvas coordinates are at base size
+        and _finish() scales them by SCALE, which is why rectangles use w / SCALE. See RECT_SPRITES."""
+        c = self.canvas
+        if not RECT_SPRITES:
+            c.create_image(x, y, image=sprite_photo(key, image, w, h), anchor=anchor, tags=tags)
+            return
+        s = SCALE["v"]
+        bw, bh = w / s, h / s  # size in base coordinates
+        left = x - (bw / 2 if anchor in ("center", "n", "s") else (bw if "e" in anchor else 0))
+        top = y - (bh / 2 if anchor in ("center", "e", "w") else (bh if "s" in anchor else 0))
+        kx, ky = bw / image.width, bh / image.height
+        for x0, y0, x1, y1, col in pixel_rects(key, image):
+            c.create_rectangle(left + x0 * kx, top + y0 * ky, left + x1 * kx, top + y1 * ky,
+                               fill=col, outline="", width=0, tags=tags)
+
     def _bubble(self, x1, y1, x2, y2, tail_x, fill, outline, tags=()):
         """Pixel-art speech bubble (see bubble_image) with its top-left at (x1, y1); the tail points down at tail_x."""
         w, h = max(14, int(round(x2 - x1))), max(9, int(round(y2 - y1)))
         tcx = max(5, min(w - 6, int(round(tail_x - x1))))
         im = bubble_image(w, h, fill, outline, tcx)
         s = SCALE["v"]
-        ph = sprite_photo(("bubble", w, h, fill, outline, tcx), im, int(round(w * s)), int(round(im.height * s)))
-        self.canvas.create_image(int(round(x1)), int(round(y1)), image=ph, anchor="nw", tags=tags)
+        self._put(("bubble", w, h, fill, outline, tcx), im, int(round(w * s)), int(round(im.height * s)),
+                  int(round(x1)), int(round(y1)), "nw", tags)
 
     def _mark(self, kind, cx, cy, k=1, tags=()):
         im = mark_image(kind, k)
         s = SCALE["v"]
-        ph = sprite_photo(("mark", kind, k), im, int(round(im.width * s)), int(round(im.height * s)))
-        self.canvas.create_image(int(round(cx)), int(round(cy)), image=ph, anchor="center", tags=tags)
+        self._put(("mark", kind, k), im, int(round(im.width * s)), int(round(im.height * s)),
+                  int(round(cx)), int(round(cy)), "center", tags)
 
     def _draw_robot(self, t):
         spr = load_sprites()
@@ -1022,9 +1081,9 @@ class Pet:
                 squash = 1 + 0.025 * math.sin(ph * 2)  # slow breathing
             w, h = int(round(rw0 * k * s)), int(round(rh0 * k * squash * s))
             sw = int(round(rw0 * k * 1.1 * s))
-            c.create_image(cx, ground + 2, image=sprite_photo("shadow", shadow, sw, max(2, int(sw * 0.25))), anchor="center")
+            self._put("shadow", shadow, sw, max(2, int(sw * 0.25)), cx, ground + 2, "center")
             im = robot_image(face, light_cycle(st, ph))
-            c.create_image(cx, ground + dy + rise, image=sprite_photo(("robot", face, light_cycle(st, ph)), im, w, h), anchor="s")
+            self._put(("robot", face, light_cycle(st, ph)), im, w, h, cx, ground + dy + rise, "s")
             if main:
                 top_main = ground + dy - rh0 * k * squash
 
@@ -1210,7 +1269,8 @@ def diagnostics_report(app=None):
             c = pet.canvas
             attempt(f"pet {key[:14]}", lambda c=c, pet=pet: (
                 f"state={pet.data.get('state')} mapped={c.winfo_ismapped()} size={c.winfo_width()}x{c.winfo_height()} "
-                f"items={len(c.find_all())} images={sum(1 for i in c.find_all() if c.type(i) == 'image')}"))
+                f"items={len(c.find_all())} images={sum(1 for i in c.find_all() if c.type(i) == 'image')} "
+                f"rects={sum(1 for i in c.find_all() if c.type(i) == 'rectangle')} rect_sprites={RECT_SPRITES}"))
     try:
         with open(os.path.join(HOME_DIR, "error.log"), encoding="utf-8") as f:
             tail = f.read()[-4000:]
