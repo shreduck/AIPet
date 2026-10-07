@@ -228,12 +228,13 @@ A finished session's pet is cleared after the **done timeout**: right-click > *C
   not send `PermissionRequest` events, so its prompts keep the read-only bubble.
 
 ## New versions
-Once a day (and from *Check for updates...* in the right-click, tray or menu-bar menu) AIPet asks GitHub for the newest
+Once a day (and from *Check for updates...* in the tray or menu-bar icon's menu) AIPet asks GitHub for the newest
 published release, i.e. the newest `vX.Y.Z` tag (the rolling *latest* pre-release is ignored). If it is newer than the
 running copy, a popup offers *Open release page*, *Later* or *Skip this version*, and the menus show *Update available:
 vX.Y.Z...* until you install it. Nothing is downloaded or installed automatically: download the new `AIPet.exe` /
 `AIPet-mac-arm64.zip`, quit AIPet and replace your copy (settings, hooks and backups in `~/.aipet` are kept).
-- Turn the daily check off with *Check for updates automatically* (saved as `update_check`).
+- On by default; turn the daily check off with *Check for updates automatically* in the tray / menu-bar menu (saved
+  as `update_check`). The update entries are only in that menu, not in the pet's right-click menu.
 - The menus show the running version (*AIPet v0.2.4*). Builds take it from `git describe` (`tools/write_version.py`,
   run by `build.bat`, `build_mac.sh` and CI), so a local build two commits after v0.2.4 reads `v0.2.4-2-g<commit>` and
   counts as v0.2.4.

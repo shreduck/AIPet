@@ -302,8 +302,6 @@ class TrayApp:
         auto_menu = tk.Menu(m, tearoff=0)
         auto_menu.configure(postcommand=lambda: self._fill_auto_menu(auto_menu))
         m.insert_cascade(m.index("Codex hooks") + 1, label="Auto approve", menu=auto_menu)
-        m.insert_command(m.index("Quit"), label="Check for updates...", command=lambda: self.check_updates(True))
-        self.update_menu_index = m.index("Check for updates...")
         m.entryconfigure(m.index("Quit"), command=self.quit)
         core.style_menu(m)
 
@@ -978,12 +976,7 @@ class TrayApp:
             self.check_updates(True)
 
     def _show_update_in_menus(self):
-        """Tk thread: the pet's menu entry says when an update is waiting; the tray / menu bar rebuild on their own."""
-        try:
-            label = f"Update available: {self.update_info['tag']}..." if self.update_info else "Check for updates..."
-            self.pet.menu.entryconfigure(self.update_menu_index, label=label, command=self.open_update)
-        except (tk.TclError, AttributeError):
-            pass
+        """The update entries live in the tray / menu-bar menu only (rebuilt when they open)."""
         self.refresh_menu()
 
     def toggle_update_check(self):
