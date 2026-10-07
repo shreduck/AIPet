@@ -78,6 +78,31 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(pet._draw_usage(), idle_width)
         self.assertEqual(idle_width, aipet.USAGE_GUTTER)
 
+    def test_usage_badge_sits_beside_lower_body(self):
+        pet = aipet.Pet.__new__(aipet.Pet)
+        pet.canvas = MagicMock()
+        pet._char_w = lambda font: 3
+        pet.data = {"agent": "codex", "usage": [{"window": "7d", "percent": 2}]}
+        pet._draw_usage()
+        rectangle = pet.canvas.create_rectangle.call_args
+        self.assertEqual(rectangle.args[1:4:2], (72, 80))
+        self.assertIn("usage", rectangle.kwargs["tags"])
+
+    def test_tooltip_includes_merged_sources_and_reset(self):
+        entries = [{"agent": "codex", "entry": entry, "where": where,
+                    "usage": [{"window": "7d", "percent": 2, "resets_at": 2000000000, "updated": 1900000000}]}
+                   for entry, where in (("cli", "Codex CLI"), ("app", "Codex app"))]
+        details = usage.badge_details(entries)
+        self.assertEqual(len(details), 1)
+        text = usage.tooltip(details[0])
+        for expected in ("Codex", "7-day account usage limit", "2% used", "98% remaining", "Codex CLI", "Codex app", "Resets:", "Last reported:"):
+            self.assertIn(expected, text)
+
+    def test_tooltip_does_not_invent_reset_time(self):
+        text = usage.tooltip({"agent": "claude", "window": "5h", "percent": 50,
+                              "readings": [{"where": "Claude Code", "updated": 0}]})
+        self.assertIn("Resets: not reported", text)
+
     def test_statusline_preserved_and_restored(self):
         before = {"statusLine": {"type": "command", "command": "echo original", "padding": 3}, "other": "keep"}
         installed = installer.merge_usage(installer.merge_hooks(before, "aipet-hook"), "aipet-hook")

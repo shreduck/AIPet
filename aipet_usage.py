@@ -58,7 +58,7 @@ def load(session_path):
         return []
 
 
-def badge_rows(items):
+def badge_details(items):
     """Equal readings merge per AI; readings from one harness use its newest snapshot."""
     latest = {}
     for item in items:
@@ -69,12 +69,37 @@ def badge_rows(items):
             return max(r.get("updated", entry.get("updated", 0)) for r in entry["usage"])
         if harness not in latest or stamp(item) > stamp(latest[harness]):
             latest[harness] = item
-    seen, rows = set(), []
+    rows = {}
     for item in latest.values():
         ai = item.get("agent", "claude")
         for row in item["usage"]:
             key = (ai, row["window"], row["percent"])
-            if key not in seen:
-                seen.add(key)
-                rows.append((ai, row["window"], row["percent"]))
-    return rows
+            detail = rows.setdefault(key, {"agent": ai, "window": row["window"], "percent": row["percent"], "readings": []})
+            detail["readings"].append({**row, "where": item.get("where") or ai.title(),
+                                       "updated": row.get("updated", item.get("updated", 0))})
+    return list(rows.values())
+
+
+def badge_rows(items):
+    return [(r["agent"], r["window"], r["percent"]) for r in badge_details(items)]
+
+
+def tooltip(detail):
+    ai = "Codex" if detail["agent"] == "codex" else "Claude"
+    window = detail["window"]
+    if window.endswith(("h", "d")):
+        duration = window[:-1]
+        unit = "hour" if window.endswith("h") else "day"
+        window = f"{duration}-{unit} account usage limit"
+    elif window == "$":
+        window = "Account spend limit"
+    lines = [ai + " · " + window, f"{detail['percent']}% used · {100 - detail['percent']}% remaining"]
+    readings = detail["readings"]
+    for row in readings:
+        reset = row.get("resets_at")
+        reset_text = time.strftime("%d %b %Y, %H:%M %Z", time.localtime(reset)) if reset else "not reported"
+        lines.append(f"{row['where']}\nResets: {reset_text}")
+    updated = max((r.get("updated", 0) for r in readings), default=0)
+    if updated:
+        lines.append("Last reported: " + time.strftime("%d %b, %H:%M:%S %Z", time.localtime(updated)))
+    return "\n".join(lines)

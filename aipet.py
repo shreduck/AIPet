@@ -1373,6 +1373,8 @@ class Pet:
         self.born = 0.0  # when this pet starts popping out of the ground (0 = already out)
         self.seed = (sum(map(ord, key)) % 97) / 13.0  # desync animations
         self.usage_extra = USAGE_GUTTER
+        self._usage_hover = None
+        self._usage_details = {}
         c = self.canvas = tk.Canvas(app.frame, width=px(CANVAS_W + USAGE_GUTTER), height=px(CANVAS_H), bg=TRANSPARENT,
                                     highlightthickness=0, bd=0)
         c.bind("<ButtonPress-1>", app.on_press)
@@ -1427,12 +1429,17 @@ class Pet:
             c.config(width=px(CANVAS_W + gutter + extra))
             self.app.shift_for_width(delta)  # move and resize in the same redraw: no flash of the pet sideways
         self._finish()
+        self._update_usage_hover()
 
     def _draw_usage(self):
-        rows = usage.badge_rows(self.data.get("everyone") or [self.data])
+        details = usage.badge_details(self.data.get("everyone") or [self.data])
+        rows = [(r["agent"], r["window"], r["percent"]) for r in details]
+        self._usage_details = {}
         if not rows:
             return USAGE_GUTTER
-        c, left, top = self.canvas, PET_W - 21, 32
+        c, left = self.canvas, PET_W - 21
+        # Align a short column with the lower body, ending above the name tag.
+        top = 81 - min(6, len(rows)) * 9
         font = mono(4.5)
         extra = 0
         # Start beside the robot, below its speech bubble. Never cover the name tag.
@@ -1443,11 +1450,34 @@ class Pet:
             for i, ((ai, window, percent), label) in enumerate(zip(column, labels)):
                 colour = "#5b8def" if ai == "codex" else "#d98960"
                 y = top + i * 9
-                c.create_rectangle(left, y, left + width, y + 8, fill=T["tag_bg"], outline=colour, width=1)
-                c.create_text(left + 3, y + 4, text=label, font=font, fill=colour, anchor="w")
+                tag = f"usage:{ai}:{window}:{percent}"
+                self._usage_details[tag] = details[start + i]
+                c.create_rectangle(left, y, left + width, y + 8, fill=T["tag_bg"], outline=colour, width=1, tags=("usage", tag))
+                c.create_text(left + 3, y + 4, text=label, font=font, fill=colour, anchor="w", tags=("usage", tag))
             extra = max(extra, int(math.ceil(left + width + 2 - CANVAS_W)))
             left += width + 3
         return max(USAGE_GUTTER, extra)
+
+    def _update_usage_hover(self):
+        # Animation recreates canvas items. Track the reading under the pointer
+        # instead of item Enter/Leave events, which would flicker every frame.
+        c = self.canvas
+        if not c.winfo_ismapped():
+            self._usage_hover = None
+            return
+        x, y = c.winfo_pointerx() - c.winfo_rootx(), c.winfo_pointery() - c.winfo_rooty()
+        tag = next((tag for item in c.find_overlapping(x, y, x, y) for tag in c.gettags(item)
+                    if tag in self._usage_details), None)
+        if tag == self._usage_hover:
+            return
+        previous, self._usage_hover = self._usage_hover, tag
+        if tag:
+            self.app.show_usage_tip(self, self._usage_details[tag])
+        elif previous:
+            if 0 <= x < c.winfo_width() and 0 <= y < c.winfo_height():
+                self.app.show_tip(self)
+            else:
+                self.app.hide_tip()
 
     def _completion_seal(self, x, y):
         self.canvas.create_oval(x - 9, y - 9, x + 9, y + 9, fill="#dcfce7", outline="#15803d", width=1)
@@ -3514,7 +3544,7 @@ class PetApp:
                 if not c.winfo_ismapped():
                     continue
                 ox, oy = c.winfo_rootx(), c.winfo_rooty()
-                boxes = [c.bbox(t) for t in ("hit", "ans", "badge") if c.find_withtag(t)] or [c.bbox("all")]  # mole/cat: all
+                boxes = [c.bbox(t) for t in ("hit", "ans", "badge", "usage") if c.find_withtag(t)] or [c.bbox("all")]  # mole/cat: all
             except tk.TclError:
                 continue
             for bb in boxes:
@@ -3772,11 +3802,18 @@ class PetApp:
             lines.append(f"Auto-approved {ago(d['auto_t'])}: {d['auto_what'][:90]}")
         if d.get("auto_approved"):
             lines.append(f"Auto-approved {d['auto_approved']} permission prompt{'s' if d['auto_approved'] != 1 else ''}")
+        self._show_tooltip(pet, "\n".join(lines))
+
+    def show_usage_tip(self, pet, detail):
+        self.hide_tip()
+        self._show_tooltip(pet, usage.tooltip(detail))
+
+    def _show_tooltip(self, pet, text):
         tip = self.tip = tk.Toplevel(self.root)
         tip.overrideredirect(True)
         tip.attributes("-topmost", True)
         tip.configure(bg=T["tip_border"], padx=1, pady=1)
-        tk.Label(tip, text="\n".join(lines), justify="left", bg=T["tip_bg"], fg=T["tip_fg"],
+        tk.Label(tip, text=text, justify="left", bg=T["tip_bg"], fg=T["tip_fg"],
                  font=("Segoe UI", 9), padx=8, pady=6, wraplength=340).pack()
         tip.update_idletasks()
         x = pet.canvas.winfo_rootx()
