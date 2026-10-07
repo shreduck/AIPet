@@ -101,7 +101,10 @@ BADGE_NAMES = {"CC": "Claude", "CW": "Cowork", "CX": "Codex", "WSL": "WSL", "VS"
 SOURCE_NAMES = {"CC": "Claude Code", "CW": "Cowork", "CX": "Codex", "WB": "Workbench"}
 BADGE_COLORS = {"CC": "#6b7280", "CW": "#c2410c", "CX": "#0f8a6a", "WSL": "#7c3aed", "VS": "#007acc", "WB": "#0f766e"}
 STATE_ORDER = ("needs_input", "error", "done", "working")
-PET_W, PET_H = 92, 122
+PET_W, PET_H = 92, 122  # the drawing area of one pet, before the badge column and top trim below
+BADGE_GUTTER = 40  # a column on the pet's left for the badges (Claude, Codex, WSL...)
+TOP_TRIM = 14  # the empty strip the badges used to take above the bubble
+CANVAS_W, CANVAS_H = PET_W + BADGE_GUTTER, PET_H - TOP_TRIM
 INK = "#1f2937"
 MOUND, MOUND_DARK = "#a16207", "#713f12"
 EMERGE_SECONDS, EMERGE_DEPTH, EMERGE_STAGGER = 0.7, 62, 0.25
@@ -852,7 +855,7 @@ class Pet:
         self.last_remind = 0.0
         self.born = 0.0  # when this pet starts popping out of the ground (0 = already out)
         self.seed = (sum(map(ord, key)) % 97) / 13.0  # desync animations
-        c = self.canvas = tk.Canvas(app.frame, width=px(PET_W), height=px(PET_H), bg=TRANSPARENT,
+        c = self.canvas = tk.Canvas(app.frame, width=px(CANVAS_W), height=px(CANVAS_H), bg=TRANSPARENT,
                                     highlightthickness=0, bd=0)
         c.bind("<ButtonPress-1>", app.on_press)
         c.bind("<B1-Motion>", app.on_drag)
@@ -880,6 +883,8 @@ class Pet:
             self._draw_mole(t)
         else:
             self._draw_robot(t)
+        c.move("all", BADGE_GUTTER, -TOP_TRIM)  # make room for the badge column on the left; drop the empty top strip
+        self._draw_badges()
         self._finish()
 
     def _finish(self):
@@ -910,7 +915,6 @@ class Pet:
                       3, PET_H - 28, "nw")
         except Exception:  # no Pillow: a plain rectangle
             c.create_rectangle(3, PET_H - 28, PET_W - 3, PET_H - 2, fill=T["tag_bg"], outline=T["tag_outline"], width=1)
-        self._draw_badges()
         name = self.data.get("title", "")
         font = fnt(7)
         room = PET_W - 14  # inside the tag's rounded border
@@ -922,15 +926,17 @@ class Pet:
         c.create_text(PET_W / 2, PET_H - 15, text=name, fill=T["tag_fg"], font=font)
 
     def _draw_badges(self):
-        """Where the session runs, top-left: small pixel boxes styled like the name tag, a dot in the badge colour and
-        the full name ("Claude", "Codex"...). Later badges fall back to their short code if the row would overflow."""
+        """Where the session runs: a column of small pixel boxes on the pet's left, styled like the name tag, each with
+        a dot in the badge colour and the full name ("Claude", "Codex"...). A name too wide for the column falls back to
+        its short code. Called after the pet has been moved right by BADGE_GUTTER, so the column is x 0..BADGE_GUTTER."""
         c = self.canvas
         codes = list(self.data.get("badges", []))
+        if not codes:
+            return
         font = fnt(5.5)
-        h = 12
+        h, gap = 12, 2
+        room = BADGE_GUTTER - 3
 
-        def width(text):
-            return int(round(10 + self._text_w(font, text)))
         def name(b):
             if b.startswith("Q") and b[1:].isdigit():
                 return f"{b[1:]} waiting"
@@ -938,23 +944,27 @@ class Pet:
 
         def short(b):
             return "+" + b[1:] if b.startswith("Q") and b[1:].isdigit() else b
-        labels = [name(b) for b in codes]
-        for i in range(len(labels) - 1, -1, -1):  # shorten from the right until the row fits
-            if sum(width(t) + 2 for t in labels) <= PET_W - 4:
-                break
-            labels[i] = short(codes[i])
-        bx, s_ = 2, SCALE["v"]
-        for code, text in zip(codes, labels):
-            w = width(text)
+
+        def width(text):
+            return int(round(10 + self._text_w(font, text)))
+        s_ = SCALE["v"]
+        bottom = PET_H - 28 - TOP_TRIM - 3  # just above the name tag, growing upwards
+        y = bottom - len(codes) * (h + gap) + gap
+        for code in codes:
+            text = name(code)
+            if width(text) > room:
+                text = short(code)
+            w = min(room, width(text))
+            bx = BADGE_GUTTER - 2 - w  # right-aligned against the pet
             try:
                 im = bubble_image(w, h, T["tag_bg"], T["tag_outline"], None)
-                self._put(("badge", w, h, T["tag_bg"], T["tag_outline"]), im, int(round(w * s_)), int(round(h * s_)), bx, 1, "nw")
+                self._put(("badge", w, h, T["tag_bg"], T["tag_outline"]), im, int(round(w * s_)), int(round(h * s_)), bx, y, "nw")
             except Exception:  # no Pillow
-                c.create_rectangle(bx, 1, bx + w, 1 + h, fill=T["tag_bg"], outline=T["tag_outline"])
+                c.create_rectangle(bx, y, bx + w, y + h, fill=T["tag_bg"], outline=T["tag_outline"])
             dot = COLORS["needs_input"] if code.startswith("Q") else BADGE_COLORS.get(code, "#6b7280")
-            c.create_rectangle(bx + 3, 6, bx + 6, 9, fill=dot, outline="")
-            c.create_text(bx + 8, 7.5, text=text, anchor="w", fill=T["tag_fg"], font=font)
-            bx += w + 2
+            c.create_rectangle(bx + 3, y + 5, bx + 6, y + 8, fill=dot, outline="")
+            c.create_text(bx + 8, y + h / 2 + 0.5, text=text, anchor="w", fill=T["tag_fg"], font=font)
+            y += h + gap
 
     @staticmethod
     def _text_w(font, text):
@@ -1149,7 +1159,7 @@ class Pet:
 
         if not emerging:
             bx1, bx2 = cx0 - 34, cx0 + 36
-            by1 = 15.0  # below the badge row
+            by1 = 15.0  # the top of the drawing (the strip above is trimmed off: badges live in a left column)
             by2 = 36.0 if st == "needs_input" else min(top_main + 2, 40.0)  # the hop must not squash the bubble
             tail = cx0 - 6  # off the antenna
             if st == "working":  # hacker-screen bubble
@@ -2137,7 +2147,7 @@ class PetApp:
             return
         SCALE["v"] = v
         for pet in self.pets.values():
-            pet.canvas.config(width=px(PET_W), height=px(PET_H))
+            pet.canvas.config(width=px(CANVAS_W), height=px(CANVAS_H))
 
     def _place_above_pet(self, w):
         """Put a small window directly above the pet overlay, centred on it (just below it if there is no room)."""
@@ -2369,7 +2379,9 @@ class PetApp:
             self.root.bell()
 
     def dismiss(self, pet):
-        d = pet.data
+        self.dismiss_item(pet.data)
+
+    def dismiss_item(self, d):
         if d.get("source") == "CC" and d.get("path"):
             try:
                 os.remove(d["path"])
@@ -2406,9 +2418,10 @@ class PetApp:
             pass
 
     def clear_finished(self):
-        for pet in list(self.pets.values()):
-            if pet.data.get("state") in ("done", "idle"):
-                self.dismiss(pet)
+        """Dismiss every finished session - all of them, also when compact mode shows them in one pet."""
+        for it in list(self._last_items):
+            if it.get("state") in ("done", "idle"):
+                self.dismiss_item(it)
 
     # ---- window
     def reposition(self):
