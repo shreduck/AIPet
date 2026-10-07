@@ -950,6 +950,14 @@ def main():
         else:
             core.probe_workbench()
         return
+    if "--selftest" in sys.argv:  # CI (mac-selftest workflow): run without the setup window, save diagnostics, quit
+        core.ensure_home()
+        mark_setup_done()
+        app = TrayApp()
+        app.root.after(12000, app.pet.write_diagnostics)
+        app.root.after(20000, app.quit)
+        app.root.mainloop()
+        return
     if not single_instance():
         return  # already running in the tray
     TrayApp().root.mainloop()

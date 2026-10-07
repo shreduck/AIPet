@@ -2040,17 +2040,24 @@ class PetApp:
         elif d.get("source") == "WB" and self.wb:
             self.wb.dismiss(d["key"])
 
-    def save_diagnostics(self):
-        """Write ~/.claude-pet/diagnostics.txt (versions, sprite loading, image tests, window state, recent errors)
-        and open it, so someone on a machine we can't test can send it."""
+    def write_diagnostics(self):
+        """Write ~/.claude-pet/diagnostics.txt (versions, sprite loading, image tests, window state, recent errors).
+        Returns the path, or None if it failed."""
         path = os.path.join(HOME_DIR, "diagnostics.txt")
         try:
             text = diagnostics_report(self)
             os.makedirs(HOME_DIR, exist_ok=True)
             with open(path, "w", encoding="utf-8") as f:
                 f.write(text)
+            return path
         except Exception as e:
             log_error(f"diagnostics failed: {e!r}")
+            return None
+
+    def save_diagnostics(self):
+        """Write the diagnostics and open them, so someone on a machine we can't test can send them."""
+        path = self.write_diagnostics()
+        if not path:
             return
         try:
             if os.name == "nt":

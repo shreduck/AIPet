@@ -124,6 +124,7 @@ A finished session's pet is cleared after the **done timeout**: right-click > *C
   not send `PermissionRequest` events, so its prompts keep the read-only bubble.
 
 ## Theme, diagnostics
+- **Testing on macOS without a Mac:** run the **macOS self-test** workflow by hand (Actions tab). It starts the app on an Apple Silicon runner with fake sessions (`tools/seed_sessions.py`) and uploads screenshots plus the diagnostics report, for the packaged app and for the source.
 - **Save diagnostics...** (pet right-click) writes `~/.claude-pet/diagnostics.txt` and opens it: versions, sprite loading, image tests, window state and recent errors. No prompts or session contents. Send it along with bug reports from machines that can't be tested here.
 - **Light theme is the default.** Tray menu (or the pet's right-click menu on macOS) > *Dark theme* switches live and is
   saved as `theme` in `config.json`. It covers the name tags, bubbles and tooltips; setup and confirmation dialogs stay native.
