@@ -172,8 +172,8 @@ click belong to the session in front:
   slider; the pet follows it live and the value is saved as `size` (1.0 = 100%). 100% is the default size (twice the drawing
   size the first versions used; an older `scale` value in `config.json` is converted once). *Reset size* restores 100%.
   The pet keeps its bottom-right corner while it grows or shrinks, but stays on the screen it is on (on macOS too, kept
-  above the Dock; the screens are read from NSScreen). If it is ever lost off screen, *Reset position (main screen)* in the pet's
-  right-click menu, the tray menu or the macOS menu-bar menu puts it back in the main screen's bottom-right corner.
+  above the Dock; the screens are read from NSScreen). If it is ever lost off screen, *Reset position (main screen)* in the tray
+  menu or the macOS menu-bar menu puts it back in the main screen's bottom-right corner.
 
 ## Answering permission prompts from the pet
 When Claude Code asks for permission, the popup (click the bubble's title) shows **Deny** and **Allow once**. Your click is

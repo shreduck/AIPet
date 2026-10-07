@@ -2837,7 +2837,6 @@ class PetApp:
         m.add_command(label="Size...", command=self.open_size_slider)
         self.size_menu_index = m.index("end")
         m.add_command(label="Reset size", command=self.reset_scale)
-        m.add_command(label="Reset position (main screen)", command=self.reset_position)
         m.add_command(label="Answer timeout...", command=self.open_answer_slider)
         m.add_command(label="Clear finished after...", command=self.open_done_slider)
         m.add_command(label="Health check every...", command=self.open_health_slider)
