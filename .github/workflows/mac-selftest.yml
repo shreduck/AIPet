@@ -50,3 +50,24 @@ jobs:
           name: selftest-${{ matrix.mode }}
           path: out/
           retention-days: 7  # results live only on the run page, never in the repo
+
+  image-probe:  # which ways of drawing an image macOS Tk paints on a transparent window (one screenshot)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pillow
+      - name: Run probe and screenshot
+        run: |
+          mkdir -p out
+          python tools/mac_image_probe.py 15 > out/stdout.log 2>&1 &
+          sleep 6; screencapture -x out/probe.png || echo "screencapture failed"
+          wait || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: image-probe
+          path: out/
+          retention-days: 7
