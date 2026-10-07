@@ -812,7 +812,8 @@ def read_claude_code_sessions(cfg):
     for path, rec in sorted(newest.values(), key=lambda pr: pr[0]):
         sid = str(rec.get("id"))
         local = rec.get("env") == ("windows" if os.name == "nt" else sys.platform)
-        if (local and HEALTH["v"] > 0 and rec.get("state") in ("working", "needs_input") and rec.get("pid")
+        quiet = time.time() - rec.get("updated", 0) > max(60, HEALTH["v"])  # an active session isn't judged by its pid
+        if (local and HEALTH["v"] > 0 and quiet and rec.get("state") in ("working", "needs_input") and rec.get("pid")
                 and pid_alive(rec["pid"], HEALTH["v"]) is False):
             # its Claude Code / Codex process is gone without a Stop or SessionEnd (the app was closed, or Cowork moved
             # the conversation to a new session): show it as done, so the done timeout clears it

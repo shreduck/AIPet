@@ -884,7 +884,10 @@ def _update_session(path, target, event, data, wsl, auto=None):
     title = os.path.basename(cwd.rstrip("\\/")) or cwd
     if len(folders) > 1:
         title += f" +{len(folders) - 1}"
-    pid = prev.get("pid") or find_claude_pid()  # looked up once per session
+    # The process running the session RIGHT NOW, looked up on every event: Cowork starts a new Claude Code process for
+    # each turn under the same session id (and any session can be resumed), so a pid kept from the first event goes
+    # stale - and the pet's health check would then call a working session finished.
+    pid = find_claude_pid() or prev.get("pid")
     topic = prev.get("topic", "")
     last_prompt = prev.get("last_prompt", "")
     prompt_text = " ".join(str(data.get("prompt") or "").split()) if event == "UserPromptSubmit" else ""
