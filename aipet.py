@@ -1008,8 +1008,8 @@ class Pet:
 
     EXPAND, COLLAPSE = "\u25b4", "\u25be"  # compact mode's badges: up to expand, down to collapse
     # compact mode's banner: each title after its state symbol, both in a faded state colour
-    BANNER_STATES = {"working": ("\u273a", "#6a9fd8"), "needs_input": ("\u2749", "#e07b74"),
-                     "error": ("\u2749", "#e07b74"), "done": ("\u2743", "#6fb88a"), "idle": ("\u2743", "#9aa3ad")}
+    BANNER_STATES = {"working": ("\u2743", "#6a9fd8"), "needs_input": ("\u2749", "#e07b74"),
+                     "error": ("\u2749", "#e07b74"), "done": ("\u273a", "#6fb88a"), "idle": ("\u273a", "#9aa3ad")}
     BANNER_GAP = "    "
     BANNER_CPS = 5  # characters per second
 

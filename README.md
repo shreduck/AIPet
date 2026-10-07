@@ -113,7 +113,7 @@ click belong to the session in front:
 - Sessions that need you **queue up** in the order they asked. The first one is in front with a `N waiting` badge; answer
   it and the next one steps forward.
 - With nobody waiting, the most urgent / most recently active session is in front.
-- The name tag scrolls through every session's title like a banner, each after its state symbol in a faded state colour: `✺` working (blue), `❉` waiting for you (red), `❃` done (green).
+- The name tag scrolls through every session's title like a banner, each after its state symbol in a faded state colour: `❃` working (blue), `❉` waiting for you (red), `✺` done (green).
 - Hover the pet for a list of every session.
 - The badges collapse into one: different agents are listed by name (`Claude + Codex`), a single agent gets all its tags (`Claude Cowork+WSL+VS`); it turns faint red if any session needs you. Click it (`▴`) to show one badge per session, and `▾` to collapse again.
 
