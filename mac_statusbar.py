@@ -176,3 +176,32 @@ def screen_rects(visible=True):
     main_h = _rect(objs[0], "frame").height  # screens[0] is the one with the menu bar: Cocoa's origin
     frames = [_rect(o, "visibleFrame" if visible else "frame") for o in objs]
     return [(int(f.x), int(main_h - f.y - f.height), int(f.x + f.width), int(main_h - f.y)) for f in frames]
+
+
+def window_titled(title):
+    """This app's NSWindow with that title (Tk's toplevel for the pet), or None."""
+    app = send(cls("NSApplication"), "sharedApplication")
+    wins = send(app, "windows")
+    for i in range(send(wins, "count", restype=c_ulong)):
+        w = send(wins, "objectAtIndex:", i, argtypes=[c_ulong])
+        t = send(w, "title")
+        name = send(t, "UTF8String", restype=c_char_p) if t else None
+        if name and name.decode("utf-8", "replace") == title:
+            return w
+    return None
+
+
+# NSWindowCollectionBehavior: on every Space, not moved by Mission Control, allowed over full-screen apps, and left
+# out of the window cycle (cmd-`)
+ALL_SPACES = (1 << 0) | (1 << 4) | (1 << 6) | (1 << 8)
+
+
+def set_all_spaces(title, on=True):
+    """Show the window titled `title` on every desktop (Space), or only on its own. True if the window was found."""
+    w = window_titled(title)
+    if not w:
+        return False
+    cur = send(w, "collectionBehavior", restype=c_ulong)
+    new = (cur | ALL_SPACES) if on else (cur & ~ALL_SPACES)
+    send(w, "setCollectionBehavior:", new, restype=None, argtypes=[c_ulong])
+    return True

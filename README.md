@@ -118,7 +118,7 @@ click belong to the session in front:
 - Sessions that need you **queue up** in the order they asked. The first one is in front with a `N waiting` badge; answer
   it and the next one steps forward.
 - With nobody waiting, the most urgent / most recently active session is in front.
-- The name tag scrolls through every session's title like a banner, each after its state symbol in a faded state colour: `❃` working (blue), `❉` waiting for you (red), `✺` done (green).
+- The name tag scrolls through every session's title like a banner, each after its state symbol in a faded state colour: `❃` working (blue), `❉` waiting for you (red), `✺` done (green). Each session's conversation title runs right below its name in small text (cut with `…` when long), and both lines scroll together.
 - Hover the pet for a list of every session.
 - The badges collapse into one: different agents are listed by name (`Claude + Codex`), a single agent gets all its tags (`Claude Cowork+WSL+VS`); it turns faint red if any session needs you. Click it (`▴`) to show one badge per session in a column snapped to the pet's left side (a second column further left if it fills up), each with its conversation's title on a second, smaller line, and `▾` to collapse again.
 
@@ -127,12 +127,13 @@ click belong to the session in front:
 - The hook writes into your Windows `.aipet` folder through `/mnt/c`. That path is set in the hook command, so nothing else needs configuring.
 
 ## Clicking pets, bubbles
-- **Same folder, several sessions:** pets whose sessions share a folder name add the conversation's title to the name
-  (`esign-online · Fix login bug`), the name the harness shows: for Claude Code your `/rename` name (`custom-title` in
+- **Conversation titles on the name tag:** the name moves to the top of the tag and the conversation's title sits below it
+  in small text; a line too long for the tag scrolls round instead of being cut. Sessions that share a folder name also get it in
+  their tooltip and prompt window (`esign-online · Fix login bug`). The title is the name the harness shows: for Claude Code your `/rename` name (`custom-title` in
   the transcript), else the name Claude Code gave the session (`agent-name`, kept for good once seen); for Codex the
   thread name from `~/.codex/session_index.jsonl` (renames follow). Right-click (or tray / menu bar) > *Session titles* switches between *Session name* (the default)
   and *Last prompt* (saved as `"session_titles"`: `"name"` / `"prompt"`). Without a name, the latest prompt you typed (a
-  short session id before that). Long names scroll through the tag.
+  short session id before that).
 - **Click a pet** to acknowledge it and bring its window to the front: the terminal or Claude desktop app that hosts the
   session (the hook records the window), or the right VS Code window for VS Code sessions. WSL terminals are best effort
   (matches a Windows Terminal window by distro/project, else the only/frontmost one). It cannot pick the tab inside a
@@ -144,6 +145,10 @@ click belong to the session in front:
   The open folders are read from VS Code's live window list (`backupWorkspaces` in `globalStorage/storage.json`), then
   the older `Backups/workspaces.json`, then the saved window state; on macOS paths are compared case-insensitively and
   with symlinks resolved. *Save diagnostics...* shows how many folders each source reported.
+- **Click goes to the session's window** (right-click, tray or menu bar; on by default, saved as `click_to_focus`):
+  switch it off and a click only acknowledges the pet. The prompt window's *Go to window* still works.
+- **macOS: Show on all desktops** (on by default, saved as `all_spaces`): the pet stays visible when you switch desktops
+  (Spaces, e.g. with a three-finger swipe) and over full-screen apps.
 - **Click a badge** to open that session's prompt window if it needs you (in compact mode, each badge is one session), or to go to its window otherwise.
 - **Dismiss** a pet from the right-click menu (*Dismiss this pet*) or with *Clear finished*; clicking no longer dismisses.
 - When a session **needs you**, the robot's **check / cross / "?" bubble** is clickable (hand cursor): it opens an
@@ -208,6 +213,13 @@ Details:
 - When the **whitelist** approves something, the robot shows steady green lights, a gentle bob and a small pale-green `✓ auto` bubble
   for 10 seconds, or until any session needs you. Its tooltip shows what was approved. *Allow all* approvals don't
   animate (they would never stop). The tray tooltip starts with `AUTO APPROVE ON` while any config is on.
+
+## Stuck sessions
+Every 15 seconds (right-click or tray > *Health check every...*: 0 = off, up to 5 minutes; saved as
+`health_check_seconds`) the pet checks that each working or waiting session's Claude Code / Codex process still runs. If
+it has ended without saying so (the app was closed, or Cowork moved the conversation to a new session), the session is
+shown as finished and the done timeout clears it. WSL sessions can't be checked from Windows: right-click > *Mark as
+finished* ends any stuck session by hand (in compact mode, the one in front).
 
 ## Clearing finished sessions
 A finished session's pet is cleared after the **done timeout**: right-click > *Clear finished after...* (or the tray menu),

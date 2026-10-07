@@ -57,12 +57,15 @@ DEFAULT_CONFIG = {
     # here, so an old absolute "scale" value in config.json can still be migrated once.
     "remind_seconds": 90,
     "compact": False,
+    "click_to_focus": True,  # clicking a pet (or a badge) brings its session's window to the front
+    "all_spaces": True,  # macOS: show the pet on every desktop (Space), also over full-screen apps
     "session_titles": "name",  # extra title for same-folder sessions: "name" (the harness's name) or "prompt" (latest prompt)
     "codex_answers": True,  # answer Codex permission prompts in the pet's prompt window (Codex waits for it first)  # one pet for all sessions (a robot per session) instead of one pet per session
     "click_through": True,  # only the robot and its "needs you" bubble take clicks; the rest of the window lets them through
     # clicking a session of the VS Code extension also opens its conversation tab (vscode://anthropic.claude-code/open)
     "vscode_open_conversation": True,
-    "done_timeout_minutes": 3,  # finished sessions disappear after this: 0 (never) - 30; "Clear finished after..." slider
+    "done_timeout_minutes": 3,
+    "health_check_seconds": 15,  # how often a working session's process is checked (0 = off); "Health check every..."  # finished sessions disappear after this: 0 (never) - 30; "Clear finished after..." slider
     "stale_hours": 12,
     "claude_code": {
         "enabled": True,
@@ -145,7 +148,7 @@ BADGE_COLORS = {"CC": "#6b7280", "CW": "#c2410c", "CX": "#0f8a6a", "WSL": "#7c3a
 STATE_ORDER = ("needs_input", "error", "done", "working")
 PET_W, PET_H = 92, 122  # the drawing area of one pet, before the badge column and top trim below
 BADGE_GUTTER = 0  # extra width on the pet's left (badges now sit on the name tag's top edge, so none is needed)
-TAG_H = 18  # name tag height
+TAG_H = 19  # name tag height (one unit taller than it was, for the name + conversation title lines)
 TOP_TRIM = 14  # the empty strip the badges used to take above the bubble
 CANVAS_W, CANVAS_H = PET_W + BADGE_GUTTER, PET_H - TOP_TRIM
 INK = "#1f2937"
@@ -453,6 +456,15 @@ SCALE = {"v": SCALE_UNIT}  # absolute drawing scale: 92x122 px per pet at 1.0; t
 ANSWER_WAIT = {"v": 180}  # seconds; mirrored into <pet dir>/answer-wait for the hook (0 = wait until answered)
 MAX_WAIT = 1800  # every timer: 0 (no limit / never) to 30 minutes
 DONE_TIMEOUT = {"v": 3}  # minutes until a finished session's pet is cleared (0 = never)
+HEALTH = {"v": 15}  # seconds between checks that a working session's process still runs (0 = off)
+MAX_HEALTH = 300
+
+
+def clamp_health(v):
+    try:
+        return int(max(0, min(MAX_HEALTH, round(float(v)))))
+    except (TypeError, ValueError):
+        return 15
 
 
 def answer_name(item):
@@ -668,6 +680,64 @@ def ago(ts):
     return f"{s // 3600}h {s % 3600 // 60}m ago"
 
 
+def place_name(rec):
+    """The name tag's top line: the session's folder. A session with no folder to name it after (Cowork without a
+    connected folder, a session in the home folder) used to be titled by its first prompt; the conversation title now
+    sits right below the name, so show where it runs instead - its badge tags: "Cowork", "WSL", "WSL VS Code", "CLI"."""
+    title = rec.get("title") or "session"
+    if not (rec.get("topic") and title == rec.get("topic")) and title not in ("~", "Cowork"):
+        return title
+    badge = session_badge("Codex" if rec.get("agent") == "codex" else "Claude", rec.get("app") == "cowork",
+                          rec.get("env") == "wsl", rec.get("ide") == "vscode", rec.get("entry", ""))
+    tags = [{"VS": "VS Code"}.get(t, t) for t in badge.split(" ")[1:]]
+    return " ".join(tags) or title
+
+
+_PID_CACHE = {}
+
+
+def pid_alive(pid, max_age=5.0):
+    """Is the process running (cached for a few seconds)? None when it can't be told. Only for processes on this
+    machine (not WSL ones)."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return None
+    hit = _PID_CACHE.get(pid)
+    if hit and time.time() - hit[0] < max_age:
+        return hit[1]
+    alive = None
+    try:
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            k32.OpenProcess.restype = wintypes.HANDLE
+            k32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+            k32.CloseHandle.argtypes = [wintypes.HANDLE]
+            h = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+            if not h:
+                alive = ctypes.get_last_error() == 5  # access denied: it exists; otherwise it is gone
+            else:
+                code = wintypes.DWORD()
+                ok = k32.GetExitCodeProcess(h, ctypes.byref(code))
+                k32.CloseHandle(h)
+                alive = bool(ok) and code.value == 259  # STILL_ACTIVE
+        else:
+            os.kill(pid, 0)
+            alive = True
+    except PermissionError:
+        alive = True
+    except ProcessLookupError:
+        alive = False
+    except Exception:
+        alive = None
+    _PID_CACHE[pid] = (time.time(), alive)
+    if len(_PID_CACHE) > 200:
+        _PID_CACHE.clear()
+    return alive
+
+
 def session_title(rec, mode="name"):
     """The extra title of a session: "name" = the harness's session name (Claude Code's /rename or its own name for
     the session, Codex's thread name), else the latest prompt; "prompt" = the latest prompt, else the name."""
@@ -741,6 +811,12 @@ def read_claude_code_sessions(cfg):
                 pass
     for path, rec in sorted(newest.values(), key=lambda pr: pr[0]):
         sid = str(rec.get("id"))
+        local = rec.get("env") == ("windows" if os.name == "nt" else sys.platform)
+        if (local and HEALTH["v"] > 0 and rec.get("state") in ("working", "needs_input") and rec.get("pid")
+                and pid_alive(rec["pid"], HEALTH["v"]) is False):
+            # its Claude Code / Codex process is gone without a Stop or SessionEnd (the app was closed, or Cowork moved
+            # the conversation to a new session): show it as done, so the done timeout clears it
+            rec = dict(rec, state="done", message="", request={}, changed=rec.get("updated", 0))
         env, ide = rec.get("env", ""), rec.get("ide", "")
         cowork = rec.get("app") == "cowork"
         codex = rec.get("agent") == "codex"
@@ -763,7 +839,7 @@ def read_claude_code_sessions(cfg):
             "agent": rec.get("agent", "claude"),
             "entry": rec.get("entry", ""),
             "cwd": rec.get("cwd", ""),
-            "title": rec.get("title") or "session",
+            "title": place_name(rec),
             "state": rec.get("state", "idle"),
             "message": rec.get("message", ""),
             "detail": rec.get("cwd", ""),
@@ -1200,8 +1276,12 @@ def log_error(msg):
         pass
 
 
+MONO_FAMILY = "Consolas" if os.name == "nt" else ("Menlo" if IS_MAC else "DejaVu Sans Mono")
+
+
 def mono(size):
-    return ("Consolas", max(4, int(round(size * SCALE["v"]))))
+    """A console font at the pet's scale (Consolas on Windows, Menlo on macOS)."""
+    return (MONO_FAMILY, max(4, int(round(size * SCALE["v"]))))
 
 
 # ---- pixel-art speech bubbles and glyphs, drawn at sprite resolution so they match the robot
@@ -1367,69 +1447,102 @@ class Pet:
                       3, PET_H - 2 - TAG_H, "nw")
         except Exception:  # no Pillow: a plain rectangle
             c.create_rectangle(3, PET_H - 2 - TAG_H, PET_W - 3, PET_H - 2, fill=T["tag_bg"], outline=T["tag_outline"], width=1)
-        name = self.data.get("title", "")
-        font = fnt(5.4)
-        room = PET_W - 14  # inside the tag's rounded border
+        font, sub_font = mono(5.0), mono(4.0)  # console-style text, like the robot's screen
+        room, left = PET_W - 14, 7  # inside the tag's rounded border
         everyone = self.data.get("everyone") or []
-        banner = None
-        if len(everyone) > 1:  # compact mode: the banner always runs; waiting sessions show a red symbol
-            banner = self._title_banner([(m.get("title") or "session", m.get("state")) for m in everyone], font, room)
-        elif self.data.get("dup_title") and self._text_w(font, name) > room:
-            # several sessions share the folder name: scroll the whole "name · conversation" instead of cutting it
-            banner = self._title_banner([(name, self.data.get("state"))], font, room)
-        elif self._text_w(font, name) > room:  # cut to the real width, not a character count
-            while name and self._text_w(font, name + "\u2026") > room:
-                name = name[:-1]
-            name = name.rstrip() + "\u2026"
-        # just the name: the pet itself already shows the state (face, lights, bubble, hopping)
-        y = PET_H - 2 - TAG_H / 2 + 1.5  # a bit low: badges overlap the top
-        if banner:  # coloured pieces; pinned left while scrolling so the text doesn't re-centre on every step
-            pieces, scrolling = banner
-            x = 7 if scrolling else PET_W / 2 - sum(self._text_w(font, t_) for t_, _ in pieces) / 2
-            for text, colour in pieces:
-                c.create_text(x, y, text=text, anchor="w", fill=colour, font=font)
-                x += self._text_w(font, text)
-        else:
-            c.create_text(PET_W / 2, y, text=name, fill=T["tag_fg"], font=font)
+        entries = [(m.get("raw_title") or m.get("title") or "session", m.get("conv") or "", m.get("state"))
+                   for m in (everyone if len(everyone) > 1 else [self.data])]
+        two = any(e[1] for e in entries)  # a conversation title to show: the name moves up, the title goes below it
+        y_top0 = PET_H - 2 - TAG_H
+        y1 = y_top0 + 6.4 if two else PET_H - 2 - TAG_H / 2 + 1.5  # name near the top; one line: a bit low (badges)
+        y2 = y_top0 + 13.9  # clear of the tag's bottom border
+        sub_fg = "#d1d5db" if T.get("name") == "dark" else "#374151"
+        if len(everyone) > 1:  # compact mode: every session scrolls past like a banner, its title right below it
+            self._title_banner(entries, font, sub_font, left, room, y1, y2 if two else None, sub_fg)
+            return
+        name, title, _ = entries[0]  # one pet: never cut, a line too long for the tag scrolls round instead
+        self._marquee(name, font, y1, T["tag_fg"], left, room)
+        if title:
+            self._marquee(title, sub_font, y2, sub_fg, left, room)
+
+    def _marquee(self, text, font, y, fill, left, room):
+        """One line of the name tag: centred if it fits, else scrolling round like a ticker (characters drawn one by one
+        and only while wholly inside the tag, since a Tk canvas can't clip text)."""
+        c = self.canvas
+        if self._text_w(font, text) <= room:
+            c.create_text(PET_W / 2, y, text=text, fill=fill, font=font)
+            return
+        gap = self.BANNER_GAP
+        loop_text = text + gap
+        loop = self._text_w(font, loop_text)
+        offset = (time.time() * self.BANNER_PX + self.seed * 37) % loop
+        right = left + room
+        for k in (0, 1):
+            cx = left - offset + k * loop
+            for ch in loop_text:
+                key = ("cw", font, ch)
+                cw = _IMG_CACHE[key] if key in _IMG_CACHE else _IMG_CACHE.setdefault(key, self._text_w(font, ch))
+                if cx >= right:
+                    break
+                if cx >= left and cx + cw <= right and not ch.isspace():
+                    c.create_text(cx, y, text=ch, anchor="w", fill=fill, font=font)
+                cx += cw
+
+    def _cut(self, font, text, room):
+        """text cut to fit room drawing units, with an ellipsis (real font widths, not a character count)."""
+        if self._text_w(font, text) <= room:
+            return text
+        while text and self._text_w(font, text + "\u2026") > room:
+            text = text[:-1]
+        return text.rstrip() + "\u2026"
 
     EXPAND, COLLAPSE = "\u25b4", "\u25be"  # compact mode's badges: up to expand, down to collapse
     # compact mode's banner: each title after its state symbol, both in a faded state colour
     BANNER_STATES = {"working": ("\u2743", "#6a9fd8"), "needs_input": ("\u2749", "#e07b74"),
                      "error": ("\u2749", "#e07b74"), "done": ("\u273a", "#6fb88a"), "idle": ("\u273a", "#9aa3ad")}
     BANNER_GAP = "    "
-    BANNER_CPS = 5  # characters per second
 
-    def _title_banner(self, entries, font, room):
-        """Compact mode: every session's title after its state symbol (working, waiting, done), in a
-        faded state colour, scrolling through the name tag like a banner - one character at a time (Tk canvases can't
-        clip text). Shown whole if it all fits. Returns ([(text, colour)], scrolling)."""
-        chars = []  # (character, colour) for one full round
-        for n, (title, state) in enumerate(entries):
+    BANNER_PX = 14  # scroll speed, drawing units per second
+    BANNER_TITLE_MAX = 64  # a title is cut (with an ellipsis) to the width of its name or this, whichever is wider
+
+    def _title_banner(self, entries, font, sub_font, left, room, y1, y2, sub_fg):
+        """Compact mode: every session's name after its state symbol (working, waiting, done) in a faded state colour,
+        and - when y2 is given - its conversation title in small text right below, both scrolling together through
+        the name tag. Shown whole and centred when it all fits. Tk canvases can't clip text, so while scrolling each
+        character is drawn on its own and only those wholly inside the tag are shown."""
+        c, cols = self.canvas, []  # cols: (top text, colour, bottom text, width)
+        gap = self._text_w(font, self.BANNER_GAP)
+        for name, title, state in entries:
             sym, colour = self.BANNER_STATES.get(state, ("\u2743", "#9aa3ad"))
-            chars += [(ch, colour) for ch in f"{sym} {title}"]
-            if n < len(entries) - 1:
-                chars += [(ch, colour) for ch in self.BANNER_GAP]
-
-        def pieces(seq):
-            out = []
-            for ch, colour in seq:
-                if out and out[-1][1] == colour:
-                    out[-1][0] += ch
-                else:
-                    out.append([ch, colour])
-            return [(t_, c_) for t_, c_ in out]
-        whole = "".join(ch for ch, _ in chars)
-        if self._text_w(font, whole) <= room:
-            return pieces(chars), False
-        loop = chars + [(ch, chars[-1][1]) for ch in self.BANNER_GAP]
-        i = int(time.time() * self.BANNER_CPS) % len(loop)
-        seen, text = [], ""
-        for ch, colour in loop[i:] + loop:
-            if self._text_w(font, text + ch) > room:
-                break
-            text += ch
-            seen.append((ch, colour))
-        return pieces(seen), True
+            top = f"{sym} {name}"
+            tw = self._text_w(font, top)
+            sub = self._cut(sub_font, title, max(tw, self.BANNER_TITLE_MAX)) if (title and y2 is not None) else ""
+            cols.append((top, colour, sub, max(tw, self._text_w(sub_font, sub))))
+        total = sum(w for *_, w in cols) + gap * (len(cols) - 1)
+        if total <= room:  # it all fits: centred, no scrolling
+            x = PET_W / 2 - total / 2
+            for top, colour, sub, w in cols:
+                c.create_text(x, y1, text=top, anchor="w", fill=colour, font=font)
+                if sub:
+                    c.create_text(x, y2, text=sub, anchor="w", fill=sub_fg, font=sub_font)
+                x += w + gap
+            return
+        loop = total + gap
+        offset = (time.time() * self.BANNER_PX) % loop
+        right = left + room
+        for k in (0, 1):  # the strip twice, so the start follows the end seamlessly
+            x = left - offset + k * loop
+            for top, colour, sub, w in cols:
+                if x < right and x + w > left:
+                    for text, f, y, fill in ((top, font, y1, colour), (sub, sub_font, y2, sub_fg)):
+                        cx = x
+                        for ch in text:
+                            key = ("cw", f, ch)  # per-character widths, measured once
+                            cw = _IMG_CACHE[key] if key in _IMG_CACHE else _IMG_CACHE.setdefault(key, self._text_w(f, ch))
+                            if cx >= left and cx + cw <= right and not ch.isspace():
+                                c.create_text(cx, y, text=ch, anchor="w", fill=fill, font=f)
+                            cx += cw
+                x += w + gap
 
     def _draw_badges(self):
         """Where each session runs: one small pixel box per session ("Claude CLI", "Codex WSL VS"...), styled like the
@@ -2673,6 +2786,7 @@ class PetApp:
                 save_setting("done_timeout_minutes", self.cfg["done_timeout_minutes"])
             save_setting("hide_done_after_minutes", None)
         DONE_TIMEOUT["v"] = clamp_done(self.cfg.get("done_timeout_minutes", 3))
+        HEALTH["v"] = clamp_health(self.cfg.get("health_check_seconds", 15))
         write_answer_wait(ANSWER_WAIT["v"])
         root = self.root = tk.Tk()
         root.title("AIPet")
@@ -2714,6 +2828,8 @@ class PetApp:
         m.add_command(label="Open in VS Code", command=self.open_in_vscode)
         self.vscode_menu_index = m.index("end")
         m.add_command(label="Dismiss this pet", command=self.dismiss_menu_pet)
+        m.add_command(label="Mark as finished", command=self.finish_menu_pet)
+        self.finish_menu_index = m.index("end")
         self.dismiss_menu_index = m.index("end")
         m.add_command(label="Size...", command=self.open_size_slider)
         self.size_menu_index = m.index("end")
@@ -2721,12 +2837,20 @@ class PetApp:
         m.add_command(label="Reset position (main screen)", command=self.reset_position)
         m.add_command(label="Answer timeout...", command=self.open_answer_slider)
         m.add_command(label="Clear finished after...", command=self.open_done_slider)
+        m.add_command(label="Health check every...", command=self.open_health_slider)
         self.codex_answer_var = tk.BooleanVar(value=bool(self.cfg.get("codex_answers")))
         self._write_codex_flag()
         m.add_checkbutton(label="Answer Codex prompts from the pet", variable=self.codex_answer_var,
                           command=lambda: self.set_codex_answers(self.codex_answer_var.get()))
         self.compact_var = tk.BooleanVar(value=bool(self.cfg.get("compact")))
         m.add_checkbutton(label="Compact mode (one pet)", variable=self.compact_var, command=self.toggle_compact)
+        self.click_focus_var = tk.BooleanVar(value=bool(self.cfg.get("click_to_focus", True)))
+        m.add_checkbutton(label="Click goes to the session's window", variable=self.click_focus_var,
+                          command=lambda: self.set_click_to_focus(self.click_focus_var.get()))
+        if IS_MAC:
+            self.all_spaces_var = tk.BooleanVar(value=bool(self.cfg.get("all_spaces", True)))
+            m.add_checkbutton(label="Show on all desktops", variable=self.all_spaces_var,
+                              command=lambda: self.set_all_spaces(self.all_spaces_var.get()))
         self.titles_var = tk.StringVar(value=self.cfg.get("session_titles", "name"))
         titles = tk.Menu(m, tearoff=0)
         for value, text in (("name", "Session name"), ("prompt", "Last prompt")):
@@ -2753,6 +2877,8 @@ class PetApp:
         self.animate()
         if self.clickthru:
             root.after(500, self._pass_tick)
+        if IS_MAC:
+            root.after(700, self._apply_all_spaces)
 
     # ---- data
     def collect(self):
@@ -3123,6 +3249,86 @@ class PetApp:
                 others = [i for i in self._last_items if i.get("key") != own]
                 focus_wsl_terminal(d, others)  # no recorded window: match by distro / project, never another's
 
+    def _menu_session(self, pet):
+        """The session a right-click is about: the pet's own, or in compact mode the one in front."""
+        if not pet or pet.key == "_none":
+            return None
+        key = pet.data.get("focus") or pet.key
+        return next((i for i in self._last_items if i["key"] == key), None)
+
+    def finish_menu_pet(self):
+        """Right-click > Mark as finished: for a session that is stuck (its app closed without telling the pet)."""
+        d = self._menu_session(self.menu_pet)
+        if not d or d.get("source") != "CC" or not d.get("path"):
+            return
+        try:
+            with open(d["path"], encoding="utf-8") as f:
+                rec = json.load(f)
+            now = time.time()
+            rec.update(state="done", message="", request={}, wait_agent="", agents={}, main_stopped=False,
+                       updated=now, changed=now)
+            tmp = d["path"] + ".pet.tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(rec, f)
+            os.replace(tmp, d["path"])
+        except (OSError, ValueError) as e:
+            log_error(f"mark as finished: {e!r}")
+
+    def open_health_slider(self):
+        """Slider for how often a working session's process is checked: 0 (off) to 5 minutes."""
+        if getattr(self, "health_win", None) is not None:
+            try:
+                self.health_win.lift()
+                return
+            except tk.TclError:
+                self.health_win = None
+        from tkinter import ttk
+        w = self.health_win = tk.Toplevel(self.root)
+        w.title("Health check")
+        w.attributes("-topmost", True)
+        w.resizable(False, False)
+        var = tk.DoubleVar(value=HEALTH["v"])
+        val = tk.Label(w, width=10, font=("Segoe UI", 12, "bold"))
+
+        def apply(_v=None):
+            HEALTH["v"] = clamp_health(round(var.get() / 5) * 5)  # steps of 5 s
+            val.config(text="off" if HEALTH["v"] <= 0 else fmt_wait(HEALTH["v"]))
+
+        def commit(_e=None):
+            apply()
+            self.cfg["health_check_seconds"] = HEALTH["v"]
+            save_setting("health_check_seconds", HEALTH["v"])
+
+        def reset():
+            var.set(15)
+            commit()
+
+        def close():
+            commit()
+            self.health_win = None
+            w.destroy()
+
+        tk.Label(w, text="Check that working sessions are still running every:", font=("Segoe UI", 10, "bold")
+                 ).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
+        scale = ttk.Scale(w, from_=0, to=MAX_HEALTH, orient="horizontal", length=260, variable=var, command=apply)
+        scale.grid(row=1, column=0, padx=(14, 6), pady=8)
+        scale.bind("<ButtonRelease-1>", commit)
+        val.grid(row=1, column=1, padx=(0, 14))
+        tk.Label(w, justify="left", wraplength=360, fg="#6b7280", font=("Segoe UI", 8),
+                 text="A working or waiting session whose Claude Code / Codex process has ended (the app was closed, or "
+                      "the conversation moved to a new session) is shown as finished. 0 turns the check off. Sessions in "
+                      "WSL can't be checked; use right-click > Mark as finished for those."
+                 ).grid(row=2, column=0, columnspan=2, sticky="w", padx=14)
+        row = tk.Frame(w)
+        row.grid(row=3, column=0, columnspan=2, sticky="e", padx=14, pady=(8, 12))
+        tk.Button(row, text="Default (15 s)", command=reset).pack(side="left", padx=(0, 6))
+        tk.Button(row, text="Done", width=8, command=close, default="active").pack(side="left")
+        w.protocol("WM_DELETE_WINDOW", close)
+        w.bind("<Escape>", lambda e: close())
+        apply()
+        theme_window(w)
+        self._place_above_pet(w)
+
     def dismiss_menu_pet(self):
         if self.menu_pet and self.menu_pet.key != "_none":
             self.dismiss(self.menu_pet)
@@ -3332,7 +3538,7 @@ class PetApp:
                 self.ack[on_badge] = True
                 if item.get("state") == "needs_input":
                     self.open_detail(on_badge)
-                else:
+                elif self.cfg.get("click_to_focus", True):
                     import types
                     self.focus_session(types.SimpleNamespace(key=on_badge, data=item))
         elif on_bubble and pet.key != "_none":
@@ -3340,7 +3546,7 @@ class PetApp:
             self.open_detail(pet.data.get("focus", pet.key))  # the bubble: the full question and the answer buttons
         else:
             self._acknowledge(pet)  # click: acknowledge (stops jumping / reminders) and go to the session's window
-            if pet.key != "_none":
+            if pet.key != "_none" and self.cfg.get("click_to_focus", True):
                 self.focus_session(pet)
         self.drag = None
 
@@ -3403,6 +3609,31 @@ class PetApp:
         if hasattr(self, "titles_var") and self.titles_var.get() != mode:
             self.titles_var.set(mode)
 
+    def set_click_to_focus(self, on):
+        """Clicking a pet / badge goes to the session's window (on by default). Off: a click only acknowledges it."""
+        self.cfg["click_to_focus"] = bool(on)
+        save_setting("click_to_focus", self.cfg["click_to_focus"])
+        if hasattr(self, "click_focus_var") and self.click_focus_var.get() != self.cfg["click_to_focus"]:
+            self.click_focus_var.set(self.cfg["click_to_focus"])
+
+    def set_all_spaces(self, on):
+        """macOS: show the pet on every desktop (Space) or only on the one it was opened on."""
+        self.cfg["all_spaces"] = bool(on)
+        save_setting("all_spaces", self.cfg["all_spaces"])
+        if hasattr(self, "all_spaces_var") and self.all_spaces_var.get() != self.cfg["all_spaces"]:
+            self.all_spaces_var.set(self.cfg["all_spaces"])
+        self._apply_all_spaces()
+
+    def _apply_all_spaces(self):
+        if not IS_MAC:
+            return
+        try:
+            import mac_statusbar
+            if not mac_statusbar.set_all_spaces(self.root.title(), bool(self.cfg.get("all_spaces", True))):
+                log_error("all spaces: pet window not found")
+        except Exception as e:
+            log_error(f"all spaces: {e!r}")
+
     def toggle_compact(self, value=None):
         self.cfg["compact"] = (not self.cfg.get("compact", False)) if value is None else bool(value)
         save_setting("compact", self.cfg["compact"])
@@ -3418,6 +3649,9 @@ class PetApp:
         self.menu.entryconfigure(self.vscode_menu_index, state="normal" if ok else "disabled")
         self.menu.entryconfigure(self.dismiss_menu_index,
                                  state="normal" if pet and pet.key != "_none" else "disabled")
+        target = self._menu_session(pet)
+        self.menu.entryconfigure(self.finish_menu_index, state="normal" if target and target.get("source") == "CC" and target.get("state") in (
+            "working", "needs_input", "error") else "disabled")
         x, y = e.x_root, e.y_root
         if IS_MAC:
             # A menu only opens in the active app. The pet window never activates AIPet by itself, so a right-click while
