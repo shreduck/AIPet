@@ -217,7 +217,7 @@ def find_claude_pid():
     return None
 
 
-def find_host_window():
+def find_host_window(cwd=""):
     """(hwnd, exe name) of the nearest ancestor process that owns a visible top-level window, else (None, "").
 
     That is the terminal (Windows Terminal, mintty, ...) or the Claude desktop app running this session.
@@ -277,8 +277,39 @@ def find_host_window():
         for pid in chain:
             if pid in wins:
                 return int(wins[pid]), names.get(pid, "")
+        if AGENT == "codex":
+            return _codex_window(parents, names, wins, cwd)
     except Exception:
         pass
+    return None, ""
+
+
+def _codex_window(parents, names, wins, cwd=""):
+    """Codex runs its hooks from a background process, not from the terminal, so the hook's own ancestors have no
+    window. Walk up from every running codex process instead; if several lead to different windows, prefer the one
+    whose title mentions the project folder."""
+    import ctypes
+    found = {}
+    for pid, name in names.items():
+        if name.lower() not in ("codex.exe", "codex"):
+            continue
+        seen, cur = set(), pid
+        while cur in parents and cur not in seen:
+            seen.add(cur)
+            cur = parents[cur]
+            if cur in wins:
+                found[int(wins[cur])] = names.get(cur, "")
+                break
+    if len(found) == 1:
+        return next(iter(found.items()))
+    folder = os.path.basename(str(cwd).rstrip("\\/")).lower()
+    if folder:
+        u32 = ctypes.windll.user32
+        for hwnd, exe in found.items():
+            buf = ctypes.create_unicode_buffer(512)
+            u32.GetWindowTextW(ctypes.c_void_p(hwnd), buf, 512)
+            if folder in buf.value.lower():
+                return hwnd, exe
     return None, ""
 
 
@@ -648,7 +679,7 @@ def _update_session(path, target, event, data, wsl):
     cwd = os.environ.get("CLAUDE_PROJECT_DIR") or prev.get("cwd") or data.get("cwd") or os.getcwd()
     hwnd, host = prev.get("hwnd"), prev.get("host", "")
     if os.name == "nt" and not wsl and not (hwnd and window_alive(hwnd)):
-        hwnd, host = find_host_window()  # for click-to-focus; re-found if the window was closed
+        hwnd, host = find_host_window(data.get("cwd") or cwd)  # for click-to-focus; re-found if the window was closed
     cowork = is_cowork() or prev.get("app") == "cowork"
     folders = cowork_folders() if cowork else []
     if folders:  # name a Cowork session after the folder it works in, not its private "host-cwd"
@@ -697,6 +728,19 @@ def _update_session(path, target, event, data, wsl):
 CODEX_RAW_LOG = True
 
 
+def _ancestor_names():
+    try:
+        if os.name != "nt":
+            return []
+        table, cur, out = _windows_process_table(), os.getpid(), []
+        while cur in table and len(out) < 12:
+            cur = table[cur][0]
+            out.append(f"{cur}:{table[cur][1] if cur in table else '?'}")
+        return out
+    except Exception:
+        return []
+
+
 def codex_raw_log(raw, base):
     if not (CODEX_RAW_LOG and AGENT == "codex"):
         return
@@ -712,6 +756,7 @@ def codex_raw_log(raw, base):
         row = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "argv": sys.argv, "os": platform.platform(),
                "wsl": is_wsl(), "cwd": os.getcwd(), "pid": os.getpid(), "ppid": os.getppid(),
                "env_names": sorted(k for k in os.environ if k.upper().startswith(("CODEX", "OPENAI"))),
+               "ancestors": _ancestor_names(),
                "payload_raw": raw}
         try:
             row["payload"] = json.loads(raw) if raw else None

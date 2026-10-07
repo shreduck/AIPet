@@ -242,10 +242,13 @@ class TrayApp:
         m = self.pet.menu
         hooks_menu = tk.Menu(m, tearoff=0)
         hooks_menu.configure(postcommand=lambda: self._fill_hooks_menu(hooks_menu))
+        codex_menu = tk.Menu(m, tearoff=0)
+        codex_menu.configure(postcommand=lambda: self._fill_codex_menu(codex_menu))
         if pystray:
             q = m.index("Quit")
             m.insert_cascade(q, label="Claude Code hooks", menu=hooks_menu)
-            m.insert_separator(q + 1)
+            m.insert_cascade(q + 1, label="Codex hooks", menu=codex_menu)
+            m.insert_separator(q + 2)
             m.insert_command(m.index("Quit"), label="Hide to tray", command=self.hide)
         else:  # no tray icon (macOS): the tray menu's essentials live in the pet's right-click menu
             self.notify_var = tk.BooleanVar(value=self.c_notify)
@@ -253,7 +256,8 @@ class TrayApp:
             q = m.index("Quit")
             m.insert_separator(q)
             m.insert_cascade(q + 1, label="Claude Code hooks", menu=hooks_menu)
-            m.insert_checkbutton(q + 2, label="Notifications", variable=self.notify_var,
+            m.insert_cascade(q + 2, label="Codex hooks", menu=codex_menu)
+            m.insert_checkbutton(q + 3, label="Notifications", variable=self.notify_var,
                                  command=lambda: self._set_notify(self.notify_var.get()))
             self.debug_var = tk.BooleanVar(value=os.path.exists(DEBUG_FLAG))
             m.insert_checkbutton(m.index("Quit"), label="Log hook events (debug)", variable=self.debug_var,
@@ -265,7 +269,7 @@ class TrayApp:
                 m.insert_radiobutton(m.index("Quit"), label=f"Pet: {label}", variable=self.style_var, value=key,
                                      command=lambda k=key: self.set_style(k))
             if IS_MAC:
-                m.insert_checkbutton(q + 3, label="Start at login", variable=self.autostart_var,
+                m.insert_checkbutton(q + 4, label="Start at login", variable=self.autostart_var,
                                      command=self.toggle_autostart)
             m.insert_command(m.index("Quit"), label="Open config folder", command=self.open_config)
         m.entryconfigure(m.index("Quit"), command=self.quit)
@@ -638,7 +642,11 @@ class TrayApp:
                      f"+{max(0, (win.winfo_screenheight() - win.winfo_reqheight()) // 3)}")
 
     # ---- pet right-click: the same "Claude Code hooks" menu as the tray
-    def _fill_hooks_menu(self, menu):
+    def _fill_codex_menu(self, menu):
+        """Pet right-click > Codex hooks: one entry per place Codex was found."""
+        self._fill_hooks_menu(menu, codex=True)
+
+    def _fill_hooks_menu(self, menu, codex=False):
         menu.delete(0, "end")
 
         def target(name, key):
@@ -661,6 +669,17 @@ class TrayApp:
             sub.add_command(label="Open backups folder", command=lambda: self.open_backups(key))
             menu.add_cascade(label=f"{'✓ ' if st.startswith('installed') else ''}{name}  ({st})", menu=sub)
 
+        if codex:
+            for lab, key in self.codex_targets:
+                target(lab, key)
+            if not self.codex_targets:
+                menu.add_command(label="Codex not found (running WSL distros are checked)" if self.probed
+                                 else "Detecting…", state="disabled")
+            menu.add_separator()
+            menu.add_command(label="Run setup again...", command=self.show_setup)
+            menu.add_command(label="Re-detect / refresh status",
+                             command=lambda: threading.Thread(target=self.refresh_targets, daemon=True).start())
+            return
         target("This Mac" if IS_MAC else "This PC (Windows)", hi.LOCAL)
         menu.add_separator()
         if self.distros:
@@ -668,13 +687,6 @@ class TrayApp:
                 target(f"WSL: {n}", "wsl:" + n)
         else:
             menu.add_command(label="No WSL distros found" if self.probed else "Detecting WSL distros…", state="disabled")
-        menu.add_separator()
-        menu.add_command(label="Codex", state="disabled")
-        for lab, key in self.codex_targets:
-            target(f"Codex: {lab}", key)
-        if not self.codex_targets:
-            menu.add_command(label="Codex not found (running WSL distros are checked)" if self.probed else "Detecting…",
-                             state="disabled")
         menu.add_separator()
         menu.add_command(label="Cowork (Claude desktop app)...", command=self.show_cowork)
         menu.add_command(label="Run setup again...", command=self.show_setup)
@@ -764,10 +776,9 @@ class TrayApp:
     # ---- tray
     def summary(self):
         counts = {}
-        for key, pet in self.pet.pets.items():
-            if key != "_none":
-                st = pet.data.get("state", "idle")
-                counts[st] = counts.get(st, 0) + 1
+        for it in self.pet._last_items:  # every session, also in compact mode (one pet for all)
+            st = it.get("state", "idle")
+            counts[st] = counts.get(st, 0) + 1
         top = min(counts, key=lambda s: RANK.get(s, 9)) if counts else "idle"
         parts = [f"{counts[s]} {core.LABELS.get(s, s).rstrip('…!')}" for s in sorted(counts, key=lambda s: RANK.get(s, 9))]
         text = f"{APP_NAME} - " + (", ".join(parts) if parts else "no active sessions")
@@ -869,12 +880,6 @@ class TrayApp:
                 items += [target_menu(f"WSL: {n}", "wsl:" + n) for n, _ in self.distros]
             else:
                 items.append(I("No WSL distros found" if self.probed else "Detecting WSL distros…", None, enabled=False))
-            items += [M.SEPARATOR, I("Codex", None, enabled=False)]
-            if self.codex_targets:
-                items += [target_menu(f"Codex: {lab}", key) for lab, key in self.codex_targets]
-            else:
-                items.append(I("Codex not found (running WSL distros are checked)" if self.probed else "Detecting…",
-                               None, enabled=False))
             items += [M.SEPARATOR,
                       I("Cowork (Claude desktop app)...", act(self.show_cowork)),
                       I("Run setup again...", act(self.show_setup)),
@@ -882,10 +887,20 @@ class TrayApp:
                       I("Re-detect / refresh status", lambda: threading.Thread(target=self.refresh_targets, daemon=True).start())]
             return items
 
+        def codex_items():
+            items = [target_menu(lab, key) for lab, key in self.codex_targets] or [
+                I("Codex not found (running WSL distros are checked)" if self.probed else "Detecting…", None,
+                  enabled=False)]
+            return items + [M.SEPARATOR,
+                            I("Run setup again...", act(self.show_setup)),
+                            I("Re-detect / refresh status",
+                              lambda: threading.Thread(target=self.refresh_targets, daemon=True).start())]
+
         return M(
             I(lambda item: "Show pet" if self.hidden else "Hide pet", act(self.toggle), default=True),
             M.SEPARATOR,
             I("Claude Code hooks", M(hook_items)),
+            I("Codex hooks", M(codex_items)),
             I("Mute sounds", act(self.toggle_mute), checked=lambda item: self.c_muted),
             I("Windows notifications", act(self.toggle_notify), checked=lambda item: self.c_notify),
             I("Dark theme", act(self.toggle_theme), checked=lambda item: core.T.get("name") == "dark"),
@@ -895,6 +910,7 @@ class TrayApp:
             I("Reset pet size", act(self.pet.reset_scale)),
             I("Answer timeout...", act(self.pet.open_answer_slider)),
             I("Clear finished after...", act(self.pet.open_done_slider)),
+            I("Compact mode (one pet)", act(self.pet.toggle_compact), checked=lambda item: bool(self.pet.cfg.get("compact"))),
             I("Log hook events (debug)", act(self.toggle_debug), checked=lambda item: os.path.exists(DEBUG_FLAG)),
             I("Start with Windows", act(self.toggle_autostart), checked=lambda item: self.c_autostart,
               visible=os.name == "nt"),

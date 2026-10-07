@@ -56,6 +56,7 @@ DEFAULT_CONFIG = {
     # "size": 1.0 is written when you use the Size slider (1.0 = 100%, range 0.3 - 3.0); deliberately not a default
     # here, so an old absolute "scale" value in config.json can still be migrated once.
     "remind_seconds": 90,
+    "compact": False,  # one pet for all sessions (a robot per session) instead of one pet per session
     "click_through": True,  # only the robot and its "needs you" bubble take clicks; the rest of the window lets them through
     # clicking a session of the VS Code extension also opens its conversation tab (vscode://anthropic.claude-code/open)
     "vscode_open_conversation": True,
@@ -917,14 +918,8 @@ class Pet:
             while name and self._text_w(font, name + "\u2026") > room:
                 name = name[:-1]
             name = name.rstrip() + "\u2026"
-        c.create_text(PET_W / 2, PET_H - 20, text=name, fill=T["tag_fg"], font=font)
-        label = LABELS.get(st, st)
-        if self.data.get("subagents"):
-            label += f" +{self.data['subagents']}"
-        font = fnt(7, "bold")
-        x0 = int(PET_W / 2 - (6 + self._text_w(font, label)) / 2)
-        c.create_rectangle(x0, PET_H - 10, x0 + 3, PET_H - 7, fill=col, outline="")  # the state light
-        c.create_text(x0 + 6, PET_H - 9, text=label, anchor="w", fill=dark if T["label_dark"] else col, font=font)
+        # just the name: the pet itself already shows the state (face, lights, bubble, hopping)
+        c.create_text(PET_W / 2, PET_H - 15, text=name, fill=T["tag_fg"], font=font)
 
     def _draw_badges(self):
         """Where the session runs, top-left: small pixel boxes styled like the name tag, a dot in the badge colour and
@@ -936,11 +931,18 @@ class Pet:
 
         def width(text):
             return int(round(10 + self._text_w(font, text)))
-        labels = [BADGE_NAMES.get(b, b) for b in codes]
+        def name(b):
+            if b.startswith("Q") and b[1:].isdigit():
+                return f"{b[1:]} waiting"
+            return BADGE_NAMES.get(b, b)
+
+        def short(b):
+            return "+" + b[1:] if b.startswith("Q") and b[1:].isdigit() else b
+        labels = [name(b) for b in codes]
         for i in range(len(labels) - 1, -1, -1):  # shorten from the right until the row fits
             if sum(width(t) + 2 for t in labels) <= PET_W - 4:
                 break
-            labels[i] = codes[i]
+            labels[i] = short(codes[i])
         bx, s_ = 2, SCALE["v"]
         for code, text in zip(codes, labels):
             w = width(text)
@@ -949,7 +951,8 @@ class Pet:
                 self._put(("badge", w, h, T["tag_bg"], T["tag_outline"]), im, int(round(w * s_)), int(round(h * s_)), bx, 1, "nw")
             except Exception:  # no Pillow
                 c.create_rectangle(bx, 1, bx + w, 1 + h, fill=T["tag_bg"], outline=T["tag_outline"])
-            c.create_rectangle(bx + 3, 6, bx + 6, 9, fill=BADGE_COLORS.get(code, "#6b7280"), outline="")
+            dot = COLORS["needs_input"] if code.startswith("Q") else BADGE_COLORS.get(code, "#6b7280")
+            c.create_rectangle(bx + 3, 6, bx + 6, 9, fill=dot, outline="")
             c.create_text(bx + 8, 7.5, text=text, anchor="w", fill=T["tag_fg"], font=font)
             bx += w + 2
 
@@ -1111,29 +1114,36 @@ class Pet:
         # the robot (one per active agent: the main one in front, subagents smaller beside it)
         rm = spr["meta"]["robot"]
         rw0, rh0 = rm["size"]
-        heads = HEAD_LAYOUTS[min(3, int(self.data.get("subagents", 0) or 0)) + 1]
+        members = self.data.get("members")
+        if members:  # compact mode: a robot per session, each in its own state; the front one is the focus
+            heads = HEAD_LAYOUTS[len(members)]
+            states = [(m["state"], self.app.ack.get(m["key"], False)) for m in members[1:]] + [(st, self.acked)]
+        else:  # one session: the main robot in front, its subagents smaller beside it, all in the session's state
+            heads = HEAD_LAYOUTS[min(3, int(self.data.get("subagents", 0) or 0)) + 1]
+            states = [(st, self.acked)] * len(heads)
         top_main = ground
         for i, (dx, k) in enumerate(heads):
             main = i == len(heads) - 1
+            hst, hacked = states[i]
             ph = t + i * 1.7
             cx, dy, squash = cx0 + dx, 0.0, 1.0
-            face = STATE_FACE.get(st, "sleep")
-            if st == "working":
+            face = STATE_FACE.get(hst, "sleep")
+            if hst == "working":
                 dy = -abs(math.sin(ph * (5 if main else 4.2))) * 3 * k
                 if (ph % 4) < 0.15:
                     face = "blink"
-            elif st == "needs_input":  # hops while it waits for you
-                dy = (-abs(math.sin(ph * 7)) * 8 if not self.acked else -1.5 * math.sin(ph * 3)) * (1 if main else 0.6)
+            elif hst == "needs_input":  # hops while it waits for you
+                dy = (-abs(math.sin(ph * 7)) * 8 if not hacked else -1.5 * math.sin(ph * 3)) * (1 if main else 0.6)
                 squash = 1.0 if dy < -1.2 else 0.94
-            elif st == "error" and not self.acked:
+            elif hst == "error" and not hacked:
                 cx += 2 * math.sin(ph * 25)
-            elif st == "idle":
+            elif hst == "idle":
                 squash = 1 + 0.025 * math.sin(ph * 2)  # slow breathing
             w, h = int(round(rw0 * k * s)), int(round(rh0 * k * squash * s))
             sw = int(round(rw0 * k * 1.1 * s))
             self._put("shadow", shadow, sw, max(2, int(sw * 0.25)), cx, ground + 2, "center")
-            im = robot_image(face, light_cycle(st, ph))
-            self._put(("robot", face, light_cycle(st, ph)), im, w, h, cx, ground + dy + rise, "s", tags=("hit",))
+            im = robot_image(face, light_cycle(hst, ph))
+            self._put(("robot", face, light_cycle(hst, ph)), im, w, h, cx, ground + dy + rise, "s", tags=("hit",))
             if main:
                 top_main = ground + dy - rh0 * k * squash
 
@@ -1938,6 +1948,7 @@ class PetApp:
         self.details = {}
         self._slots, self._slot_n = {}, 0
         self._last_items, self._last_size = [], None
+        self.ack, self.reminded = {}, {}  # per session: acknowledged (clicked) / last reminder time
         self.first_refresh = True
         self.muted = tk.BooleanVar(value=not self.cfg["sounds"])
         self.tip = None
@@ -1961,6 +1972,8 @@ class PetApp:
         m.add_command(label="Reset size", command=self.reset_scale)
         m.add_command(label="Answer timeout...", command=self.open_answer_slider)
         m.add_command(label="Clear finished after...", command=self.open_done_slider)
+        self.compact_var = tk.BooleanVar(value=bool(self.cfg.get("compact")))
+        m.add_checkbutton(label="Compact mode (one pet)", variable=self.compact_var, command=self.toggle_compact)
         m.add_separator()
         m.add_checkbutton(label="Mute sounds", variable=self.muted)
         m.add_command(label="Clear finished", command=self.clear_finished)
@@ -2003,18 +2016,38 @@ class PetApp:
 
     def refresh(self):
         try:
-            items = self.collect() or [{
+            real = self.collect()  # one item per session
+            items = (self._compact_items(real) if self.cfg.get("compact") and real else real) or [{
                 "key": "_none", "source": "", "title": "no sessions", "state": "idle",
                 "message": "Waiting for Claude Code / Workbench activity", "detail": "", "changed": 0}]
             keys = [i["key"] for i in items]
-            self._last_items = items
+            self._last_items = real
             self._heartbeat()
             for k in list(self.pets):
                 if k not in keys:
                     self.pets.pop(k).destroy()
-                    self.prev_states.pop(k, None)
 
             now = time.time()
+            # alerts and acknowledgements are per session, whatever the pets show (compact mode: one pet for all)
+            real_keys = {it["key"] for it in real}
+            for k in list(self.prev_states):
+                if k not in real_keys:
+                    self.prev_states.pop(k, None)
+                    self.ack.pop(k, None)
+                    self.reminded.pop(k, None)
+            for it in real:
+                k, old = it["key"], self.prev_states.get(it["key"])
+                if old != it["state"]:
+                    self.ack[k] = False
+                    self.reminded[k] = now
+                    if not self.first_refresh:
+                        self.alert(it["state"], old, it)
+                    self.prev_states[k] = it["state"]
+                elif (it["state"] == "needs_input" and not self.ack.get(k) and self.cfg["remind_seconds"] > 0
+                      and now - self.reminded.get(k, 0) > self.cfg["remind_seconds"]):
+                    self.alert("needs_input", old, it)
+                    self.reminded[k] = now
+
             spawned = 0
             for it in items:
                 pet = self.pets.get(it["key"])
@@ -2023,18 +2056,8 @@ class PetApp:
                     if it["key"] != "_none":  # new conversation: pop up, staggered if several arrive together
                         pet.born = now + EMERGE_STAGGER * spawned
                         spawned += 1
-                old = self.prev_states.get(it["key"])
                 pet.data = it
-                if old != it["state"]:
-                    pet.acked = False
-                    pet.last_remind = now
-                    if not self.first_refresh and it["key"] != "_none":
-                        self.alert(it["state"], old, it)
-                    self.prev_states[it["key"]] = it["state"]
-                elif (it["state"] == "needs_input" and not pet.acked and self.cfg["remind_seconds"] > 0
-                      and now - pet.last_remind > self.cfg["remind_seconds"]):
-                    self.alert("needs_input", old, it)
-                    pet.last_remind = now
+                pet.acked = self.ack.get(it.get("focus", it["key"]), False)
 
             if keys != self.order:
                 for k in self.order:
@@ -2045,7 +2068,7 @@ class PetApp:
                 self.order = keys
                 self.reposition()
 
-            self.sync_bubbles(items)
+            self.sync_bubbles(real)
             if self.wb:
                 self.menu.entryconfigure(self.wb_menu_index, label="Workbench: " + self.wb.status)
             self.first_refresh = False
@@ -2308,8 +2331,8 @@ class PetApp:
         if d.get("ide") == "vscode":
             self.open_in_vscode(pet)  # `code <folder>` raises the right VS Code window, then the conversation tab
         elif os.name == "nt":
-            if not focus_hwnd(d.get("hwnd")) and d.get("env") == "wsl":
-                focus_wsl_terminal(d)
+            if not focus_hwnd(d.get("hwnd")) and (d.get("env") == "wsl" or d.get("agent") == "codex"):
+                focus_wsl_terminal(d)  # no recorded window: match a terminal window by distro / project title
 
     def dismiss_menu_pet(self):
         if self.menu_pet and self.menu_pet.key != "_none":
@@ -2457,13 +2480,45 @@ class PetApp:
             self.anchor = [self.root.winfo_x() + self.root.winfo_width(),
                            self.root.winfo_y() + self.root.winfo_height()]
         elif on_bubble and pet.key != "_none":
-            pet.acked = True
-            self.open_detail(pet.key)  # clicking the check/cross/? bubble: the full question and the answer buttons
+            self._acknowledge(pet)
+            self.open_detail(pet.data.get("focus", pet.key))  # the bubble: the full question and the answer buttons
         else:
-            pet.acked = True  # click: acknowledge (stops jumping / reminders) and go to the session's window
+            self._acknowledge(pet)  # click: acknowledge (stops jumping / reminders) and go to the session's window
             if pet.key != "_none":
                 self.focus_session(pet)
         self.drag = None
+
+    def _acknowledge(self, pet):
+        pet.acked = True
+        self.ack[pet.data.get("focus", pet.key)] = True
+
+    # ---- compact mode: one pet for every session
+    COMPACT_HEADS = 4
+
+    def _compact_items(self, real):
+        """One pet item standing for all sessions. In front: the first session that asked for you (a queue - answer it
+        and the next one steps forward), else the most urgent / most recently changed one. Its name, badges, bubble and
+        click target are the pet's; the other sessions are the smaller robots around it."""
+        rank = {"needs_input": 0, "error": 1, "working": 2, "done": 3, "idle": 4}
+        queue = sorted((i for i in real if i["state"] == "needs_input"), key=lambda i: i.get("changed") or 0)
+        by_urgency = sorted(real, key=lambda i: (rank.get(i["state"], 5), -(i.get("changed") or 0)))
+        focus = queue[0] if queue else by_urgency[0]
+        members = [focus] + [i for i in by_urgency if i is not focus]
+        shown = members[:self.COMPACT_HEADS]
+        g = dict(focus)
+        badges = list(focus.get("badges") or [])
+        if len(queue) > 1:
+            badges.append(f"Q{len(queue) - 1}")  # "N waiting" after this one
+        if len(members) > len(shown):
+            badges.append(f"+{len(members) - len(shown)}")
+        g.update(key="_group", focus=focus["key"], members=shown, everyone=members, badges=badges, subagents=0)
+        return [g]
+
+    def toggle_compact(self, value=None):
+        self.cfg["compact"] = (not self.cfg.get("compact", False)) if value is None else bool(value)
+        save_setting("compact", self.cfg["compact"])
+        if hasattr(self, "compact_var") and self.compact_var.get() != self.cfg["compact"]:
+            self.compact_var.set(self.cfg["compact"])
 
     def on_menu(self, e, pet=None):
         self.hide_tip()
@@ -2522,6 +2577,9 @@ class PetApp:
         self.hide_tip()
         d = pet.data
         lines = [d.get("title", ""), f"{d.get('where') or SOURCE_NAMES.get(d.get('source'), '')} · {LABELS.get(d.get('state'), d.get('state'))}".strip(" ·")]
+        if d.get("everyone"):  # compact mode: every session, the one in front first
+            lines += [""] + [f"{'> ' if m['key'] == d.get('focus') else '   '}{m.get('title', '')} · "
+                             f"{LABELS.get(m.get('state'), m.get('state'))}" for m in d["everyone"][:12]]
         if d.get("message"):
             lines.append(d["message"][:200])
         if d.get("detail"):

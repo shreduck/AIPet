@@ -102,6 +102,16 @@ claude plugin install pet-hooks@desktop-pet-local
 ```
 Use it *instead of* the settings.json hooks, never both, or every event reaches the pet twice.
 
+## Compact mode
+*Compact mode (one pet)* in the right-click or tray menu shows a single pet for all sessions, with a robot per session
+(up to four; a `+N` badge counts the rest), each robot in its own session's state. The pet's name tag, badges, bubble and
+click belong to the session in front:
+
+- Sessions that need you **queue up** in the order they asked. The first one is in front with a `N waiting` badge; answer
+  it and the next one steps forward.
+- With nobody waiting, the most urgent / most recently active session is in front.
+- Hover the pet for a list of every session.
+
 ## WSL notes
 - The WSL hook is a Python script, so the distro needs `python3`. Ubuntu has it by default. Otherwise the menu shows *needs python3*; install it in the distro (e.g. `sudo apt install python3`).
 - The hook writes into your Windows `.aipet` folder through `/mnt/c`. That path is set in the hook command, so nothing else needs configuring.
