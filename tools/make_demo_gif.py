@@ -39,10 +39,10 @@ W, H = core.CANVAS_W, core.CANVAS_H
 G, TRIM = core.BADGE_GUTTER, core.TOP_TRIM
 
 PETS = [  # (title, state, badges)
-    ("duck-software", "working", ["CC"]),
-    ("ai-pet", "needs_input", ["CX", "WSL"]),
-    ("Cowork", "done", ["CW"]),
-    ("notes", "idle", ["CC", "VS"]),
+    ("duck-software", "working", ["Claude CLI"]),
+    ("ai-pet", "needs_input", ["Codex WSL"]),
+    ("Cowork", "done", ["Claude Cowork"]),
+    ("notes", "idle", ["Claude VS"]),
 ]
 
 
@@ -140,22 +140,20 @@ def draw_pet(title, st, badges, t, rnd):
         name = name[:-2] + "\u2026"
     d.text((X(core.PET_W / 2), Y(core.PET_H - 2 - th / 2 + 1.5)), name, font=SANS, fill=T["tag_fg"], anchor="mm")
 
-    # badges: tabs on the tag's top edge
+    # badges: one per session, tabs on the tag's top edge (faint red while it needs you), wrapping upwards
     h, gap = 11, 2
-    labels = [core.BADGE_NAMES.get(b, b) for b in badges]
-    wid = lambda t_: int(round(10 + text_w(SANS_SMALL, t_) / U))  # noqa: E731
-    for k in range(len(labels) - 1, -1, -1):
-        if sum(wid(x) + gap for x in labels) <= core.PET_W - 12:
-            break
-        labels[k] = badges[k]
-    bx, y = G + 6, core.PET_H - 2 - th - TRIM - h + 4
-    for code, label in zip(badges, labels):
-        w = wid(label)
-        b = core.bubble_image(w, h, T["tag_bg"], T["tag_outline"], None)
-        paste(im, b, w * U, h * U, bx * U, y * U)
-        d.rectangle(((bx + 3) * U, (y + 4) * U, (bx + 6) * U - 1, (y + 7) * U - 1), fill=core.BADGE_COLORS.get(code, "#6b7280"))
-        d.text(((bx + 8) * U, (y + h / 2 + 0.5) * U), label, font=SANS_SMALL, fill=T["tag_fg"], anchor="lm")
-        bx += w + gap
+    hot = st == "needs_input"
+    x, rowy = G + 6, core.PET_H - 2 - th - TRIM - h + 4
+    for label in badges:
+        w = int(round(12 + text_w(SANS_SMALL, label) / U))
+        if x + w > G + core.PET_W - 6 and x > G + 6:
+            x, rowy = G + 6, rowy - (h + gap)
+        bg = core.BADGE_ATTENTION_BG if hot else T["tag_bg"]
+        b = core.bubble_image(w, h, bg, T["tag_outline"], None)
+        paste(im, b, w * U, h * U, x * U, rowy * U)
+        d.rectangle(((x + 3) * U, (rowy + 4) * U, (x + 6) * U - 1, (rowy + 7) * U - 1), fill=core.badge_dot(label))
+        d.text(((x + 8) * U, (rowy + h / 2) * U), label, font=SANS_SMALL, fill="#111827" if hot else T["tag_fg"], anchor="lm")
+        x += w + gap
     return im
 
 

@@ -97,7 +97,27 @@ TRANSPARENT = "systemTransparent" if IS_MAC else "#ff00fe"
 COLORS = {"working": "#5b8def", "needs_input": "#f59e0b", "done": "#22c55e", "error": "#ef4444", "idle": "#9ca3af"}
 DARK = {"working": "#2f5bb7", "needs_input": "#b45309", "done": "#15803d", "error": "#991b1b", "idle": "#4b5563"}
 LABELS = {"working": "working…", "needs_input": "needs you!", "done": "done", "error": "error", "idle": "idle"}
-BADGE_NAMES = {"CC": "Claude", "CW": "Cowork", "CX": "Codex", "WSL": "WSL", "VS": "VS Code", "WB": "Workbench"}
+BADGE_DOTS = {"Claude": "#d97757", "Codex": "#0f8a6a", "Workbench": "#0f766e"}  # badge dot colour by its first word
+BADGE_DOT_COWORK = "#c2410c"
+BADGE_ATTENTION_BG = "#fde4e4"  # a very faint red: this session needs you
+
+
+def session_badge(agent="Claude", cowork=False, wsl=False, vscode=False, entry=""):
+    """One badge per session with all its tags: 'Claude CLI', 'Claude VS', 'Claude WSL VS', 'Codex WSL',
+    'Claude Cowork'..."""
+    if cowork:
+        return "Claude Cowork"
+    parts = [agent] + (["WSL"] if wsl else []) + (["VS"] if vscode else [])
+    if len(parts) == 1:
+        parts.append("App" if "desktop" in (entry or "").lower() else "CLI")
+    return " ".join(parts)
+
+
+def badge_dot(text):
+    return BADGE_DOT_COWORK if text.endswith("Cowork") else BADGE_DOTS.get(text.split(" ")[0], "#6b7280")
+
+
+BADGE_NAMES = {"CC": "Claude", "CW": "Cowork", "CX": "Codex", "WSL": "WSL", "VS": "VS", "WB": "Workbench"}
 SOURCE_NAMES = {"CC": "Claude Code", "CW": "Cowork", "CX": "Codex", "WB": "Workbench"}
 BADGE_COLORS = {"CC": "#6b7280", "CW": "#c2410c", "CX": "#0f8a6a", "WSL": "#7c3aed", "VS": "#007acc", "WB": "#0f766e"}
 STATE_ORDER = ("needs_input", "error", "done", "working")
@@ -320,9 +340,8 @@ def read_claude_code_sessions(cfg):
         env, ide = rec.get("env", ""), rec.get("ide", "")
         cowork = rec.get("app") == "cowork"
         codex = rec.get("agent") == "codex"
-        badges = ["CW"] if cowork else (["CX"] if codex else []) + (["WSL"] if env == "wsl" else [])
-        if ide == "vscode":
-            badges.append("VS")
+        badges = [session_badge("Codex" if codex else "Claude", cowork, env == "wsl", ide == "vscode",
+                                rec.get("entry", ""))]
         where = ["Claude app · Cowork" if cowork else ("Codex" if codex else "Claude Code")]
         if env == "wsl":
             where.append(f"WSL ({rec['distro']})" if rec.get("distro") else "WSL")
@@ -511,7 +530,7 @@ def normalize_chat(c, wcfg):
     return {
         "key": f"wb:{cid}",
         "source": "WB",
-        "badges": ["WB"],
+        "badges": ["Workbench"],
         "where": "Workbench",
         "title": str(first(c, ("title", "name", "label", "summary")) or f"chat {cid}"),
         "state": state,
@@ -927,45 +946,42 @@ class Pet:
         c.create_text(PET_W / 2, PET_H - 2 - TAG_H / 2 + 1.5, text=name, fill=T["tag_fg"], font=font)  # a bit low: badges overlap the top
 
     def _draw_badges(self):
-        """Where the session runs: small pixel boxes styled like the name tag, sitting like tabs on its top edge, each
-        with a dot in the badge colour and the full name ("Claude", "Codex"...). Later badges fall back to their short
-        code when the row would be wider than the tag. Called after the drawing has been moved (see draw())."""
+        """Where each session runs: one small pixel box per session ("Claude CLI", "Codex WSL VS"...), styled like the
+        name tag and sitting like tabs on its top edge, faint red while that session needs you. In compact mode there is
+        one per session shown. Badges wrap onto rows above when a row is full. Called after the drawing has been moved
+        (see draw())."""
         c = self.canvas
-        codes = list(self.data.get("badges", []))
-        if not codes:
+        texts = [BADGE_NAMES.get(b, b) for b in self.data.get("badges", [])]
+        if not texts:
             return
+        flags = self.data.get("badge_attention") or [self.data.get("state") == "needs_input"] * len(texts)
         font = fnt(5)
-        h, gap = 11, 2
-
-        def name(b):
-            if b.startswith("Q") and b[1:].isdigit():
-                return f"{b[1:]} waiting"
-            return BADGE_NAMES.get(b, b)
-
-        def short(b):
-            return "+" + b[1:] if b.startswith("Q") and b[1:].isdigit() else b
-
-        def width(text):
-            return int(round(10 + self._text_w(font, text)))
-        labels = [name(b) for b in codes]
-        for i in range(len(labels) - 1, -1, -1):  # shorten from the right until the row fits on the tag
-            if sum(width(t) + gap for t in labels) <= PET_W - 12:
-                break
-            labels[i] = short(codes[i])
-        s_ = SCALE["v"]
-        bx = BADGE_GUTTER + 6
-        y = PET_H - 2 - TAG_H - TOP_TRIM - h + 4  # overlapping the tag's top border by 4 units
-        for code, text in zip(codes, labels):
-            w = width(text)
-            try:
-                im = bubble_image(w, h, T["tag_bg"], T["tag_outline"], None)
-                self._put(("badge", w, h, T["tag_bg"], T["tag_outline"]), im, int(round(w * s_)), int(round(h * s_)), bx, y, "nw")
-            except Exception:  # no Pillow
-                c.create_rectangle(bx, y, bx + w, y + h, fill=T["tag_bg"], outline=T["tag_outline"])
-            dot = COLORS["needs_input"] if code.startswith("Q") else BADGE_COLORS.get(code, "#6b7280")
-            c.create_rectangle(bx + 3, y + 4, bx + 6, y + 7, fill=dot, outline="")
-            c.create_text(bx + 8, y + h / 2 + 0.5, text=text, anchor="w", fill=T["tag_fg"], font=font)
-            bx += w + gap
+        h, gap, s_ = 11, 2, SCALE["v"]
+        left, right = BADGE_GUTTER + 6, BADGE_GUTTER + PET_W - 6
+        rows, x = [[]], left
+        for text, hot in zip(texts, flags):
+            w = int(round(12 + self._text_w(font, text)))
+            if rows[-1] and x + w > right:  # no more room on this row: wrap to a new one above
+                rows.append([])
+                x = left
+            rows[-1].append((text, hot, x, w))
+            x += w + gap
+        base = PET_H - 2 - TAG_H - TOP_TRIM - h + 4  # the first row overlaps the tag's top border by 4 units
+        for r, row in enumerate(rows):
+            y = base - r * (h + gap)
+            for text, hot, bx, w in row:
+                bg = BADGE_ATTENTION_BG if hot else T["tag_bg"]
+                try:
+                    im = bubble_image(w, h, bg, T["tag_outline"], None)
+                    self._put(("badge", w, h, bg, T["tag_outline"]), im, int(round(w * s_)), int(round(h * s_)), bx, y, "nw")
+                except Exception:  # no Pillow
+                    c.create_rectangle(bx, y, bx + w, y + h, fill=bg, outline=T["tag_outline"])
+                dot = COLORS["needs_input"] if text.startswith("+") else badge_dot(text)
+                # the dot at the badge's middle; the text a unit higher than its anchor box would put it, because its
+                # visual middle sits below the box's middle (room for descenders)
+                c.create_rectangle(bx + 3, y + 4, bx + 6, y + 7, fill=dot, outline="")
+                c.create_text(bx + 8, y + h / 2 - 0.5, text=text, anchor="w", fill="#111827" if hot else T["tag_fg"],
+                              font=font)
 
     @staticmethod
     def _text_w(font, text):
@@ -2520,12 +2536,14 @@ class PetApp:
         members = [focus] + [i for i in by_urgency if i is not focus]
         shown = members[:self.COMPACT_HEADS]
         g = dict(focus)
-        badges = list(focus.get("badges") or [])
-        if len(queue) > 1:
-            badges.append(f"Q{len(queue) - 1}")  # "N waiting" after this one
+        # one badge per session shown (faint red while it needs you), plus a count of the ones without a robot
+        badges = [(m.get("badges") or ["?"])[0] for m in shown]
+        attention = [m["state"] == "needs_input" for m in shown]
         if len(members) > len(shown):
             badges.append(f"+{len(members) - len(shown)}")
-        g.update(key="_group", focus=focus["key"], members=shown, everyone=members, badges=badges, subagents=0)
+            attention.append(any(m["state"] == "needs_input" for m in members[len(shown):]))
+        g.update(key="_group", focus=focus["key"], members=shown, everyone=members, badges=badges,
+                 badge_attention=attention, subagents=0)
         return [g]
 
     def toggle_compact(self, value=None):
