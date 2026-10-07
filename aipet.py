@@ -989,13 +989,14 @@ class Pet:
         flags = self.data.get("badge_attention") or [self.data.get("state") == "needs_input"] * len(texts)
         keys = self.data.get("badge_keys") or [self.data.get("focus", self.key)] * len(texts)  # whose prompt a click opens
         everyone = self.data.get("everyone") or []
+        collapse = False
         if len(everyone) > 1:  # compact mode: one merged badge, or every session's badge plus a collapse badge
             if not self.app.badges_expanded:
                 texts = [merge_badges([(m.get("badges") or ["?"])[0] for m in everyone]) + " \u25b8"]
                 flags = [any(m.get("state") == "needs_input" for m in everyone)]
                 keys = ["__expand"]
-            else:
-                texts, flags, keys = texts + ["\u25c2"], list(flags) + [False], list(keys) + ["__collapse"]
+            else:  # the collapse badge goes on a row of its own, above all the others (see below)
+                collapse = True
         font = fnt(4.5)
         h, gap, s_ = 11, 2, SCALE["v"]
         left, right = BADGE_GUTTER + 6, BADGE_GUTTER + PET_W - 6
@@ -1007,6 +1008,8 @@ class Pet:
                 x = left
             rows[-1].append((text, hot, x, w, key))
             x += w + gap
+        if collapse:  # always the topmost row
+            rows.append([("\u25c2", False, left, int(round(12 + self._text_w(font, "\u25c2"))), "__collapse")])
         base = PET_H - 2 - TAG_H - TOP_TRIM - h + 4  # the first row overlaps the tag's top border by 4 units
         for r, row in enumerate(rows):
             y = base - r * (h + gap)
