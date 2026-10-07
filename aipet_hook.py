@@ -745,7 +745,7 @@ def _update_session(path, target, event, data, wsl):
 # TEMP (Codex testing): log EVERYTHING a Codex hook receives to <pet dir>/codex-raw.log - the full payload (prompts,
 # commands, tool output included), argv, platform, cwd and the names of CODEX*/OPENAI* environment variables (names
 # only: values can hold API keys). Remove this block, and its call in main(), once Codex support is verified.
-CODEX_RAW_LOG = True
+CODEX_RAW_LOG = False  # switched off for releases; set True to collect Codex test logs
 
 
 def _ancestor_names():
