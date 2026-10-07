@@ -435,5 +435,18 @@ class UsageTests(unittest.TestCase):
             self.assertEqual(sorted(os.listdir(folder)), ["_claude-abc.json", "fresh.json"])
 
 
+    def test_windows_statusline_command_runs_in_bash_and_powershell(self):
+        import ntpath
+        with patch.object(installer.os, "path", ntpath), \
+                patch.object(installer, "_short_path", lambda p: p.replace("John Smith", "JOHNSM~1")):
+            self.assertEqual(installer._shell_neutral(r"C:\Users\rafae\.aipet\bin\hook\aipet-hook.exe"),
+                             "C:/Users/rafae/.aipet/bin/hook/aipet-hook.exe")
+            short = installer._shell_neutral(r"C:\Users\John Smith\.aipet\bin\hook\aipet-hook.exe")
+            self.assertEqual(short, "C:/Users/JOHNSM~1/.aipet/bin/hook/aipet-hook.exe")
+            self.assertTrue(installer.MARKER.search(short))  # still recognised as AIPet's command
+        with patch.object(installer.os, "path", ntpath), patch.object(installer, "_short_path", lambda p: p):
+            self.assertIsNone(installer._shell_neutral(r"C:\Users\John Smith\.aipet\bin\hook\aipet-hook.exe"))
+
+
 if __name__ == "__main__":
     unittest.main()

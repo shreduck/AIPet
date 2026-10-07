@@ -237,7 +237,8 @@ def set_usage(key, on):
     record = usage_record(key)
     if on:
         deploy_files()
-        command = windows_hook_command() if key == "windows" else (mac_hook_command() if key == "mac" else wsl_hook_command(_distro(key)))
+        command = windows_statusline_command() if key == "windows" else (
+            mac_hook_command() if key == "mac" else wsl_hook_command(_distro(key)))
         previous = settings.get("statusLine")
         if usage_enabled(key):
             previous = (previous or {}).get("aipet_previous", record.get("previous"))
@@ -345,6 +346,41 @@ def windows_hook_command(check=True):
     if not os.path.exists(pyw):
         pyw = sys.executable
     return f'"{fwd(pyw)}" "{fwd(os.path.join(INSTALL_DIR, "aipet_hook.py"))}"'
+
+
+def _shell_neutral(path):
+    """path with forward slashes and no spaces, so it runs the same unquoted in Git Bash and in PowerShell (quoting
+    differs: PowerShell treats a quoted path followed by arguments as a string, not a command). Folders with spaces are
+    replaced by their 8.3 short names; the file name is kept, so the command still says aipet-hook / aipet_hook.
+    None if a space remains (short names switched off on that drive)."""
+    folder, name = os.path.split(path)
+    if " " in folder:
+        folder = _short_path(folder)
+    result = fwd(os.path.join(folder, name))
+    return None if any(ch.isspace() for ch in result) else result
+
+
+def windows_statusline_command(check=True):
+    """The hook command for Claude Code's status line on Windows. Claude Code runs status line commands through Git
+    Bash, or through PowerShell when Git Bash is absent, so the command must work in both: unquoted, forward slashes,
+    no spaces. Falls back to the quoted hook command when Git Bash is installed, and refuses otherwise."""
+    if getattr(sys, "frozen", False):
+        exe = os.path.join(INSTALL_DIR, "hook", "aipet-hook.exe")
+        if check and not os.path.exists(exe):
+            raise RuntimeError("Bundled hook executable is missing - rebuild with build.bat.")
+        paths = [exe]
+    else:
+        pyw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+        paths = [pyw if os.path.exists(pyw) else sys.executable, os.path.join(INSTALL_DIR, "aipet_hook.py")]
+    neutral = [_shell_neutral(p) for p in paths]
+    if all(neutral):
+        return " ".join(neutral)
+    from aipet_hook import find_statusline_bash
+    if find_statusline_bash():
+        return windows_hook_command(check)  # quoted: fine, Claude Code uses Git Bash here
+    raise RuntimeError("The path to AIPet's hook contains spaces and Git Bash isn't installed, so Claude Code would run "
+                       "the status line through PowerShell, where it can't start. Install Git Bash, or switch on short "
+                       "file names for that drive. Your settings were kept.")
 
 
 # --------------------------------------------------------------------------- macOS: finding Python / hook command
