@@ -1326,6 +1326,120 @@ def geo(x, y):
     return f"+{int(x)}+{int(y)}"
 
 
+# --------------------------------------------------------------------------- VS Code: which open window holds a folder
+VSCODE_FLAVOURS = ("Code", "Code - Insiders", "VSCodium", "Cursor")
+
+
+def vscode_user_dirs():
+    if os.name == "nt":
+        base = os.environ.get("APPDATA", "")
+    elif IS_MAC:
+        base = os.path.expanduser("~/Library/Application Support")
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return [os.path.join(base, f) for f in VSCODE_FLAVOURS if base and os.path.isdir(os.path.join(base, f))]
+
+
+def _uri_parts(uri):
+    """file:///c%3A/x -> ("", "c:/x"); vscode-remote://wsl%2Bubuntu/home/x -> ("wsl+ubuntu", "/home/x")."""
+    import urllib.parse
+    u = urllib.parse.urlparse(uri)
+    path = urllib.parse.unquote(u.path)
+    if u.scheme == "file":
+        if os.name == "nt" and len(path) > 2 and path[0] == "/" and path[2] == ":":
+            path = path[1:]
+        return "", path
+    if u.scheme == "vscode-remote":
+        return urllib.parse.unquote(u.netloc).lower(), path
+    return None, None
+
+
+def vscode_open_folders(user_dirs=None):
+    """Folders and .code-workspace files open in VS Code windows: [(authority, path, is_workspace_file)].
+    Read from <user data>/Backups/workspaces.json (kept current while windows open and close), falling back to the
+    window state VS Code saves in globalStorage/storage.json."""
+    found = []
+    for d in user_dirs if user_dirs is not None else vscode_user_dirs():
+        uris = []
+        try:
+            with open(os.path.join(d, "Backups", "workspaces.json"), encoding="utf-8") as f:
+                b = json.load(f)
+            uris += [(x.get("folderUri"), False) for x in b.get("folders") or [] if isinstance(x, dict)]
+            uris += [(x, False) for x in b.get("folderURIWorkspaces") or [] if isinstance(x, str)]  # older format
+            uris += [(x.get("configURIPath"), True) for x in b.get("rootURIWorkspaces") or [] if isinstance(x, dict)]
+        except (OSError, ValueError, AttributeError):
+            pass
+        if not uris:
+            try:
+                with open(os.path.join(d, "User", "globalStorage", "storage.json"), encoding="utf-8") as f:
+                    ws = (json.load(f).get("windowsState") or {})
+                for w in [ws.get("lastActiveWindow") or {}] + list(ws.get("openedWindows") or []):
+                    if w.get("folder"):
+                        uris.append((w["folder"], False))
+                    elif isinstance(w.get("workspace"), dict) and w["workspace"].get("configPath"):
+                        uris.append((w["workspace"]["configPath"], True))
+            except (OSError, ValueError, AttributeError):
+                pass
+        for uri, is_ws in uris:
+            if isinstance(uri, str):
+                auth, path = _uri_parts(uri)
+                if path:
+                    found.append((auth, path, is_ws))
+    return found
+
+
+def _workspace_roots(ws_path):
+    """Folder paths listed in a local .code-workspace file (relative ones resolved against the file)."""
+    try:
+        with open(ws_path, encoding="utf-8") as f:
+            text = f.read()
+        import re
+        text = re.sub(r'("(?:\\.|[^"\\])*")|//[^\n]*|/\*.*?\*/', lambda m: m.group(1) or "", text,
+                      flags=re.S)  # .code-workspace allows // and /* */ comments (kept inside strings)
+        text = re.sub(r",(\s*[}\]])", r"\1", text)  # ... and trailing commas
+        data = json.loads(text)
+    except (OSError, ValueError):
+        return []
+    roots = []
+    for fo in data.get("folders") or []:
+        p = fo.get("path") if isinstance(fo, dict) else None
+        if p:
+            roots.append(os.path.normpath(os.path.join(os.path.dirname(ws_path), p)))
+    return roots
+
+
+def vscode_target(cwd, env="", distro="", user_dirs=None):
+    """What to pass to `code` so it raises the window that already holds cwd: the deepest open folder that is cwd or
+    one of its parents (so a session in a subfolder of an open workspace doesn't open a new window), or the
+    .code-workspace file whose folders contain it. Falls back to cwd itself. Returns (args, path)."""
+    wsl = env == "wsl"
+    want_auth = f"wsl+{(distro or 'ubuntu').lower()}" if wsl else ""
+    norm = (lambda p: p.rstrip("/") or "/") if wsl else (lambda p: os.path.normcase(os.path.normpath(p)))
+    target = norm(cwd)
+
+    def inside(root):
+        r = norm(root)
+        sep = "/" if wsl else os.sep
+        return target == r or target.startswith(r.rstrip(sep) + sep)
+    best = None  # (depth, path, is_workspace_file)
+    for auth, path, is_ws in vscode_open_folders(user_dirs):
+        if (auth or "") != want_auth:
+            continue
+        if is_ws:
+            if wsl:
+                continue
+            roots = [r for r in _workspace_roots(path) if inside(r)]
+            if roots:
+                depth = max(len(norm(r)) for r in roots)
+                if not best or depth > best[0]:
+                    best = (depth, path, True)
+        elif inside(path):
+            if not best or len(norm(path)) > best[0]:
+                best = (len(norm(path)), path, False)
+    path = best[1] if best else cwd
+    return (["--remote", f"wsl+{distro or 'Ubuntu'}", path] if wsl else [path]), path
+
+
 # --------------------------------------------------------------------------- window focus (Windows)
 def _user32():
     import ctypes
@@ -2202,10 +2316,12 @@ class PetApp:
         if not code or not d.get("cwd"):
             self.root.bell()
             return
-        args = [code]
-        if d.get("env") == "wsl":
-            args += ["--remote", f"wsl+{d.get('distro') or 'Ubuntu'}"]
-        args.append(d["cwd"])
+        try:  # the open window that holds this folder (it may have a parent folder open), not a new one
+            extra, _ = vscode_target(d["cwd"], d.get("env", ""), d.get("distro", ""))
+        except Exception as e:
+            log_error(f"vscode_target failed: {e!r}")
+            extra = (["--remote", f"wsl+{d.get('distro') or 'Ubuntu'}"] if d.get("env") == "wsl" else []) + [d["cwd"]]
+        args = [code] + extra
         try:
             subprocess.Popen(args, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except OSError:
