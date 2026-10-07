@@ -183,6 +183,23 @@ MAX_WAIT = 1800  # every timer: 0 (no limit / never) to 30 minutes
 DONE_TIMEOUT = {"v": 3}  # minutes until a finished session's pet is cleared (0 = never)
 
 
+def answer_name(item):
+    req = (item or {}).get("request") or {}
+    return "".join(ch if ch.isalnum() or ch in "_.-" else "_" for ch in str(req.get("id") or (item or {}).get("sid") or "request"))[:120]
+
+
+def hook_waiting(item):
+    """True while a PermissionRequest hook is really waiting for this prompt: it touches answers/<id>.waiting every
+    second. A hook stopped by its agent (e.g. Codex's own hook timeout) leaves 'answerable' set but stops touching."""
+    req = (item or {}).get("request") or {}
+    if not req.get("answerable"):
+        return False
+    try:
+        return time.time() - os.path.getmtime(os.path.join(answers_dir(), answer_name(item) + ".waiting")) < 4
+    except OSError:
+        return False
+
+
 def answers_dir():
     return os.path.join(HOME_DIR, "answers")
 
@@ -1917,12 +1934,17 @@ class Detail:
             self.ask.config(text=item.get("message") or "Waiting for your input")
             self.ask.pack(fill="x")
         self.wait.config(text=f"waiting {ago(item['changed'])}" if item.get("changed") else "")
-        can_answer = bool(req.get("answerable")) and not self.sent
+        can_answer = hook_waiting(item) and not self.sent
+        who = "Codex" if item.get("agent") == "codex" else "Claude Code"
         if self.sent:
-            note = f"Sent: {self.sent}. Claude Code will carry on in a moment."
+            note = f"Sent: {self.sent}. {who} will carry on in a moment."
         elif can_answer:
             note = ("Allow once or Deny answers this prompt right from here, or answer in the session window "
                     "(Go to window). If you do neither, the normal prompt appears.")
+        elif item.get("agent") == "codex" and req and self.app.cfg.get("codex_answers", True):
+            note = ("Codex is no longer waiting for this window, so answer in Codex (Go to window). If this happens "
+                    "right away, your Codex hooks are from an older AIPet with a short timeout: update them in the "
+                    "Codex hooks menu and trust them again with /hooks in Codex.")
         elif item.get("agent") == "codex" and req:
             note = ("Answer this one in Codex (Go to window). To answer Codex prompts here instead, switch on "
                     "Answer Codex prompts from the pet in the menu; Codex then shows its own prompt only if you "
@@ -2180,9 +2202,9 @@ class PetApp:
         """Hand the user's click to the waiting PermissionRequest hook. Returns True if it was written."""
         item = next((i for i in self._last_items if i["key"] == key), None)
         req = (item or {}).get("request") or {}
-        if not req.get("answerable") or behavior not in ("allow", "deny"):
+        if not hook_waiting(item) or behavior not in ("allow", "deny"):
             return False
-        name = "".join(ch if ch.isalnum() or ch in "_.-" else "_" for ch in str(req.get("id") or item.get("sid") or "request"))[:120]
+        name = answer_name(item)
         try:
             os.makedirs(answers_dir(), exist_ok=True)
             path = os.path.join(answers_dir(), name + ".json")

@@ -292,7 +292,7 @@ def _codex_window(parents, names, wins, cwd=""):
     import ctypes
     found = {}
     for pid, name in names.items():
-        if name.lower() not in ("codex.exe", "codex"):
+        if "codex" not in name.lower():  # codex.exe, or a platform-named binary such as codex-x86_64-...exe
             continue
         seen, cur = set(), pid
         while cur in parents and cur not in seen:
@@ -418,13 +418,32 @@ def await_answer(base, key, seconds, session_path=None, request_id=None):
     seconds <= 0 waits with no limit. Also gives up once the session has moved past this prompt (answered in
     Claude Code itself), so a waiting hook never outlives its prompt."""
     path = os.path.join(base, "answers", key + ".json")
-    try:
+    waiting = os.path.join(base, "answers", key + ".waiting")  # touched while we wait: the pet only offers its
+    try:                                                         # buttons while this is fresh
         os.remove(path)  # an old answer must never apply to a new prompt
     except OSError:
         pass
+    try:
+        return _await(path, waiting, base, seconds, session_path, request_id)
+    finally:
+        try:
+            os.remove(waiting)
+        except OSError:
+            pass
+
+
+def _await(path, waiting, base, seconds, session_path, request_id):
     deadline = time.time() + seconds if seconds > 0 else None
-    checked = time.time()
+    checked, touched = time.time(), 0.0
     while deadline is None or time.time() < deadline:
+        if time.time() - touched > 1:
+            touched = time.time()
+            try:
+                os.makedirs(os.path.dirname(waiting), exist_ok=True)
+                with open(waiting, "w") as f:
+                    f.write(str(os.getpid()))
+            except OSError:
+                pass
         if session_path and request_id and time.time() - checked > 2:
             checked = time.time()
             if ((read_json(session_path).get("request") or {}).get("id")) != request_id:
@@ -742,6 +761,24 @@ def _ancestor_names():
         return []
 
 
+def _codex_procs():
+    try:
+        if os.name != "nt":
+            return []
+        table = _windows_process_table()
+        out = []
+        for pid, (parent, name) in table.items():
+            if "codex" in name.lower():
+                chain, cur = [], pid
+                while cur in table and len(chain) < 6:
+                    cur = table[cur][0]
+                    chain.append(table[cur][1] if cur in table else f"{cur}:?")
+                out.append(f"{pid}:{name} <- " + " <- ".join(chain))
+        return out[:12]
+    except Exception:
+        return []
+
+
 def codex_raw_log(raw, base):
     if not (CODEX_RAW_LOG and AGENT == "codex"):
         return
@@ -758,6 +795,7 @@ def codex_raw_log(raw, base):
                "wsl": is_wsl(), "cwd": os.getcwd(), "pid": os.getpid(), "ppid": os.getppid(),
                "env_names": sorted(k for k in os.environ if k.upper().startswith(("CODEX", "OPENAI"))),
                "ancestors": _ancestor_names(),
+               "codex_procs": _codex_procs(),
                "payload_raw": raw}
         try:
             row["payload"] = json.loads(raw) if raw else None
