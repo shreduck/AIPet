@@ -13,16 +13,22 @@ FAKE = [
      "message": "Claude needs your permission to use Bash",
      "request": {"tool": "Bash", "detail": "ls -la", "id": "selftest", "t": 0}},
     {"id": "selftest-cowork", "title": "Cowork", "state": "done", "app": "cowork", "env": "mac"},
+    {"id": "selftest-codex", "title": "Codex", "state": "working", "agent": "codex", "env": "mac"},
 ]
 
 
 def main():
     os.makedirs(SESSIONS, exist_ok=True)
+    usage_dir = os.path.join(os.path.dirname(SESSIONS), "usage")
+    os.makedirs(usage_dir, exist_ok=True)
     for f in FAKE:
         path = os.path.join(SESSIONS, f["id"] + ".json")
         if "--clear" in sys.argv:
             if os.path.exists(path):
                 os.remove(path)
+            usage_path = os.path.join(usage_dir, f["id"] + ".json")
+            if os.path.exists(usage_path):
+                os.remove(usage_path)
             continue
         now = time.time()
         rec = {"source": "claude-code", "distro": "", "ide": "", "topic": "", "hwnd": None, "host": "", "pid": None,
@@ -30,6 +36,10 @@ def main():
                "message": "", "updated": now, "changed": now, **f}
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(rec, fh)
+        with open(os.path.join(usage_dir, f["id"] + ".json"), "w", encoding="utf-8") as fh:
+            json.dump({"updated": now, "rows": [
+                {"window": "5h", "percent": 73 if f.get("agent") == "codex" else 50, "resets_at": now + 18000},
+                {"window": "7d", "percent": 81 if f.get("agent") == "codex" else 65, "resets_at": now + 604800}]}, fh)
     print(("cleared" if "--clear" in sys.argv else "seeded") + f" {len(FAKE)} sessions in {SESSIONS}")
 
 

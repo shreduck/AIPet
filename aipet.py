@@ -31,6 +31,7 @@ import time
 import urllib.error
 import urllib.request
 import tkinter as tk
+import aipet_usage as usage
 
 try:
     import winsound
@@ -59,7 +60,7 @@ DEFAULT_CONFIG = {
     "compact": False,
     "update_check": True,  # look for a new AIPet release on GitHub once a day (tells you; never installs anything)
     "click_to_focus": True,  # clicking a pet (or a badge) brings its session's window to the front
-    "all_spaces": True,  # macOS: show the pet on every desktop (Space), also over full-screen apps
+    "all_spaces": True,  # show the pet on every virtual desktop / macOS Space
     "session_titles": "name",  # extra title for same-folder sessions: "name" (the harness's name) or "prompt" (latest prompt)
     "codex_answers": True,  # answer Codex permission prompts in the pet's prompt window (Codex waits for it first)  # one pet for all sessions (a robot per session) instead of one pet per session
     "click_through": True,  # only the robot and its "needs you" bubble take clicks; the rest of the window lets them through
@@ -152,6 +153,7 @@ BADGE_GUTTER = 0  # extra width on the pet's left (badges now sit on the name ta
 TAG_H = 19  # name tag height (one unit taller than it was, for the name + conversation title lines)
 TOP_TRIM = 14  # the empty strip the badges used to take above the bubble
 CANVAS_W, CANVAS_H = PET_W + BADGE_GUTTER, PET_H - TOP_TRIM
+USAGE_GUTTER = 48  # reserve the same right-hand space even for "no sessions"
 INK = "#1f2937"
 MOUND, MOUND_DARK = "#a16207", "#713f12"
 EMERGE_SECONDS, EMERGE_DEPTH, EMERGE_STAGGER = 0.7, 62, 0.25
@@ -859,6 +861,8 @@ def read_claude_code_sessions(cfg):
             "auto_kind": rec.get("auto_kind", ""),
             "auto_what": rec.get("auto_what", ""),
             "conv": session_title(rec, cfg.get("session_titles", "name")),
+            "usage": usage.load(path),
+            "updated": rec.get("updated", 0),
         })
     return items
 
@@ -1368,7 +1372,8 @@ class Pet:
         self.last_remind = 0.0
         self.born = 0.0  # when this pet starts popping out of the ground (0 = already out)
         self.seed = (sum(map(ord, key)) % 97) / 13.0  # desync animations
-        c = self.canvas = tk.Canvas(app.frame, width=px(CANVAS_W), height=px(CANVAS_H), bg=TRANSPARENT,
+        self.usage_extra = USAGE_GUTTER
+        c = self.canvas = tk.Canvas(app.frame, width=px(CANVAS_W + USAGE_GUTTER), height=px(CANVAS_H), bg=TRANSPARENT,
                                     highlightthickness=0, bd=0)
         c.bind("<ButtonPress-1>", app.on_press)
         c.bind("<B1-Motion>", app.on_drag)
@@ -1409,17 +1414,44 @@ class Pet:
             self._draw_robot(t)
         c.move("all", BADGE_GUTTER, -TOP_TRIM)  # drop the empty top strip
         min_x = self._draw_badges()
+        extra = self._draw_usage()
         # compact mode, expanded: the badges stand in a column snapped to the pet's left; widen the canvas to the left
         # for it (the overlay is anchored bottom-right, so the pet itself doesn't move)
         gutter = int(math.ceil(-min_x)) + 1 if min_x is not None and min_x < 0 else 0
         if gutter:
             c.move("all", gutter, 0)
-        if gutter != getattr(self, "gutter", 0):
-            delta = px(CANVAS_W + gutter) - px(CANVAS_W + getattr(self, "gutter", 0))
+        if gutter != getattr(self, "gutter", 0) or extra != getattr(self, "usage_extra", 0):
+            delta = px(CANVAS_W + gutter + extra) - px(CANVAS_W + getattr(self, "gutter", 0) + getattr(self, "usage_extra", 0))
             self.gutter = gutter
-            c.config(width=px(CANVAS_W + gutter))
+            self.usage_extra = extra
+            c.config(width=px(CANVAS_W + gutter + extra))
             self.app.shift_for_width(delta)  # move and resize in the same redraw: no flash of the pet sideways
         self._finish()
+
+    def _draw_usage(self):
+        rows = usage.badge_rows(self.data.get("everyone") or [self.data])
+        if not rows:
+            return USAGE_GUTTER
+        c, left, top = self.canvas, PET_W - 21, 32
+        font = mono(4.5)
+        extra = 0
+        # Start beside the robot, below its speech bubble. Never cover the name tag.
+        for start in range(0, len(rows), 6):
+            column = rows[start:start + 6]
+            labels = [("CX" if ai == "codex" else "CL") + f" {window} {percent}%" for ai, window, percent in column]
+            width = max(self._char_w(font) * len(label) + 6 for label in labels)
+            for i, ((ai, window, percent), label) in enumerate(zip(column, labels)):
+                colour = "#5b8def" if ai == "codex" else "#d98960"
+                y = top + i * 9
+                c.create_rectangle(left, y, left + width, y + 8, fill=T["tag_bg"], outline=colour, width=1)
+                c.create_text(left + 3, y + 4, text=label, font=font, fill=colour, anchor="w")
+            extra = max(extra, int(math.ceil(left + width + 2 - CANVAS_W)))
+            left += width + 3
+        return max(USAGE_GUTTER, extra)
+
+    def _completion_seal(self, x, y):
+        self.canvas.create_oval(x - 9, y - 9, x + 9, y + 9, fill="#dcfce7", outline="#15803d", width=1)
+        self._mark("ok", x, y)
 
     def _finish(self):
         """Apply the overall size: everything is drawn at 92x122 and scaled here (line widths too)."""
@@ -1501,7 +1533,7 @@ class Pet:
     EXPAND, COLLAPSE = "\u25b4", "\u25be"  # compact mode's badges: up to expand, down to collapse
     # compact mode's banner: each title after its state symbol, both in a faded state colour
     BANNER_STATES = {"working": ("\u2743", "#6a9fd8"), "needs_input": ("\u2749", "#e07b74"),
-                     "error": ("\u2749", "#e07b74"), "done": ("\u273a", "#6fb88a"), "idle": ("\u273a", "#9aa3ad")}
+                     "error": ("\u2749", "#e07b74"), "done": ("\u2713", "#6fb88a"), "idle": ("\u273a", "#9aa3ad")}
     BANNER_GAP = "    "
 
     BANNER_PX = 14  # scroll speed, drawing units per second
@@ -1737,7 +1769,9 @@ class Pet:
                 r = 10 + (0 if self.acked else 1.5 * math.sin(t * 8))
                 c.create_oval(bx - r, by - r, bx + r, by + r, fill="white", outline=DARK["needs_input"], width=2)
                 c.create_text(bx, by, text="!", fill="#dc2626", font=fnt(12, "bold"))
-            elif st in ("done", "idle"):  # rising z's
+            elif st == "done":
+                self._completion_seal(cx0 - 28, top + 8)
+            elif st == "idle":  # rising z's
                 for i in range(2):
                     ph = (t * 0.6 + i * 0.5) % 1
                     zx, zy, s = cx0 + 22 + ph * 8, 40 - ph * 18, 3 + ph * 3
@@ -1871,7 +1905,11 @@ class Pet:
                     y = by1 + 6 + i * (by2 - by1 - 8) / 2.6
                     c.create_text(bx1 + 5, y, text=row[:-1], anchor="w", fill="#22c55e", font=font)
                     c.create_text(bx1 + 5 + cw * (len(row) - 1), y, text=row[-1], anchor="w", fill="#d1fae5", font=font)
-            elif st in ("done", "error"):
+            elif st == "done":
+                # A completion seal, away from the interactive speech bubble.
+                x, y = cx0 - 27, top_main + 8
+                self._completion_seal(x, y)
+            elif st == "error":
                 top = by2 - 19  # a small bubble, centred on its tail
                 self._bubble(cx0 - 22, top, cx0 + 10, by2, tail, "#fafafa", "#111827")
                 bob = 1 if int(t * 3) % 2 else 0  # a one-pixel bob
@@ -1966,11 +2004,8 @@ class Pet:
             r = 10 + pulse
             c.create_oval(bx - r, byy - r, bx + r, byy + r, fill="white", outline=dark, width=2)
             c.create_text(bx, byy, text="!", fill="#dc2626", font=fnt(12, "bold"))
-        elif st == "done":  # rising z's
-            for i in range(2):
-                ph = (t * 0.6 + i * 0.5) % 1
-                zx, zy, s = cx + 20 + ph * 8, top - 4 - ph * 18, 3 + ph * 3
-                c.create_line(zx - s, zy - s, zx + s, zy - s, zx - s, zy + s, zx + s, zy + s, width=2, fill="#e5e7eb")
+        elif st == "done":
+            self._completion_seal(cx - 28, top + 8)
 
         self._draw_tag()
 
@@ -2849,7 +2884,7 @@ class PetApp:
         self.click_focus_var = tk.BooleanVar(value=bool(self.cfg.get("click_to_focus", True)))
         m.add_checkbutton(label="Click goes to the session's window", variable=self.click_focus_var,
                           command=lambda: self.set_click_to_focus(self.click_focus_var.get()))
-        if IS_MAC:
+        if IS_MAC or os.name == "nt":
             self.all_spaces_var = tk.BooleanVar(value=bool(self.cfg.get("all_spaces", True)))
             m.add_checkbutton(label="Show on all desktops", variable=self.all_spaces_var,
                               command=lambda: self.set_all_spaces(self.all_spaces_var.get()))
@@ -2879,8 +2914,9 @@ class PetApp:
         self.animate()
         if self.clickthru:
             root.after(500, self._pass_tick)
-        if IS_MAC:
+        if IS_MAC or os.name == "nt":
             root.after(700, self._apply_all_spaces)
+            root.bind("<Map>", lambda e: root.after(100, self._apply_all_spaces) if e.widget is root else None, add="+")
 
     # ---- data
     def collect(self):
@@ -3049,7 +3085,7 @@ class PetApp:
             return
         SCALE["v"] = v
         for pet in self.pets.values():
-            pet.canvas.config(width=px(CANVAS_W + getattr(pet, "gutter", 0)), height=px(CANVAS_H))
+            pet.canvas.config(width=px(CANVAS_W + getattr(pet, "gutter", 0) + getattr(pet, "usage_extra", 0)), height=px(CANVAS_H))
 
     def _place_above_pet(self, w):
         """Put a small window directly above the pet overlay, centred on it (just below it if there is no room)."""
@@ -3619,7 +3655,7 @@ class PetApp:
             self.click_focus_var.set(self.cfg["click_to_focus"])
 
     def set_all_spaces(self, on):
-        """macOS: show the pet on every desktop (Space) or only on the one it was opened on."""
+        """Show the pet on every virtual desktop, or only its own."""
         self.cfg["all_spaces"] = bool(on)
         save_setting("all_spaces", self.cfg["all_spaces"])
         if hasattr(self, "all_spaces_var") and self.all_spaces_var.get() != self.cfg["all_spaces"]:
@@ -3627,12 +3663,30 @@ class PetApp:
         self._apply_all_spaces()
 
     def _apply_all_spaces(self):
-        if not IS_MAC:
-            return
         try:
-            import mac_statusbar
-            if not mac_statusbar.set_all_spaces(self.root.title(), bool(self.cfg.get("all_spaces", True))):
-                log_error("all spaces: pet window not found")
+            on = bool(self.cfg.get("all_spaces", True))
+            self.root.update_idletasks()
+            if IS_MAC:
+                # Keep Tk's attributes in sync so remapping the overlay does not
+                # replace the native Space behavior.
+                try:
+                    kind, attrs = self.root.tk.call("::tk::unsupported::MacWindowStyle", "style", self.root._w)
+                    attrs = [a for a in self.root.tk.splitlist(attrs)
+                             if a not in ("canJoinAllSpaces", "moveToActiveSpace", "hideOnFullScreen", "hideOnSuspend")]
+                    if on:
+                        attrs.append("canJoinAllSpaces")
+                    if "doesNotHide" not in attrs:
+                        attrs.append("doesNotHide")
+                    self.root.tk.call("::tk::unsupported::MacWindowStyle", "style", self.root._w, kind, tuple(attrs))
+                except tk.TclError as e:
+                    log_error(f"all spaces: Tk window style: {e!r}")
+                import mac_statusbar
+                if not mac_statusbar.set_all_spaces(self.root.title(), on):
+                    log_error("all spaces: pet window not found")
+            elif os.name == "nt":
+                from pyvda import AppView
+                view = AppView(hwnd=int(self.root.wm_frame(), 16))
+                view.pin() if on else view.unpin()
         except Exception as e:
             log_error(f"all spaces: {e!r}")
 

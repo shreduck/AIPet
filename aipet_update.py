@@ -11,6 +11,7 @@ This build's version comes from _build_version.py, written at build time by tool
 import json
 import os
 import re
+import ssl
 import subprocess
 import time
 import urllib.error
@@ -59,7 +60,12 @@ def is_newer(latest, current):
 def latest_release(timeout=10):
     """{"tag", "url", "name", "published"} of the newest published release. Raises on network / API errors."""
     req = urllib.request.Request(API_URL, headers={"Accept": "application/vnd.github+json", "User-Agent": "AIPet"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    context = ssl.create_default_context()
+    # Frozen macOS Python often has no system CA path. Keep platform trust and
+    # supplement it with the CA bundle shipped with the app.
+    import certifi
+    context.load_verify_locations(cafile=certifi.where())
+    with urllib.request.urlopen(req, timeout=timeout, context=context) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     tag = str(data.get("tag_name") or "")
     if not parse(tag):

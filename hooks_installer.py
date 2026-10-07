@@ -14,6 +14,7 @@ for Windows itself and for each auto-detected WSL distro.
 Targets are keys: "windows", "mac" or "wsl:<distro>".
 """
 import glob
+import base64
 import json
 import os
 import re
@@ -170,6 +171,28 @@ def remove_hooks(settings):
         settings["hooks"] = hooks
     else:
         settings.pop("hooks", None)
+    status = settings.get("statusLine")
+    if isinstance(status, dict) and MARKER.search(str(status.get("command", ""))) and "--usage" in status.get("command", ""):
+        previous = status.get("aipet_previous")
+        if previous is None:
+            settings.pop("statusLine", None)
+        else:
+            settings["statusLine"] = previous
+    return settings
+
+
+def merge_usage(settings, command):
+    settings = dict(settings)
+    previous = settings.get("statusLine")
+    if isinstance(previous, dict) and MARKER.search(str(previous.get("command", ""))) and "--usage" in previous.get("command", ""):
+        previous = previous.get("aipet_previous")
+    # Preserve unfamiliar status line types instead of disabling them.
+    if previous and (not isinstance(previous, dict) or previous.get("type") != "command"):
+        return settings
+    forward = (previous or {}).get("command", "")
+    encoded = base64.urlsafe_b64encode(forward.encode("utf-8")).decode("ascii")
+    settings["statusLine"] = {**(previous or {}), "type": "command", "command": command + " --usage" +
+                              (" --usage-forward=" + encoded if forward else ""), "aipet_previous": previous}
     return settings
 
 
@@ -227,6 +250,7 @@ def deploy_files(only_if_deployed=False):
     os.makedirs(INSTALL_DIR, exist_ok=True)
     os.makedirs(os.path.join(PET_DIR, "sessions"), exist_ok=True)
     _sync_file(resource_path("aipet_hook.py"), os.path.join(INSTALL_DIR, "aipet_hook.py"))
+    _sync_file(resource_path("aipet_usage.py"), os.path.join(INSTALL_DIR, "aipet_usage.py"))
     src = resource_path("hook")
     if os.path.isdir(src):
         for root, _dirs, files in os.walk(src):
@@ -394,6 +418,13 @@ def hooks_state(settings, command, events=None, timeouts=None):
         return "outdated"
     if bad_timeout or any(event not in ours for event, _ in events):
         return "partial"
+    if events == HOOK_EVENTS:
+        status = settings.get("statusLine")
+        if not status:
+            return "partial"  # existing installs need the quota collector too
+        if isinstance(status, dict) and status.get("type") == "command":
+            if not any(str(status.get("command", "")).startswith(c + " --usage") for c in ok):
+                return "partial"
     return "current"
 
 
@@ -648,7 +679,7 @@ def install(key, runtime=None):
                                f"Install it there (e.g. sudo apt install python3) and try again.")
         command = wsl_hook_command(distro)
         where = f"Claude Code in WSL '{distro}' (terminal + VS Code Remote-WSL)"
-    changed = _apply(key, lambda s: merge_hooks(s, command), "before install")
+    changed = _apply(key, lambda s: merge_usage(merge_hooks(s, command), command), "before install")
     if not changed:
         return f"Hooks for {where} are already up to date."
     return f"Hooks installed for {where}.\nA backup was taken first. New sessions will appear in the pet."
@@ -955,4 +986,3 @@ def build_plugin():
 def cli_plugin_commands(market_dir=PLUGIN_MARKET_DIR):
     return [f'claude plugin marketplace add "{market_dir}"',
             f"claude plugin install {PLUGIN_NAME}@{PLUGIN_MARKET}"]
-

@@ -5,7 +5,7 @@ cd "$(dirname "$0")"
 
 PY=${PYTHON:-python3}
 echo "[1/3] Installing build dependencies..."
-$PY -m pip install --upgrade pyinstaller pillow
+$PY -m pip install --upgrade -r requirements.txt
 
 $PY tools/write_version.py
 
@@ -18,7 +18,9 @@ $PY -m PyInstaller --noconfirm --clean --windowed --name AIPet \
   --icon assets/aipet.icns \
   --add-data "dist/aipet-hook:hook" \
   --add-data "aipet_hook.py:." \
+  --add-data "aipet_usage.py:." \
   --add-data "assets/sprites:assets/sprites" \
+  --collect-data certifi \
   aipet_app.py
 
 echo

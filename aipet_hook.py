@@ -28,11 +28,14 @@ Always exits 0, so it can't block Claude Code. It prints only a PermissionReques
 or "allow" at once when auto-approval is on for this hook config (<pet dir>/auto-approve.json, off by default).
 """
 import json
+import base64
+import glob
 import os
 import re
 import subprocess
 import sys
 import time
+import aipet_usage as usage
 
 AGENT = "codex" if "--codex" in sys.argv[1:] else "claude"
 WORKING_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart"}
@@ -939,6 +942,7 @@ def _update_session(path, target, event, data, wsl, auto=None):
         "conv": conv,  # the conversation's name, shown when several sessions share a folder name
         "conv_src": conv_src,  # "custom" (/rename) or "generated"; until then the pet uses last_prompt
         "last_prompt": last_prompt,
+        "transcript_path": data.get("transcript_path") or prev.get("transcript_path", ""),
         "updated": now,
         "changed": now if state != prev.get("state") else prev.get("changed", now),
     }
@@ -1013,6 +1017,42 @@ def codex_raw_log(raw, base):
         pass
 
 
+def capture_codex_usage(target, sid, data, previous):
+    limits = data.get("rate_limits")
+    if isinstance(limits, dict):
+        usage.save(target, sid, limits)
+        return
+    transcript = data.get("transcript_path") or previous.get("transcript_path")
+    if not transcript:
+        home = os.environ.get("CODEX_HOME") or os.path.join(os.path.expanduser("~"), ".codex")
+        matches = glob.glob(os.path.join(home, "sessions", "*", "*", "*", f"*{sid}.jsonl"))
+        transcript = max(matches, key=os.path.getmtime) if matches else None
+        if transcript:
+            data["transcript_path"] = transcript
+    if not transcript:
+        return
+    try:
+        # Read only the tail: rollouts can contain many megabytes of tool output.
+        with open(transcript, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            start = max(0, f.tell() - 1024 * 1024)
+            f.seek(start)
+            if start:
+                f.readline()
+            lines = f.read().splitlines()
+        for line in reversed(lines):
+            try:
+                record = json.loads(line)
+            except (ValueError, UnicodeError):
+                continue
+            payload = record.get("payload") or {}
+            if payload.get("type") == "token_count" and isinstance(payload.get("rate_limits"), dict):
+                usage.save(target, sid, payload["rate_limits"])
+                break
+    except OSError:
+        pass
+
+
 def main():
     raw = read_stdin()
     try:
@@ -1027,6 +1067,20 @@ def main():
     target = sessions_dir(wsl)
     os.makedirs(target, exist_ok=True)
     path = os.path.join(target, safe_name(session_id) + ".json")
+    if "--usage" in sys.argv[1:]:
+        usage.save(target, safe_name(session_id), data.get("rate_limits"))
+        forward = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--usage-forward=")), "")
+        if forward:
+            command = base64.urlsafe_b64decode(forward).decode("utf-8")
+            result = subprocess.run(command, shell=True, input=raw, text=True, capture_output=True, timeout=5,
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            write_stdout(result.stdout)
+        else:
+            rows = usage.normalize(data.get("rate_limits"))
+            write_stdout(" · ".join(f"{r['window']} {r['percent']}% used" for r in rows))
+        return
+    if AGENT == "codex":
+        capture_codex_usage(target, safe_name(session_id), data, read_json(path))
     codex_raw_log(raw, os.path.dirname(target))  # TEMP (Codex testing)
 
     if event == "SessionEnd" and (is_cowork() or read_json(path).get("app") == "cowork"):

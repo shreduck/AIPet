@@ -303,6 +303,7 @@ class TrayApp:
         auto_menu.configure(postcommand=lambda: self._fill_auto_menu(auto_menu))
         m.insert_cascade(m.index("Codex hooks") + 1, label="Auto approve", menu=auto_menu)
         m.entryconfigure(m.index("Quit"), command=self.quit)
+        m.insert_command(m.index("Quit"), label="About AIPet...", command=self.show_about)
         core.style_menu(m)
 
         self.icon = None
@@ -1226,6 +1227,8 @@ class TrayApp:
             I("Clear finished after...", act(self.pet.open_done_slider)),
             I("Health check every...", act(self.pet.open_health_slider)),
             I("Compact mode (one pet)", act(self.pet.toggle_compact), checked=lambda item: bool(self.pet.cfg.get("compact"))),
+            I("Show on all desktops", act(lambda: self.pet.set_all_spaces(not self.pet.cfg.get("all_spaces", True))),
+              checked=lambda item: bool(self.pet.cfg.get("all_spaces", True)), visible=os.name == "nt"),
             I("Click goes to the session's window",
               act(lambda: self.pet.set_click_to_focus(not self.pet.cfg.get("click_to_focus", True))),
               checked=lambda item: bool(self.pet.cfg.get("click_to_focus", True))),
@@ -1241,6 +1244,7 @@ class TrayApp:
             I("Open config folder", act(self.open_config)),
             M.SEPARATOR,
             I(lambda item: f"AIPet {self.version}", None, enabled=False),
+            I("About AIPet...", act(self.show_about)),
             I("Check for updates...", act(self.check_updates, True)),
             I("Check for updates automatically", act(self.toggle_update_check),
               checked=lambda item: bool(self.pet.cfg.get("update_check", True))),
@@ -1321,6 +1325,7 @@ class TrayApp:
             item("Open config folder", self.open_config),
             None,
             item(f"AIPet {self.version}", enabled=False),
+            item("About AIPet...", self.show_about),
             item("Check for updates...", lambda: self.check_updates(True)),
             item("Check for updates automatically", self.toggle_update_check,
                  checked=bool(cfg.get("update_check", True))),
@@ -1329,6 +1334,28 @@ class TrayApp:
         ]
 
     # ---- actions (Tk thread)
+    def show_about(self):
+        existing = getattr(self, "about_win", None)
+        if existing is not None and existing.winfo_exists():
+            existing.lift()
+            return
+        win = self.about_win = tk.Toplevel(self.root)
+        win.title("About AIPet")
+        win.attributes("-topmost", True)
+        win.resizable(False, False)
+        bg, fg = core.T["tag_bg"], core.T["tag_fg"]
+        win.configure(bg=bg)
+        tk.Label(win, text=f"AIPet {self.version}", font=("Segoe UI", 18, "bold"), bg=bg, fg=fg).pack(padx=28, pady=(24, 8))
+        tk.Label(win, text="A little companion for your AI sessions.\nCreated by shreduck.", bg=bg, fg=fg).pack(padx=28, pady=(0, 16))
+        for label, url in (("AIPet app page", "https://shreduck.github.io/duck-software/apps/aipet/"),
+                           ("Duck Software · creator's page", "https://shreduck.github.io/duck-software/"),
+                           ("AIPet on GitHub", "https://github.com/shreduck/AIPet")):
+            link = tk.Label(win, text=label, fg="#5b8def", bg=bg, cursor="hand2", padx=12, pady=6)
+            link.pack()
+            link.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
+        tk.Button(win, text="Close", command=win.destroy).pack(pady=(16, 24))
+        win.bind("<Escape>", lambda e: win.destroy())
+
     def _dialog_parent(self):
         top = tk.Toplevel(self.root)
         top.withdraw()
@@ -1536,6 +1563,17 @@ def main():
             os.startfile(path)
         else:
             core.probe_workbench()
+        return
+    if "--selftest-spaces" in sys.argv:
+        if not IS_MAC:
+            raise RuntimeError("The Spaces probe requires macOS")
+        core.ensure_home()
+        mark_setup_done()
+        app = TrayApp()
+        from aipet_selftest import start_spaces_probe
+        output = sys.argv[sys.argv.index("--selftest-spaces") + 1]
+        start_spaces_probe(app, os.path.abspath(output))
+        app.root.mainloop()
         return
     if "--selftest" in sys.argv:  # CI (mac-selftest workflow): run without the setup window, save diagnostics, quit
         core.ensure_home()

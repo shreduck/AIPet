@@ -24,6 +24,14 @@ Pets keep their position: a session stays where it first appeared (new ones join
 
 Each pet shows small badges for where its session runs: **Claude**, **Cowork** (Claude app), **Codex**, **WSL**, **VS Code** or **Workbench** (shortened to `CC`, `CW`, `CX`, `VS`, `WB` when several don't fit). Only the robot and its "needs you" bubble catch clicks; the rest of the pet window lets clicks through to what is behind it (turn off with `"click_through": false` in `config.json`). The tray icon takes the colour of the most urgent session, and hovering it shows a summary.
 
+Account usage appears beside the pet as small coloured badges: **CL** for Claude and **CX** for Codex, with separate **5h** and **7d** percentages used. Compact mode merges equal readings per AI and uses the newest reading from each harness. Unknown or expired limits are hidden. Codex reads reported limits from its local rollout; Claude uses its status-line data, forwarding the existing status-line command and restoring it when hooks are removed. Choose **Install / update hooks** once after updating AIPet to enable the Claude collector. Harnesses that do not expose account limits (including some desktop integrations) cannot display percentages.
+
+Finished pets show a green checkmark seal; speech bubbles are reserved for active work and interaction. Usage badges reserve the same space in idle mode so the pet stays in place when sessions appear or disappear. **Show on all desktops** is available on macOS and Windows. **About AIPet** links to the app page, Duck Software and GitHub.
+
+### macOS diagnostics
+
+Run **Actions → macOS self-test → Run workflow** after pushing your changes. Each `selftest-app` / `selftest-source` artifact includes a `spaces` folder with screenshots, native window flags, an HTTPS update check and `summary.json`. The probe checks desktop visibility on/off, hide/show, and compact resizing. It also tries to create and switch to a second Space, verifying the switch with a separate window that stays on the original desktop. Accessibility or desktop automation restrictions are reported as **skipped**, rather than a successful desktop test. Full-screen application visibility still needs a check on a real Mac. Share both artifacts to diagnose failures.
+
 ## Build the exe
 On Windows with Python 3.10+, double-click **`build.bat`**. It produces `dist\AIPet.exe` (single file).
 **Prebuilt:** the **Build AIPet** GitHub Actions workflow runs on every push to `master` (or by hand) and publishes `AIPet.exe` and an Apple Silicon `AIPet-mac-arm64.zip` to the rolling **latest** release on the repo's [Releases](../../releases) page; pushing a `v*` tag makes a versioned release. No binaries are committed. The Mac app is unsigned: unzip it, then right-click it and choose *Open* the first time.

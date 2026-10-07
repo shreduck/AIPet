@@ -194,6 +194,7 @@ def window_titled(title):
 # NSWindowCollectionBehavior: on every Space, not moved by Mission Control, allowed over full-screen apps, and left
 # out of the window cycle (cmd-`)
 ALL_SPACES = (1 << 0) | (1 << 4) | (1 << 6) | (1 << 8)
+ALL_SPACES_CONFLICTS = (1 << 1) | (1 << 2) | (1 << 3) | (1 << 5) | (1 << 7) | (1 << 9)
 
 
 def set_all_spaces(title, on=True):
@@ -202,6 +203,8 @@ def set_all_spaces(title, on=True):
     if not w:
         return False
     cur = send(w, "collectionBehavior", restype=c_ulong)
-    new = (cur | ALL_SPACES) if on else (cur & ~ALL_SPACES)
+    # Each Cocoa behavior group is mutually exclusive: clear MoveToActiveSpace,
+    # Managed / Transient, ParticipatesInCycle and FullScreenPrimary / None.
+    new = ((cur & ~ALL_SPACES_CONFLICTS) | ALL_SPACES) if on else (cur & ~ALL_SPACES)
     send(w, "setCollectionBehavior:", new, restype=None, argtypes=[c_ulong])
     return True

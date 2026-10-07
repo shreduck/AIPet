@@ -18,8 +18,11 @@ echo [3/3] Building AIPet.exe...
   --icon assets\aipet.ico ^
   --add-data "dist\aipet-hook;hook" ^
   --add-data "aipet_hook.py;." ^
+  --add-data "aipet_usage.py;." ^
   --add-data "assets\sprites;assets\sprites" ^
   --hidden-import pystray._win32 ^
+  --collect-data certifi ^
+  --collect-submodules pyvda ^
   aipet_app.py || goto :err
 
 echo.
