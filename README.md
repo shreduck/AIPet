@@ -77,11 +77,11 @@ Claude Code, kept in `~/.codex/hooks.json` (or `$CODEX_HOME/hooks.json`):
   with `~/.codex` or `codex` on the PATH. Install / update / remove / backups work like the Claude Code targets.
 - **Trust step:** Codex only runs hooks you have trusted. After installing, start Codex, type `/hooks` and trust the AIPet
   hooks (Codex asks again only if they change).
-- Codex permission prompts show on the pet. By default you answer them in Codex: Codex asks its permission hook
-  *before* showing its own prompt, so a pet waiting for a click would hold that prompt back. Switch on **Answer Codex
-  prompts from the pet** (menu or tray) to answer them on the pet like Claude's; Codex then shows its own prompt only if
-  you don't answer on the pet within the answer timeout. This needs the Codex hooks updated once (they get a longer
-  permission timeout) and trusted again in `/hooks`.
+- Codex permission prompts can be answered from the pet's prompt window (Allow once / Deny), like Claude's. One
+  difference: Codex asks its permission hook *before* showing its own prompt, so Codex's prompt only appears if you
+  don't answer in the pet's window within the answer timeout. To have Codex show its prompt straight away instead,
+  switch off **Answer Codex prompts from the pet** (menu or tray). Updating from an older AIPet needs the Codex hooks
+  updated once (they get a longer permission timeout) and trusted again in `/hooks`.
 - Events: start, prompt, tool use, permission, stop, **Interrupt** (shows as done), session end and subagents. Codex has no
   `Notification` event.
 

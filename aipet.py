@@ -57,7 +57,7 @@ DEFAULT_CONFIG = {
     # here, so an old absolute "scale" value in config.json can still be migrated once.
     "remind_seconds": 90,
     "compact": False,
-    "codex_answers": False,  # answer Codex permission prompts from the pet (Codex then waits for the pet first)  # one pet for all sessions (a robot per session) instead of one pet per session
+    "codex_answers": True,  # answer Codex permission prompts in the pet's prompt window (Codex waits for it first)  # one pet for all sessions (a robot per session) instead of one pet per session
     "click_through": True,  # only the robot and its "needs you" bubble take clicks; the rest of the window lets them through
     # clicking a session of the VS Code extension also opens its conversation tab (vscode://anthropic.claude-code/open)
     "vscode_open_conversation": True,
