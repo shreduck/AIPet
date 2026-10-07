@@ -60,6 +60,8 @@ DEFAULT_CONFIG = {
     "compact": False,
     "update_check": True,  # look for a new AIPet release on GitHub once a day (tells you; never installs anything)
     "click_to_focus": True,  # clicking a pet (or a badge) brings its session's window to the front
+    "session_tooltips": True,
+    "usage_tooltips": True,
     "all_spaces": True,  # show the pet on every virtual desktop / macOS Space
     "session_titles": "name",  # extra title for same-folder sessions: "name" (the harness's name) or "prompt" (latest prompt)
     "codex_answers": True,  # answer Codex permission prompts in the pet's prompt window (Codex waits for it first)  # one pet for all sessions (a robot per session) instead of one pet per session
@@ -1437,7 +1439,7 @@ class Pet:
         self._usage_details = {}
         if not rows:
             return USAGE_GUTTER
-        c, left = self.canvas, PET_W - 21
+        c, left = self.canvas, PET_W - 26
         # Align a short column with the lower body, ending above the name tag.
         top = 81 - min(6, len(rows)) * 9
         font = mono(4.5)
@@ -2924,6 +2926,13 @@ class PetApp:
             titles.add_radiobutton(label=text, variable=self.titles_var, value=value,
                                    command=lambda v=value: self.set_session_titles(v))
         m.add_cascade(label="Session titles", menu=titles)
+        tips = tk.Menu(m, tearoff=0)
+        self.tooltip_vars = {}
+        for kind, label in (("session", "Session details"), ("usage", "Usage details")):
+            var = self.tooltip_vars[kind] = tk.BooleanVar(value=bool(self.cfg.get(kind + "_tooltips", True)))
+            tips.add_checkbutton(label=label, variable=var,
+                                 command=lambda k=kind: self.set_tooltip(k, self.tooltip_vars[k].get()))
+        m.add_cascade(label="Tooltips", menu=tips)
         m.add_separator()
         m.add_checkbutton(label="Mute sounds", variable=self.muted)
         m.add_command(label="Clear finished", command=self.clear_finished)
@@ -3785,6 +3794,8 @@ class PetApp:
 
     def show_tip(self, pet):
         self.hide_tip()
+        if not self.cfg.get("session_tooltips", True):
+            return
         d = pet.data
         lines = [d.get("title", ""), f"{d.get('where') or SOURCE_NAMES.get(d.get('source'), '')} · {LABELS.get(d.get('state'), d.get('state'))}".strip(" ·")]
         if d.get("everyone"):  # compact mode: every session, the one in front first
@@ -3806,18 +3817,58 @@ class PetApp:
 
     def show_usage_tip(self, pet, detail):
         self.hide_tip()
-        self._show_tooltip(pet, usage.tooltip(detail))
+        if not self.cfg.get("usage_tooltips", True):
+            return
+        self._show_tooltip(pet, usage.tooltip(detail), usage_detail=detail)
 
-    def _show_tooltip(self, pet, text):
+    def set_tooltip(self, kind, on):
+        if kind not in ("session", "usage"):
+            return
+        self.cfg[kind + "_tooltips"] = bool(on)
+        save_setting(kind + "_tooltips", bool(on))
+        var = getattr(self, "tooltip_vars", {}).get(kind)
+        if var is not None:
+            var.set(bool(on))
+        self.hide_tip()
+        for pet in self.pets.values():
+            pet._usage_hover = None
+
+    def _show_tooltip(self, pet, text, usage_detail=None):
         tip = self.tip = tk.Toplevel(self.root)
         tip.overrideredirect(True)
         tip.attributes("-topmost", True)
-        tip.configure(bg=T["tip_border"], padx=1, pady=1)
-        tk.Label(tip, text=text, justify="left", bg=T["tip_bg"], fg=T["tip_fg"],
-                 font=("Segoe UI", 9), padx=8, pady=6, wraplength=340).pack()
+        if usage_detail is not None:
+            tip.configure(bg=TRANSPARENT)
+            try:
+                tip.attributes("-transparent", True) if IS_MAC else tip.attributes("-transparentcolor", TRANSPARENT)
+            except tk.TclError:
+                pass
+            c = tk.Canvas(tip, bg=TRANSPARENT, highlightthickness=0, bd=0)
+            c.pack()
+            title, _, body = text.partition("\n")
+            accent = "#5b8def" if usage_detail["agent"] == "codex" else "#d98960"
+            head = c.create_text(12, 10, text=title, font=(MONO_FAMILY, 9, "bold"), fill=accent, anchor="nw", width=320)
+            header_box = c.bbox(head)
+            content = c.create_text(12, header_box[3] + 6, text=body, font=(MONO_FAMILY, 8), fill=T["tag_fg"], anchor="nw", width=320)
+            box = c.bbox(content)
+            w, h = max(header_box[2], box[2]) + 12, box[3] + 10
+            border = c.create_polygon(6, 1, w - 6, 1, w - 6, 3, w - 3, 3, w - 3, 6, w - 1, 6,
+                                     w - 1, h - 6, w - 3, h - 6, w - 3, h - 3, w - 6, h - 3, w - 6, h - 1,
+                                     6, h - 1, 6, h - 3, 3, h - 3, 3, h - 6, 1, h - 6, 1, 6, 3, 6, 3, 3, 6, 3,
+                                     fill=T["tag_bg"], outline=T["tag_outline"], width=2)
+            c.tag_lower(border)
+            c.config(width=w, height=h)
+        else:
+            tip.configure(bg=T["tip_border"], padx=1, pady=1)
+            tk.Label(tip, text=text, justify="left", bg=T["tip_bg"], fg=T["tip_fg"],
+                     font=("Segoe UI", 9), padx=8, pady=6, wraplength=340).pack()
         tip.update_idletasks()
         x = pet.canvas.winfo_rootx()
         y = pet.canvas.winfo_rooty() - tip.winfo_reqheight() - 6
+        if usage_detail is not None:
+            # Cover the upper body if needed, but leave the hovered badge clear.
+            x += px(getattr(pet, "gutter", 0) + PET_W - 26) - tip.winfo_reqwidth() - 8
+            y = pet.canvas.winfo_rooty() + px(25)
         tip.geometry(geo(*fit_on_screen(x, y, tip.winfo_reqwidth(), tip.winfo_reqheight(),
                                         (pet.canvas.winfo_rootx() + 10, pet.canvas.winfo_rooty() + 10), tip)))
 

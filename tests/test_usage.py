@@ -15,6 +15,7 @@ import aipet
 import aipet_hook
 import aipet_update
 import aipet_selftest
+import aipet_claude_usage as claude_usage
 import aipet_usage as usage
 import hooks_installer as installer
 
@@ -103,6 +104,90 @@ class UsageTests(unittest.TestCase):
         text = usage.tooltip({"agent": "claude", "window": "5h", "percent": 50,
                               "readings": [{"where": "Claude Code", "updated": 0}]})
         self.assertIn("Resets: not reported", text)
+
+    def test_tooltip_types_can_be_disabled_independently(self):
+        app = aipet.PetApp.__new__(aipet.PetApp)
+        app.cfg = {"session_tooltips": False, "usage_tooltips": True}
+        app.hide_tip = MagicMock()
+        app._show_tooltip = MagicMock()
+        pet = MagicMock()
+        app.show_tip(pet)
+        app._show_tooltip.assert_not_called()
+        detail = {"agent": "codex", "window": "7d", "percent": 2, "readings": []}
+        app.show_usage_tip(pet, detail)
+        app._show_tooltip.assert_called_once()
+        app._show_tooltip.reset_mock()
+        app.cfg["usage_tooltips"] = False
+        app.show_usage_tip(pet, detail)
+        app._show_tooltip.assert_not_called()
+
+    def test_tooltip_settings_are_persisted(self):
+        app = aipet.PetApp.__new__(aipet.PetApp)
+        app.cfg, app.pets = {}, {"pet": MagicMock()}
+        app.hide_tip = MagicMock()
+        app.tooltip_vars = {"usage": MagicMock()}
+        with patch.object(aipet, "save_setting") as save:
+            app.set_tooltip("usage", False)
+        self.assertFalse(app.cfg["usage_tooltips"])
+        save.assert_called_once_with("usage_tooltips", False)
+        self.assertIsNone(app.pets["pet"]._usage_hover)
+
+    def test_claude_api_quota_conversion(self):
+        result = claude_usage.convert({"five_hour": {"utilization": 51.2, "resets_at": "2030-01-02T03:04:05Z"},
+                                       "seven_day": {"utilization": 62, "resets_at": None}})
+        self.assertEqual([r["percent"] for r in usage.normalize(result)], [51, 62])
+        self.assertGreater(result["five_hour"]["resets_at"], 1800000000)
+        self.assertIsNone(result["seven_day"]["resets_at"])
+
+    def test_claude_worker_persists_only_quota_data(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = str(Path(folder) / "sessions")
+            _, path, lock = claude_usage.paths(target)
+            Path(path).parent.mkdir()
+            Path(lock).mkdir()
+            with patch.object(claude_usage, "access_token", return_value="test-credential-placeholder"), patch.object(claude_usage, "fetch", return_value={"five_hour": {"used_percentage": 50, "resets_at": time.time() + 500}}):
+                claude_usage.worker(target, "test")
+            self.assertFalse(Path(lock).exists())
+            self.assertNotIn("test-credential-placeholder", Path(path).read_text())
+            reading = usage.load(str(Path(target) / "test.json"))[0]
+            self.assertEqual(reading["percent"], 50)
+            self.assertIn("Claude Code account", reading["provider"])
+
+    def test_claude_cached_reading_keeps_original_timestamp(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = str(Path(folder) / "sessions")
+            _, path, _ = claude_usage.paths(target)
+            Path(path).parent.mkdir()
+            stamp = time.time() - 40
+            Path(path).write_text(json.dumps({"limits": {"five_hour": {"used_percentage": 40}}, "updated": stamp,
+                                             "retry_at": time.time() + 200}))
+            with patch.object(claude_usage.subprocess, "Popen") as spawn:
+                claude_usage.schedule(target, "test", ["hook"])
+            spawn.assert_not_called()
+            self.assertEqual(usage.load(str(Path(target) / "test.json"))[0]["updated"], stamp)
+
+    def test_claude_cache_does_not_replace_newer_statusline(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = str(Path(folder) / "sessions")
+            usage.save(target, "test", {"five_hour": {"used_percentage": 60}})
+            claude_usage.publish(target, "test", {"limits": {"five_hour": {"used_percentage": 40}}, "updated": time.time() - 100})
+            self.assertEqual(usage.load(str(Path(target) / "test.json"))[0]["percent"], 60)
+
+    def test_claude_rate_limit_backs_off_and_keeps_last_reading(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = str(Path(folder) / "sessions")
+            _, path, lock = claude_usage.paths(target)
+            Path(path).parent.mkdir()
+            Path(lock).mkdir()
+            stamp = time.time() - 100
+            Path(path).write_text(json.dumps({"limits": {"five_hour": {"used_percentage": 40}}, "updated": stamp}))
+            error = aipet_update.urllib.error.HTTPError(claude_usage.URL, 429, "too many requests", {}, None)
+            with patch.object(claude_usage, "access_token", return_value="placeholder"), patch.object(claude_usage, "fetch", side_effect=error):
+                claude_usage.worker(target, "test")
+            cache = json.loads(Path(path).read_text())
+            self.assertGreater(cache["retry_at"], time.time() + 800)
+            self.assertEqual(cache["updated"], stamp)
+            self.assertFalse(Path(lock).exists())
 
     def test_statusline_preserved_and_restored(self):
         before = {"statusLine": {"type": "command", "command": "echo original", "padding": 3}, "other": "keep"}

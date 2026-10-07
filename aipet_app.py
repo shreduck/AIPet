@@ -1235,6 +1235,9 @@ class TrayApp:
             I("Session titles", M(*[I(text, act(self.pet.set_session_titles, value), radio=True,
                                       checked=lambda item, v=value: self.pet.cfg.get("session_titles", "name") == v)
                                     for value, text in (("name", "Session name"), ("prompt", "Last prompt"))])),
+            I("Tooltips", M(*[I(label, act(lambda k=kind: self.pet.set_tooltip(k, not self.pet.cfg.get(k + "_tooltips", True))),
+                                 checked=lambda item, k=kind: bool(self.pet.cfg.get(k + "_tooltips", True)))
+                                for kind, label in (("session", "Session details"), ("usage", "Usage details"))])),
             I("Answer Codex prompts from the pet", act(lambda: self.pet.set_codex_answers(not self.pet.cfg.get("codex_answers"))),
               checked=lambda item: bool(self.pet.cfg.get("codex_answers"))),
             I("Log hook events (debug)", act(self.toggle_debug), checked=lambda item: os.path.exists(DEBUG_FLAG)),
@@ -1303,6 +1306,9 @@ class TrayApp:
             item("Session titles", submenu=[item(text, lambda v=value: self.pet.set_session_titles(v),
                                                  checked=cfg.get("session_titles", "name") == value)
                                             for value, text in (("name", "Session name"), ("prompt", "Last prompt"))]),
+            item("Tooltips", submenu=[item(label, lambda k=kind: self.pet.set_tooltip(k, not cfg.get(k + "_tooltips", True)),
+                                           checked=bool(cfg.get(kind + "_tooltips", True)))
+                                      for kind, label in (("session", "Session details"), ("usage", "Usage details"))]),
             item("Answer Codex prompts from the pet", lambda: self.pet.set_codex_answers(not cfg.get("codex_answers")),
                  checked=bool(cfg.get("codex_answers"))),
             item("Mute sounds", self.toggle_mute, checked=self.c_muted),

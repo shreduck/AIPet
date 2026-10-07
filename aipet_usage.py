@@ -28,17 +28,19 @@ def normalize(limits):
     return rows
 
 
-def save(target, sid, limits):
+def save(target, sid, limits, updated=None, provider=None):
     rows = normalize(limits)
     if not rows:
         return
+    if provider:
+        rows = [dict(row, provider=provider) for row in rows]
     folder = os.path.join(os.path.dirname(target), "usage")
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, sid + ".json")
     tmp = path + f".{os.getpid()}.tmp"
     try:
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"updated": time.time(), "rows": rows}, f)
+            json.dump({"updated": time.time() if updated is None else updated, "rows": rows}, f)
         os.replace(tmp, path)
     finally:
         if os.path.exists(tmp):
@@ -98,7 +100,7 @@ def tooltip(detail):
     for row in readings:
         reset = row.get("resets_at")
         reset_text = time.strftime("%d %b %Y, %H:%M %Z", time.localtime(reset)) if reset else "not reported"
-        lines.append(f"{row['where']}\nResets: {reset_text}")
+        lines.append(f"{row.get('provider') or row['where']}\nResets: {reset_text}")
     updated = max((r.get("updated", 0) for r in readings), default=0)
     if updated:
         lines.append("Last reported: " + time.strftime("%d %b, %H:%M:%S %Z", time.localtime(updated)))

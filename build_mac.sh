@@ -10,7 +10,7 @@ $PY -m pip install --upgrade -r requirements.txt
 $PY tools/write_version.py
 
 echo "[2/3] Building the built-in hook (console build: no window appears for a non-terminal child)..."
-$PY -m PyInstaller --noconfirm --clean --onedir --name aipet-hook aipet_hook.py
+$PY -m PyInstaller --noconfirm --clean --onedir --collect-data certifi --name aipet-hook aipet_hook.py
 
 echo "[3/3] Building AIPet.app..."
 $PY -m PyInstaller --noconfirm --clean --windowed --name AIPet \
@@ -19,6 +19,7 @@ $PY -m PyInstaller --noconfirm --clean --windowed --name AIPet \
   --add-data "dist/aipet-hook:hook" \
   --add-data "aipet_hook.py:." \
   --add-data "aipet_usage.py:." \
+  --add-data "aipet_claude_usage.py:." \
   --add-data "assets/sprites:assets/sprites" \
   --collect-data certifi \
   aipet_app.py

@@ -36,6 +36,7 @@ import subprocess
 import sys
 import time
 import aipet_usage as usage
+import aipet_claude_usage as claude_usage
 
 AGENT = "codex" if "--codex" in sys.argv[1:] else "claude"
 WORKING_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart"}
@@ -1067,6 +1068,10 @@ def main():
     target = sessions_dir(wsl)
     os.makedirs(target, exist_ok=True)
     path = os.path.join(target, safe_name(session_id) + ".json")
+    worker_sid = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--claude-usage-worker=")), None)
+    if worker_sid:
+        claude_usage.worker(target, safe_name(worker_sid))
+        return
     if "--usage" in sys.argv[1:]:
         usage.save(target, safe_name(session_id), data.get("rate_limits"))
         forward = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--usage-forward=")), "")
@@ -1081,6 +1086,15 @@ def main():
         return
     if AGENT == "codex":
         capture_codex_usage(target, safe_name(session_id), data, read_json(path))
+    elif event != "SessionEnd":
+        if usage.normalize(data.get("rate_limits")):
+            usage.save(target, safe_name(session_id), data["rate_limits"])
+        else:
+            try:
+                command = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, os.path.abspath(__file__)]
+                claude_usage.schedule(target, safe_name(session_id), command)
+            except Exception:
+                pass  # quota collection must never affect permission handling
     codex_raw_log(raw, os.path.dirname(target))  # TEMP (Codex testing)
 
     if event == "SessionEnd" and (is_cowork() or read_json(path).get("app") == "cowork"):
