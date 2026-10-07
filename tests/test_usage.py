@@ -414,5 +414,26 @@ class UsageTests(unittest.TestCase):
         self.assertTrue(sent[0] & (1 << 11))  # unrelated flags survive
 
 
+    def test_usage_files_follow_their_sessions(self):
+        with tempfile.TemporaryDirectory() as home:
+            folder, sessions = os.path.join(home, "usage"), os.path.join(home, "sessions")
+            os.makedirs(folder)
+            os.makedirs(sessions)
+            names = ["live.json", "live.rollout.json", "gone.json", "gone.rollout.json", "_claude-abc.json",
+                     "fresh.json", "x.json.1.tmp"]
+            for name in names:
+                Path(folder, name).write_text("{}")
+            Path(sessions, "live.json").write_text("{}")
+            old = time.time() - 2 * 86400
+            for name in names:
+                if name != "fresh.json":
+                    os.utime(os.path.join(folder, name), (old, old))
+            self.assertEqual(usage.sweep(home), 3)  # gone.json, gone.rollout.json and the stray temp file
+            self.assertEqual(sorted(os.listdir(folder)),
+                             ["_claude-abc.json", "fresh.json", "live.json", "live.rollout.json"])
+            usage.remove_for(os.path.join(sessions, "live.json"))
+            self.assertEqual(sorted(os.listdir(folder)), ["_claude-abc.json", "fresh.json"])
+
+
 if __name__ == "__main__":
     unittest.main()

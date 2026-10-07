@@ -105,3 +105,55 @@ def tooltip(detail):
     if updated:
         lines.append("Last reported: " + time.strftime("%d %b, %H:%M:%S %Z", time.localtime(updated)))
     return "\n".join(lines)
+
+
+def _usage_files(session_path):
+    """The usage files belonging to a session file: <pet dir>/usage/<id>.json and <id>.rollout.json."""
+    folder = os.path.join(os.path.dirname(os.path.dirname(session_path)), "usage")
+    sid = os.path.splitext(os.path.basename(session_path))[0]
+    return [os.path.join(folder, sid + ".json"), os.path.join(folder, sid + ".rollout.json")]
+
+
+def remove_for(session_path):
+    """Delete a session's usage readings together with its session file (stale, dismissed, cleared)."""
+    for path in _usage_files(session_path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def sweep(home, max_age=24 * 3600, now=None):
+    """Delete usage files whose session file is gone and that are older than max_age (the pet ignores readings that
+    old anyway), plus temp files left by an interrupted write. Keeps the Claude login caches (_claude-*.json), which
+    rate-limit the opt-in collector. Returns how many files were removed."""
+    folder = os.path.join(home, "usage")
+    sessions = os.path.join(home, "sessions")
+    now = time.time() if now is None else now
+    removed = 0
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return 0
+    for name in names:
+        path = os.path.join(folder, name)
+        if name.startswith("_claude-") and name.endswith(".json"):
+            continue
+        try:
+            age = now - os.path.getmtime(path)
+        except OSError:
+            continue
+        if name.endswith(".tmp"):
+            stale = age > 3600
+        elif name.endswith(".json"):
+            sid = name[:-len(".rollout.json")] if name.endswith(".rollout.json") else name[:-len(".json")]
+            stale = age > max_age and not os.path.exists(os.path.join(sessions, sid + ".json"))
+        else:
+            continue
+        if stale:
+            try:
+                os.remove(path)
+                removed += 1
+            except OSError:
+                pass
+    return removed

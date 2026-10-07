@@ -801,6 +801,7 @@ def read_claude_code_sessions(cfg):
         if rec.get("updated", 0) < cutoff and not (DONE_TIMEOUT["v"] == 0 and rec.get("state") in ("done", "idle")):
             try:
                 os.remove(path)
+                usage.remove_for(path)
             except OSError:
                 pass
             continue
@@ -2957,6 +2958,7 @@ class PetApp:
         self.animate()
         if self.clickthru:
             root.after(500, self._pass_tick)
+        root.after(60 * 1000, self._sweep_usage)
         if IS_MAC or os.name == "nt":
             root.after(700, self._apply_all_spaces)
             root.bind("<Map>", lambda e: root.after(100, self._apply_all_spaces) if e.widget is root else None, add="+")
@@ -3449,10 +3451,19 @@ class PetApp:
     def dismiss(self, pet):
         self.dismiss_item(pet.data)
 
+    def _sweep_usage(self):
+        """A minute after start, then hourly: clear usage files of sessions that are long gone."""
+        try:
+            usage.sweep(HOME_DIR)
+        except Exception as e:
+            log_error(f"usage sweep: {e!r}")
+        self.root.after(3600 * 1000, self._sweep_usage)
+
     def dismiss_item(self, d):
         if d.get("source") == "CC" and d.get("path"):
             try:
                 os.remove(d["path"])
+                usage.remove_for(d["path"])
             except OSError:
                 pass
         elif d.get("source") == "WB" and self.wb:
