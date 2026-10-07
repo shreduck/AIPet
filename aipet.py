@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Claude Pet - a floating, always-on-top companion that shows one little creature
+AIPet - a floating, always-on-top companion that shows one little creature
 per active conversation:
 
     blue, bobbing, orbiting dots  -> working
@@ -9,11 +9,11 @@ per active conversation:
     red, shaking                  -> error (Workbench)
 
 Sources:
-    * Claude Code  - via claude_pet_hook.py (hooks write session files)
+    * Claude Code  - via aipet_hook.py (hooks write session files)
     * mcp-workbench Agents chats - polled over MCP streamable HTTP (listAgentChats)
 
-Run:   pythonw claude_pet.py              (no console window)
-Probe: python  claude_pet.py --probe-workbench   (prints what Workbench returns)
+Run:   pythonw aipet.py              (no console window)
+Probe: python  aipet.py --probe-workbench   (prints what Workbench returns)
 
 Standard library only (tkinter, urllib, winsound).
 """
@@ -37,8 +37,11 @@ try:
 except ImportError:  # not Windows
     winsound = None
 
-HOME_DIR = os.path.join(os.path.expanduser("~"), ".claude-pet")
+HOME_DIR = os.path.join(os.path.expanduser("~"), ".aipet")
 SESSIONS_DIR = os.path.join(HOME_DIR, "sessions")
+# Claude Pet (the old name) kept its files in ~/.claude-pet. Hooks not yet updated to AIPet still write their sessions
+# there, so the pet keeps reading that folder while it exists.
+LEGACY_SESSIONS_DIR = os.path.join(os.path.expanduser("~"), ".claude-pet", "sessions")
 CONFIG_PATH = os.path.join(HOME_DIR, "config.json")
 
 DEFAULT_CONFIG = {
@@ -58,7 +61,7 @@ DEFAULT_CONFIG = {
     "claude_code": {
         "enabled": True,
         # Extra folders to watch, e.g. a WSL distro if the hook can't reach Windows:
-        # (in config.json: "\\\\wsl.localhost\\Ubuntu\\home\\<you>\\.claude-pet\\sessions")
+        # (in config.json: "\\\\wsl.localhost\\Ubuntu\\home\\<you>\\.aipet\\sessions")
         "extra_session_dirs": [],
     },
     "workbench": {
@@ -215,7 +218,7 @@ def load_config():
     except FileNotFoundError:
         return copy.deepcopy(DEFAULT_CONFIG)
     except Exception as e:
-        print(f"[claude-pet] config.json unreadable, using defaults: {e}", file=sys.stderr)
+        print(f"[aipet] config.json unreadable, using defaults: {e}", file=sys.stderr)
         return copy.deepcopy(DEFAULT_CONFIG)
 
 
@@ -235,7 +238,7 @@ def save_setting(key, value):
         os.replace(tmp, CONFIG_PATH)
         return True
     except Exception as e:  # unreadable/hand-edited config: don't clobber it
-        print(f"[claude-pet] couldn't save {key}: {e}", file=sys.stderr)
+        print(f"[aipet] couldn't save {key}: {e}", file=sys.stderr)
         return False
 
 
@@ -270,7 +273,8 @@ def read_claude_code_sessions(cfg):
     if not cfg["claude_code"]["enabled"]:
         return items
     cutoff = time.time() - cfg["stale_hours"] * 3600
-    dirs = [SESSIONS_DIR] + list(cfg["claude_code"].get("extra_session_dirs") or [])
+    dirs = [SESSIONS_DIR] + ([LEGACY_SESSIONS_DIR] if os.path.isdir(LEGACY_SESSIONS_DIR) else [])
+    dirs += list(cfg["claude_code"].get("extra_session_dirs") or [])
     paths = []
     for d in dirs:
         try:
@@ -394,7 +398,7 @@ class McpHttpClient:
         res = self._post("initialize", {
             "protocolVersion": "2025-06-18",
             "capabilities": {},
-            "clientInfo": {"name": "claude-pet", "version": "1.0"},
+            "clientInfo": {"name": "aipet", "version": "1.0"},
         })
         self.protocol = res.get("protocolVersion", "2025-06-18")
         try:
@@ -725,11 +729,11 @@ _LOGGED = set()
 
 
 def log_error(msg):
-    """Append a message (once per run) to ~/.claude-pet/error.log: a windowed app has no console to print to."""
+    """Append a message (once per run) to ~/.aipet/error.log: a windowed app has no console to print to."""
     if msg in _LOGGED:
         return
     _LOGGED.add(msg)
-    print(f"[claude-pet] {msg}", file=sys.stderr)
+    print(f"[aipet] {msg}", file=sys.stderr)
     try:
         os.makedirs(HOME_DIR, exist_ok=True)
         path = os.path.join(HOME_DIR, "error.log")
@@ -1781,7 +1785,7 @@ class PetApp:
         DONE_TIMEOUT["v"] = clamp_done(self.cfg.get("done_timeout_minutes", 3))
         write_answer_wait(ANSWER_WAIT["v"])
         root = self.root = tk.Tk()
-        root.title("Claude Pet")
+        root.title("AIPet")
         root.overrideredirect(True)
         root.attributes("-topmost", True)
         root.configure(bg=TRANSPARENT)
@@ -1909,7 +1913,7 @@ class PetApp:
                 self.menu.entryconfigure(self.wb_menu_index, label="Workbench: " + self.wb.status)
             self.first_refresh = False
         except Exception as e:
-            print(f"[claude-pet] refresh error: {e}", file=sys.stderr)
+            print(f"[aipet] refresh error: {e}", file=sys.stderr)
         finally:
             self.root.after(self.cfg["poll_ms"], self.refresh)
 
@@ -2215,7 +2219,7 @@ class PetApp:
             self.wb.dismiss(d["key"])
 
     def write_diagnostics(self):
-        """Write ~/.claude-pet/diagnostics.txt (versions, sprite loading, image tests, window state, recent errors).
+        """Write ~/.aipet/diagnostics.txt (versions, sprite loading, image tests, window state, recent errors).
         Returns the path, or None if it failed."""
         path = os.path.join(HOME_DIR, "diagnostics.txt")
         try:

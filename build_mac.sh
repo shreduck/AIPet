@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build ClaudePet.app on macOS (run on a Mac; the GitHub Actions workflow runs the same steps).
+# Build AIPet.app on macOS (run on a Mac; the GitHub Actions workflow runs the same steps).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -8,16 +8,16 @@ echo "[1/3] Installing build dependencies..."
 $PY -m pip install --upgrade pyinstaller pillow
 
 echo "[2/3] Building the built-in hook (console build: no window appears for a non-terminal child)..."
-$PY -m PyInstaller --noconfirm --clean --onedir --name claude-pet-hook claude_pet_hook.py
+$PY -m PyInstaller --noconfirm --clean --onedir --name aipet-hook aipet_hook.py
 
-echo "[3/3] Building ClaudePet.app..."
-$PY -m PyInstaller --noconfirm --clean --windowed --name ClaudePet \
-  --osx-bundle-identifier com.claudepet.app \
-  --icon assets/claude_pet.icns \
-  --add-data "dist/claude-pet-hook:hook" \
-  --add-data "claude_pet_hook.py:." \
+echo "[3/3] Building AIPet.app..."
+$PY -m PyInstaller --noconfirm --clean --windowed --name AIPet \
+  --osx-bundle-identifier com.aipet.app \
+  --icon assets/aipet.icns \
+  --add-data "dist/aipet-hook:hook" \
+  --add-data "aipet_hook.py:." \
   --add-data "assets/sprites:assets/sprites" \
-  claude_pet_app.py
+  aipet_app.py
 
 echo
-echo "Done: dist/ClaudePet.app (unsigned: first launch needs right-click > Open)"
+echo "Done: dist/AIPet.app (unsigned: first launch needs right-click > Open)"

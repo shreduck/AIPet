@@ -5,11 +5,12 @@ build/
 # python
 __pycache__/
 *.pyc
-# local runtime files if someone points CLAUDE_PET_DIR at the repo
+# local runtime files if someone points AIPET_DIR at the repo
 events.log
 *.log
-.claude-pet/
+.aipet/
 # Cowork plugin zip generated next to the app (or the script when run from source)
-claude-pet-cowork-plugin.zip
+aipet-cowork-plugin.zip
 # builds are published as GitHub Release assets by CI, never committed
 bin/
+claude-pet-cowork-plugin.zip

@@ -1,11 +1,11 @@
 """
-Install / remove Claude Pet hooks in Claude Code's settings.json,
+Install / remove AIPet hooks in Claude Code's settings.json,
 for Windows itself and for each auto-detected WSL distro.
 
 * Existing hooks are preserved; only entries whose command mentions
-  claude-pet-hook / claude_pet_hook are added or removed.
+  aipet-hook / aipet_hook are added or removed.
 * Every change is preceded by a timestamped backup kept on the Windows side in
-  ~/.claude-pet/backups/<target>/ (WSL backups included), so
+  ~/.aipet/backups/<target>/ (WSL backups included), so
   browsing backups never boots a distro. The oldest backup is never pruned.
 * Backups are byte-exact; "file did not exist" is recorded too (*.absent).
 * Restoring first backs up the current file, so every restore can be undone.
@@ -38,7 +38,7 @@ HOOK_EVENTS = [
 ]
 HOOK_TIMEOUTS = {"PermissionRequest": 86400}  # seconds; the answer timeout can be "no limit" (the hook
 # still ends as soon as the prompt is answered anywhere, or the pet closes)
-MARKER = re.compile(r"claude[-_]pet[-_]hook", re.I)
+MARKER = re.compile(r"(aipet|claude[-_]pet)[-_]hook", re.I)  # also the hooks of Claude Pet, the old name
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 IGNORED_DISTROS = {"docker-desktop", "docker-desktop-data", "rancher-desktop", "rancher-desktop-data"}
 IS_MAC = sys.platform == "darwin"
@@ -50,7 +50,7 @@ def is_local(key):
 
 
 HOME = os.path.expanduser("~")
-PET_DIR = os.path.join(HOME, ".claude-pet")
+PET_DIR = os.path.join(HOME, ".aipet")
 # Deliberately NOT under %LOCALAPPDATA%: when the app is started from a packaged (MSIX) app such as
 # Claude Desktop, Windows redirects AppData writes into a private per-package copy that other
 # processes (CLI, VS Code, WSL) cannot see, which silently breaks the installed hooks.
@@ -168,7 +168,7 @@ def _sync_file(src, dst):
 
 
 def deploy_files(only_if_deployed=False):
-    """Copy the hook (exe + script) to ~/.claude-pet/bin so settings can point at a stable path.
+    """Copy the hook (exe + script) to ~/.aipet/bin so settings can point at a stable path.
 
     With only_if_deployed=True this refreshes an existing deployment and does nothing
     otherwise, so merely starting the app never writes hook files; Install does.
@@ -178,7 +178,7 @@ def deploy_files(only_if_deployed=False):
         return
     os.makedirs(INSTALL_DIR, exist_ok=True)
     os.makedirs(os.path.join(PET_DIR, "sessions"), exist_ok=True)
-    _sync_file(resource_path("claude_pet_hook.py"), os.path.join(INSTALL_DIR, "claude_pet_hook.py"))
+    _sync_file(resource_path("aipet_hook.py"), os.path.join(INSTALL_DIR, "aipet_hook.py"))
     src = resource_path("hook")
     if os.path.isdir(src):
         for root, _dirs, files in os.walk(src):
@@ -192,7 +192,7 @@ def deploy_files(only_if_deployed=False):
 
 def windows_hook_command(check=True):
     if getattr(sys, "frozen", False):
-        exe = os.path.join(INSTALL_DIR, "hook", "claude-pet-hook.exe")
+        exe = os.path.join(INSTALL_DIR, "hook", "aipet-hook.exe")
         if check and not os.path.exists(exe):
             raise RuntimeError("Bundled hook executable is missing - rebuild with build.bat.")
         return f'"{fwd(exe)}"'
@@ -200,7 +200,7 @@ def windows_hook_command(check=True):
     pyw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
     if not os.path.exists(pyw):
         pyw = sys.executable
-    return f'"{fwd(pyw)}" "{fwd(os.path.join(INSTALL_DIR, "claude_pet_hook.py"))}"'
+    return f'"{fwd(pyw)}" "{fwd(os.path.join(INSTALL_DIR, "aipet_hook.py"))}"'
 
 
 # --------------------------------------------------------------------------- macOS: finding Python / hook command
@@ -249,11 +249,11 @@ def find_mac_python():
 
 
 def _mac_script_cmd(py):
-    return f"{shlex.quote(py)} {shlex.quote(os.path.join(INSTALL_DIR, 'claude_pet_hook.py'))}"
+    return f"{shlex.quote(py)} {shlex.quote(os.path.join(INSTALL_DIR, 'aipet_hook.py'))}"
 
 
 def _mac_builtin_cmd():
-    return shlex.quote(os.path.join(INSTALL_DIR, "hook", "claude-pet-hook"))
+    return shlex.quote(os.path.join(INSTALL_DIR, "hook", "aipet-hook"))
 
 
 def mac_hook_commands():
@@ -274,7 +274,7 @@ def mac_hook_command(runtime=None):
         if not py:
             raise RuntimeError("Python 3 wasn't found on this Mac.\nInstall it, or choose the built-in hook.")
         return _mac_script_cmd(py)
-    if not os.path.exists(os.path.join(INSTALL_DIR, "hook", "claude-pet-hook")):
+    if not os.path.exists(os.path.join(INSTALL_DIR, "hook", "aipet-hook")):
         raise RuntimeError("The built-in hook isn't part of this build.\nInstall Python 3 and choose it instead.")
     return _mac_builtin_cmd()
 
@@ -285,13 +285,13 @@ def legacy_dirs():
     base = os.environ.get("LOCALAPPDATA")
     if not base:
         return []
-    found = [os.path.join(base, "ClaudePet")]
+    found = [os.path.join(base, "ClaudePet")]  # pre-rename (Claude Pet) locations
     found += glob.glob(os.path.join(base, "Packages", "*", "LocalCache", "Local", "ClaudePet"))
     return [d for d in found if os.path.isdir(os.path.join(d, "backups"))]
 
 
 def migrate_legacy_backups():
-    """Copy backups from the old locations into ~/.claude-pet/backups (never deletes or overwrites).
+    """Copy backups from the old locations into ~/.aipet/backups (never deletes or overwrites).
 
     Returns the number of files copied. Runs until a legacy folder has been seen once.
     """
@@ -320,9 +320,9 @@ def migrate_legacy_backups():
 
 
 def hooks_state(settings, command):
-    """Compare the Claude Pet hook entries with the command we would install now.
+    """Compare the AIPet hook entries with the command we would install now.
 
-    "missing"   no Claude Pet hooks at all
+    "missing"   no AIPet hooks at all
     "outdated"  at least one entry uses a different command (e.g. an old location)
     "partial"   right command, but some of the events are not hooked
     "current"   every event uses exactly `command`
@@ -565,9 +565,9 @@ def install(key, runtime=None):
 def uninstall(key):
     _, text = read_raw(key)
     if not has_hooks(parse_settings(text)):
-        return f"No Claude Pet hooks found in {describe(key)}."
+        return f"No AIPet hooks found in {describe(key)}."
     _apply(key, remove_hooks, "before remove")
-    return f"Claude Pet hooks removed from {describe(key)}.\nA backup was taken first."
+    return f"AIPet hooks removed from {describe(key)}.\nA backup was taken first."
 
 
 # --------------------------------------------------------------------------- WSL helpers
@@ -618,8 +618,8 @@ def _has_python(distro):
 
 def wsl_hook_command(distro):
     pet_dir = _wslpath(distro, PET_DIR)
-    script = _wslpath(distro, os.path.join(INSTALL_DIR, "claude_pet_hook.py"))
-    return f"CLAUDE_PET_DIR={shlex.quote(pet_dir)} python3 {shlex.quote(script)}"
+    script = _wslpath(distro, os.path.join(INSTALL_DIR, "aipet_hook.py"))
+    return f"AIPET_DIR={shlex.quote(pet_dir)} python3 {shlex.quote(script)}"
 
 
 # --------------------------------------------------------------------------- detection for the setup window
@@ -712,13 +712,13 @@ def detect_targets(check_stopped=False):
 PLUGIN_NAME = "pet-hooks"  # names starting with "claude-" are reserved for Anthropic's own plugins
 PLUGIN_MARKET = "desktop-pet-local"
 PLUGIN_VERSION = "1.0.0"
-COWORK_ZIP = "claude-pet-cowork-plugin.zip"
+COWORK_ZIP = "aipet-cowork-plugin.zip"
 PLUGIN_MARKET_DIR = os.path.join(PET_DIR, "plugin-marketplace")  # stable path for `claude plugin marketplace add`
 _ZIP_TIME = (2026, 1, 1, 0, 0, 0)  # fixed timestamps -> identical bytes for identical content
 
 
 def app_dir():
-    """Folder holding ClaudePet.exe (or this script when running from source)."""
+    """Folder holding AIPet.exe (or this script when running from source)."""
     if getattr(sys, "frozen", False):
         return os.path.dirname(os.path.abspath(sys.executable))
     return os.path.dirname(os.path.abspath(__file__))
@@ -743,15 +743,15 @@ def plugin_hooks(command):
 def plugin_files(command):
     """{relative path: bytes} of the plugin's root folder."""
     readme = (
-        "Claude Pet hooks for the Claude desktop app (Cowork) and the Claude Code CLI.\n\n"
-        "Generated by Claude Pet for this computer: the hooks call the Claude Pet hook installed in\n"
-        f"{PET_DIR}. Regenerate it from Claude Pet (Claude Code hooks > Cowork) if that moves.\n\n"
-        "Don't use it in the same place as Claude Pet's settings.json hooks, or every event reaches the pet twice.\n")
+        "AIPet hooks for the Claude desktop app (Cowork) and the Claude Code CLI.\n\n"
+        "Generated by AIPet for this computer: the hooks call the AIPet hook installed in\n"
+        f"{PET_DIR}. Regenerate it from AIPet (Claude Code hooks > Cowork) if that moves.\n\n"
+        "Don't use it in the same place as AIPet's settings.json hooks, or every event reaches the pet twice.\n")
     return {
         ".claude-plugin/plugin.json": dump({
             "name": PLUGIN_NAME, "version": PLUGIN_VERSION,
-            "description": "Shows your Claude sessions on the Claude Pet desktop companion.",
-            "author": {"name": "Claude Pet"}}).encode(),
+            "description": "Shows your Claude sessions on the AIPet desktop companion.",
+            "author": {"name": "AIPet"}}).encode(),
         "hooks/hooks.json": dump(plugin_hooks(command)).encode(),
         "README.md": readme.encode(),
     }
@@ -784,7 +784,7 @@ def _zip_bytes(files):
 
 
 def build_plugin():
-    """Deploy the hook, then write the Cowork zip next to the exe (or to ~/.claude-pet if that folder is read-only)
+    """Deploy the hook, then write the Cowork zip next to the exe (or to ~/.aipet if that folder is read-only)
     and a local marketplace for the CLI. Returns {"zip": path, "market": dir, "command": hook command}.
     Files are only rewritten when their content changes."""
     deploy_files()
@@ -802,10 +802,10 @@ def build_plugin():
     if not zip_path:
         raise RuntimeError(f"Couldn't write {COWORK_ZIP}: {err}")
     market = {".claude-plugin/marketplace.json": dump({
-        "name": PLUGIN_MARKET, "owner": {"name": "Claude Pet"},
-        "metadata": {"description": "Local marketplace generated by Claude Pet for this computer."},
+        "name": PLUGIN_MARKET, "owner": {"name": "AIPet"},
+        "metadata": {"description": "Local marketplace generated by AIPet for this computer."},
         "plugins": [{"name": PLUGIN_NAME, "source": "./" + PLUGIN_NAME,
-                     "description": "Shows your Claude sessions on the Claude Pet desktop companion."}]}).encode()}
+                     "description": "Shows your Claude sessions on the AIPet desktop companion."}]}).encode()}
     market.update({f"{PLUGIN_NAME}/{rel}": b for rel, b in files.items()})
     for rel, b in market.items():
         _write_if_changed(os.path.join(PLUGIN_MARKET_DIR, *rel.split("/")), b)

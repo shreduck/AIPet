@@ -1,6 +1,6 @@
-name: Build Claude Pet
+name: Build AIPet
 
-# Builds ClaudePet.exe (Windows) and ClaudePet.app (macOS, Apple Silicon) and publishes them as GitHub Release
+# Builds AIPet.exe (Windows) and AIPet.app (macOS, Apple Silicon) and publishes them as GitHub Release
 # assets of this repo, so no binaries are committed:
 #   push to master  -> the rolling "latest" release (re-created on every build, marked pre-release)
 #   push a v* tag   -> a release for that version
@@ -30,8 +30,8 @@ jobs:
         run: build.bat
       - uses: actions/upload-artifact@v4
         with:
-          name: ClaudePet-windows
-          path: dist/ClaudePet.exe
+          name: AIPet-windows
+          path: dist/AIPet.exe
           if-no-files-found: error
 
   macos-arm64:
@@ -44,13 +44,13 @@ jobs:
       - name: Build
         run: bash build_mac.sh
       - name: Check architecture
-        run: file dist/ClaudePet.app/Contents/MacOS/ClaudePet | tee /dev/stderr | grep -q arm64
+        run: file dist/AIPet.app/Contents/MacOS/AIPet | tee /dev/stderr | grep -q arm64
       - name: Zip app
-        run: ditto -c -k --keepParent dist/ClaudePet.app ClaudePet-mac-arm64.zip  # keeps the bundle's symlinks
+        run: ditto -c -k --keepParent dist/AIPet.app AIPet-mac-arm64.zip  # keeps the bundle's symlinks
       - uses: actions/upload-artifact@v4
         with:
-          name: ClaudePet-mac-arm64
-          path: ClaudePet-mac-arm64.zip
+          name: AIPet-mac-arm64
+          path: AIPet-mac-arm64.zip
           if-no-files-found: error
 
   release:
@@ -71,8 +71,8 @@ jobs:
       - name: Collect files
         run: |
           mkdir -p out
-          cp artifacts/ClaudePet-windows/ClaudePet.exe out/
-          cp artifacts/ClaudePet-mac-arm64/ClaudePet-mac-arm64.zip out/
+          cp artifacts/AIPet-windows/AIPet.exe out/
+          cp artifacts/AIPet-mac-arm64/AIPet-mac-arm64.zip out/
           ls -la out
       - name: Version release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -81,7 +81,7 @@ jobs:
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" out/* --clobber
           else
-            gh release create "$tag" out/* --title "Claude Pet $tag" --generate-notes --verify-tag
+            gh release create "$tag" out/* --title "AIPet $tag" --generate-notes --verify-tag
           fi
       - name: Rolling "latest" release
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -92,5 +92,5 @@ jobs:
             --title "Latest build (${GITHUB_SHA::7})" \
             --notes "Automatic build of ${GITHUB_SHA} on ${GITHUB_REF_NAME}.
 
-          - **Windows:** \`ClaudePet.exe\` (unsigned: SmartScreen > More info > Run anyway)
-          - **macOS, Apple Silicon:** \`ClaudePet-mac-arm64.zip\` (unsigned: unzip, then right-click the app > Open the first time)"
+          - **Windows:** \`AIPet.exe\` (unsigned: SmartScreen > More info > Run anyway)
+          - **macOS, Apple Silicon:** \`AIPet-mac-arm64.zip\` (unsigned: unzip, then right-click the app > Open the first time)"

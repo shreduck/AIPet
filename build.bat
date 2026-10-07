@@ -8,19 +8,19 @@ echo [1/3] Installing build dependencies...
 %PY% -m pip install --upgrade -r requirements.txt || goto :err
 
 echo [2/3] Building the hook (no console, fast start)...
-%PY% -m PyInstaller --noconfirm --clean --windowed --onedir --name claude-pet-hook claude_pet_hook.py || goto :err
+%PY% -m PyInstaller --noconfirm --clean --windowed --onedir --name aipet-hook aipet_hook.py || goto :err
 
-echo [3/3] Building ClaudePet.exe...
-%PY% -m PyInstaller --noconfirm --clean --windowed --onefile --name ClaudePet ^
-  --icon assets\claude_pet.ico ^
-  --add-data "dist\claude-pet-hook;hook" ^
-  --add-data "claude_pet_hook.py;." ^
+echo [3/3] Building AIPet.exe...
+%PY% -m PyInstaller --noconfirm --clean --windowed --onefile --name AIPet ^
+  --icon assets\aipet.ico ^
+  --add-data "dist\aipet-hook;hook" ^
+  --add-data "aipet_hook.py;." ^
   --add-data "assets\sprites;assets\sprites" ^
   --hidden-import pystray._win32 ^
-  claude_pet_app.py || goto :err
+  aipet_app.py || goto :err
 
 echo.
-echo Done: dist\ClaudePet.exe
+echo Done: dist\AIPet.exe
 exit /b 0
 
 :err

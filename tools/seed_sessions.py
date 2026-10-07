@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Write a few fake sessions into ~/.claude-pet/sessions so the pet has something to draw without Claude Code
+"""Write a few fake sessions into ~/.aipet/sessions so the pet has something to draw without Claude Code
 (used by the mac-selftest workflow; also handy for checking the look locally). Remove them with --clear."""
 import json
 import os
 import sys
 import time
 
-SESSIONS = os.path.join(os.path.expanduser("~"), ".claude-pet", "sessions")
+SESSIONS = os.path.join(os.path.expanduser("~"), ".aipet", "sessions")
 FAKE = [
     {"id": "selftest-working", "title": "working", "state": "working", "app": "", "env": "mac"},
     {"id": "selftest-input", "title": "needs input", "state": "needs_input", "app": "", "env": "mac",

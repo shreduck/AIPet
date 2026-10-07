@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Claude Pet - Claude Code hook (Windows, WSL and VS Code).
+AIPet - Claude Code hook (Windows, WSL and VS Code).
 
 Claude Code pipes a JSON payload to this script on stdin for each hook event.
 We translate it into a pet state and write
-    <Windows home>\\.claude-pet\\sessions\\<session_id>.json
-which claude_pet.py (running on Windows) watches.
+    <Windows home>\\.aipet\\sessions\\<session_id>.json
+which aipet.py (running on Windows) watches.
 
     UserPromptSubmit / PostToolUse -> working
     Notification (permission etc.) -> needs_input
@@ -14,10 +14,10 @@ which claude_pet.py (running on Windows) watches.
     SessionEnd                     -> (file removed; Cowork: "done", cleared after the done timeout)
 
 Environment detection:
-    * WSL     -> writes into the *Windows* profile (/mnt/c/Users/<you>/.claude-pet),
+    * WSL     -> writes into the *Windows* profile (/mnt/c/Users/<you>/.aipet),
                  resolved once via cmd.exe + wslpath and cached.
     * VS Code -> the Claude Code extension or VS Code's integrated terminal.
-Override the target folder with CLAUDE_PET_DIR (path to the .claude-pet folder).
+Override the target folder with AIPET_DIR (path to the .aipet folder).
 
 Never prints and always exits 0, so it can't block Claude Code.
 """
@@ -33,7 +33,7 @@ WORKING_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStar
 # quota_auto_resume_fired, ...) is informational and must not raise a "needs you".
 ACTIONABLE_NOTIFICATIONS = {"permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input",
                             "quota_auto_resume_stale"}
-LOCAL_PET_DIR = os.path.join(os.path.expanduser("~"), ".claude-pet")
+LOCAL_PET_DIR = os.path.join(os.path.expanduser("~"), ".aipet")
 WSL_CACHE = os.path.join(LOCAL_PET_DIR, "windows-pet-dir.txt")
 
 
@@ -48,7 +48,7 @@ def is_wsl():
 
 
 def resolve_wsl_windows_dir():
-    """Return the Windows .claude-pet dir as a WSL path, cached after the first lookup."""
+    """Return the Windows .aipet dir as a WSL path, cached after the first lookup."""
     try:
         with open(WSL_CACHE, encoding="utf-8") as f:
             cached = f.read().strip()
@@ -63,7 +63,7 @@ def resolve_wsl_windows_dir():
             unix_home = subprocess.run(["wslpath", "-u", win_home], capture_output=True,
                                        text=True, timeout=3).stdout.strip()
             if unix_home and os.path.isdir(unix_home):
-                result = os.path.join(unix_home, ".claude-pet")
+                result = os.path.join(unix_home, ".aipet")
     except Exception:
         result = None
     try:  # cache success or failure ("LOCAL") so we never pay this cost again
@@ -76,7 +76,7 @@ def resolve_wsl_windows_dir():
 
 
 def sessions_dir(wsl):
-    base = os.environ.get("CLAUDE_PET_DIR")
+    base = os.environ.get("AIPET_DIR") or os.environ.get("CLAUDE_PET_DIR")  # the old name still works
     if not base and wsl:
         base = resolve_wsl_windows_dir()
     return os.path.join(base or LOCAL_PET_DIR, "sessions")
@@ -369,7 +369,7 @@ def write_stdout(text):
 def decision_output(behavior):
     decision = {"behavior": behavior}
     if behavior == "deny":
-        decision["message"] = "Denied from Claude Pet"
+        decision["message"] = "Denied from AIPet"
     return json.dumps({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": decision}})
 
 
@@ -411,7 +411,7 @@ def configured_wait(base):
     """Seconds the user allows for answering from the pet (0 = no limit). Set with the pet's "Answer timeout" slider,
     which mirrors it into <pet dir>/answer-wait; 3 minutes if it was never set."""
     try:
-        raw = os.environ.get("CLAUDE_PET_ANSWER_WAIT")
+        raw = os.environ.get("AIPET_ANSWER_WAIT") or os.environ.get("CLAUDE_PET_ANSWER_WAIT")
         if not raw:
             with open(os.path.join(base, "answer-wait"), encoding="utf-8") as f:
                 raw = f.read().strip()

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Claude Pet - tray application (entry point for ClaudePet.exe).
+AIPet - tray application (entry point for AIPet.exe).
 
-* Floating pet window (claude_pet.PetApp) that can be hidden to the system tray.
+* Floating pet window (aipet.PetApp) that can be hidden to the system tray.
 * Tray icon changes colour with the most urgent session and shows a Windows
   notification when a session needs your input.
 * Tray menu "Claude Code hooks" installs/removes hooks for Windows and for every
@@ -20,8 +20,9 @@ import tkinter as tk
 import webbrowser
 from tkinter import messagebox
 
-import claude_pet as core
+import aipet as core
 import hooks_installer as hi
+import legacy
 
 IS_MAC = sys.platform == "darwin"
 try:
@@ -32,10 +33,10 @@ try:
 except ImportError:  # still runs, just without a tray icon
     pystray = None
 
-APP_NAME = "Claude Pet"
+APP_NAME = "AIPet"
 PET_STYLES = [("robot", "Robot"), ("mole", "Mole"), ("cat", "Cat")]
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-LAUNCH_AGENT = os.path.expanduser("~/Library/LaunchAgents/com.claudepet.app.plist")
+LAUNCH_AGENT = os.path.expanduser("~/Library/LaunchAgents/com.aipet.app.plist")
 RANK = {"needs_input": 0, "error": 1, "working": 2, "done": 3, "idle": 4}
 _mutex = None
 SETUP_MARKER = os.path.join(core.HOME_DIR, "setup-done")
@@ -57,7 +58,7 @@ def single_instance():
             pass
         return True
     k32 = ctypes.windll.kernel32
-    _mutex = k32.CreateMutexW(None, False, "Local\\ClaudePetSingleton")
+    _mutex = k32.CreateMutexW(None, False, "Local\\AIPetSingleton")
     return k32.GetLastError() != 183  # ERROR_ALREADY_EXISTS
 
 
@@ -80,7 +81,7 @@ def open_path(path):
 
 
 def windows_sees_autostart():
-    """Ask Windows itself (WMI, served by a normal system service) whether ClaudePet is a startup command.
+    """Ask Windows itself (WMI, served by a normal system service) whether AIPet is a startup command.
     A plain registry read can be fooled: a process started inside another app's container (for example the Claude
     desktop app) reads and writes a private overlay of the registry that Windows ignores at login.
     Returns True/False, or None if it can't be determined."""
@@ -89,7 +90,7 @@ def windows_sees_autostart():
     try:
         out = subprocess.run(
             ["powershell.exe", "-NoProfile", "-Command",
-             "(Get-CimInstance Win32_StartupCommand | Where-Object { $_.Name -eq 'ClaudePet' } | Measure-Object).Count"],
+             "(Get-CimInstance Win32_StartupCommand | Where-Object { $_.Name -eq 'AIPet' } | Measure-Object).Count"],
             capture_output=True, text=True, timeout=25, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout.strip()
         return int(out) > 0
     except (OSError, ValueError, subprocess.TimeoutExpired):
@@ -104,7 +105,7 @@ def autostart_enabled():
     try:
         import winreg
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
-            winreg.QueryValueEx(k, "ClaudePet")
+            winreg.QueryValueEx(k, "AIPet")
             return True
     except OSError:
         return False
@@ -117,7 +118,7 @@ def set_autostart(on):
             args = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, os.path.abspath(__file__)]
             os.makedirs(os.path.dirname(LAUNCH_AGENT), exist_ok=True)
             with open(LAUNCH_AGENT, "wb") as f:
-                plistlib.dump({"Label": "com.claudepet.app", "ProgramArguments": args, "RunAtLoad": True}, f)
+                plistlib.dump({"Label": "com.aipet.app", "ProgramArguments": args, "RunAtLoad": True}, f)
         else:
             try:
                 os.remove(LAUNCH_AGENT)
@@ -127,10 +128,10 @@ def set_autostart(on):
     import winreg
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
         if on:
-            winreg.SetValueEx(k, "ClaudePet", 0, winreg.REG_SZ, launch_command())
+            winreg.SetValueEx(k, "AIPet", 0, winreg.REG_SZ, launch_command())
         else:
             try:
-                winreg.DeleteValue(k, "ClaudePet")
+                winreg.DeleteValue(k, "AIPet")
             except FileNotFoundError:
                 pass
 
@@ -242,7 +243,7 @@ class TrayApp:
 
         self.icon = None
         if pystray:
-            self.icon = pystray.Icon("claude-pet", make_icon("idle"), APP_NAME, menu=self.build_menu())
+            self.icon = pystray.Icon("aipet", make_icon("idle"), APP_NAME, menu=self.build_menu())
             self.icon.run_detached()
 
         threading.Thread(target=self._startup_jobs, daemon=True).start()
@@ -260,7 +261,7 @@ class TrayApp:
         except queue.Empty:
             pass
         except Exception as e:
-            print(f"[claude-pet] ui error: {e}", file=sys.stderr)
+            print(f"[aipet] ui error: {e}", file=sys.stderr)
         self.c_muted = self.pet.muted.get()
         self.c_wb = self.pet.wb.status if self.pet.wb else "off"
         self.update_tray()
@@ -278,7 +279,7 @@ class TrayApp:
         try:
             hi.migrate_legacy_backups()  # pull backups over from the old %LOCALAPPDATA% location
         except Exception as e:
-            print(f"[claude-pet] backup migration failed: {e}", file=sys.stderr)
+            print(f"[aipet] backup migration failed: {e}", file=sys.stderr)
         try:
             hi.deploy_files(only_if_deployed=True)  # refresh an existing install only; never create one
             if os.path.isdir(hi.INSTALL_DIR) and (os.name == "nt" or IS_MAC):
@@ -325,7 +326,7 @@ class TrayApp:
         win.resizable(False, False)
         grey = "#6b7280"
 
-        tk.Label(win, text="Where should Claude Pet watch Claude Code?", font=("Segoe UI", 12, "bold")
+        tk.Label(win, text="Where should AIPet watch Claude Code?", font=("Segoe UI", 12, "bold")
                  ).pack(anchor="w", padx=16, pady=(14, 2))
         tk.Label(win, justify="left", wraplength=430, fg=grey,
                  text="These are the Claude Code installs I found. Tick the ones to hook up.").pack(anchor="w", padx=16)
@@ -386,7 +387,7 @@ class TrayApp:
         cw.pack(fill="x", padx=16, pady=(0, 10))
         tk.Label(cw, justify="left", wraplength=410, font=("Segoe UI", 8),
                  text="Cowork ignores settings.json, so it needs the hooks as a plugin, which only the Claude app "
-                      "can install. Claude Pet built it for you:\n" + (zip_path or hi.COWORK_ZIP + " (not built yet)") + "\n"
+                      "can install. AIPet built it for you:\n" + (zip_path or hi.COWORK_ZIP + " (not built yet)") + "\n"
                       "1. Claude app > Customize > Plugins > upload that zip, and keep its hooks on.\n"
                       "2. Restart the Claude app and start a new Cowork session."
                  ).pack(anchor="w", padx=8, pady=(4, 2))
@@ -508,7 +509,7 @@ class TrayApp:
 
         h("Claude desktop app (Cowork)")
         p("Cowork runs its own Claude Code that never reads settings.json, so the pet's hooks reach it as a plugin. "
-          "Only the Claude app can install plugins, so ClaudePet.exe can't do this step for you. Your plugin zip:",
+          "Only the Claude app can install plugins, so AIPet.exe can't do this step for you. Your plugin zip:",
           fg=grey)
         path_row(res["zip"], lambda: reveal(res["zip"]))
         p("1. Open the Claude app > Customize > Plugins.\n"
@@ -532,7 +533,7 @@ class TrayApp:
         p(f"Inside Claude Code the same works with /plugin marketplace add and /plugin install. "
           f"To remove it: claude plugin uninstall {hi.PLUGIN_NAME}@{hi.PLUGIN_MARKET}", fg=grey)
 
-        p("\nThe plugin calls the hook in " + hi.INSTALL_DIR + ", which Claude Pet keeps up to date. "
+        p("\nThe plugin calls the hook in " + hi.INSTALL_DIR + ", which AIPet keeps up to date. "
           "Rebuild and re-upload only if that folder moves.", fg=grey)
         tk.Button(win, text="Close", width=12, command=close, default="active").pack(anchor="e", padx=16, pady=12)
         win.protocol("WM_DELETE_WINDOW", close)
@@ -582,7 +583,7 @@ class TrayApp:
         self.show_setup()
 
     def python_help(self):
-        if self.ask("Python 3 makes Claude Pet's hook faster.\n\nThe simplest way is the installer from python.org. "
+        if self.ask("Python 3 makes AIPet's hook faster.\n\nThe simplest way is the installer from python.org. "
                     "Open the download page in your browser?"):
             webbrowser.open("https://www.python.org/downloads/macos/")
         if self.ask("Alternatively, Apple's Command Line Tools include Python 3 (about 1 GB). This opens Apple's own "
@@ -604,7 +605,7 @@ class TrayApp:
 
     def offer_update(self, keys):
         names = "\n".join("  - " + hi.describe(k) for k in keys)
-        if self.ask("Claude Pet's hooks here point at an older location and may not be working:\n\n"
+        if self.ask("AIPet's hooks here point at an older location and may not be working:\n\n"
                     f"{names}\n\nUpdate them now? Your other hooks and settings are kept, and each file is "
                     "backed up first."):
             if self.busy:
@@ -782,11 +783,11 @@ class TrayApp:
     def confirm(self, key, install):
         where = hi.describe(key)
         if install:
-            text = (f"Add Claude Pet hooks to:\n{where}\n\nYour existing hooks and settings are kept, and the "
+            text = (f"Add AIPet hooks to:\n{where}\n\nYour existing hooks and settings are kept, and the "
                     f"current file is backed up first (tray > Claude Code hooks > Restore backup).\n"
                     f"Only Claude Code sessions started afterwards will show up.")
         else:
-            text = f"Remove Claude Pet hooks from:\n{where}\n\nOther hooks are left untouched and a backup is taken first."
+            text = f"Remove AIPet hooks from:\n{where}\n\nOther hooks are left untouched and a backup is taken first."
         if self.ask(text):
             self.start_job(key, "install" if install else "remove")
 
@@ -795,7 +796,7 @@ class TrayApp:
         if b["absent"]:
             lines.append("settings.json did not exist at that point, so it will be DELETED.")
         else:
-            lines.append(f"That version {'contains' if b['pet_hooks'] else 'does not contain'} Claude Pet hooks "
+            lines.append(f"That version {'contains' if b['pet_hooks'] else 'does not contain'} AIPet hooks "
                          f"({b['size']} bytes).")
             if not b["valid_json"]:
                 lines.append("Warning: that backup is not valid JSON - Claude Code may reject it.")
@@ -889,7 +890,7 @@ class TrayApp:
         self.refresh_menu()
 
     def toggle_debug(self):
-        """Start/stop writing ~/.claude-pet/events.log (metadata only; see the hook's debug_log)."""
+        """Start/stop writing ~/.aipet/events.log (metadata only; see the hook's debug_log)."""
         try:
             if os.path.exists(DEBUG_FLAG):
                 os.remove(DEBUG_FLAG)
@@ -914,9 +915,9 @@ class TrayApp:
             except OSError:
                 pass
             self.info("Windows does not see the startup entry, so it would not start at login.\n\n"
-                      "This usually means this copy of Claude Pet was started from inside another app (for example the Claude "
+                      "This usually means this copy of AIPet was started from inside another app (for example the Claude "
                       "desktop app), which keeps its registry changes in a private area that Windows ignores at login.\n\n"
-                      "Quit Claude Pet, start ClaudePet.exe from File Explorer, and switch 'Start with Windows' on again.",
+                      "Quit AIPet, start AIPet.exe from File Explorer, and switch 'Start with Windows' on again.",
                       error=True)
         self.c_autostart = autostart_enabled()
         if hasattr(self, "autostart_var"):
@@ -933,6 +934,98 @@ class TrayApp:
             except Exception:
                 pass
         self.root.destroy()
+
+
+# --------------------------------------------------------------------------- first start after the rename
+def migration_window():
+    """Explain the Claude Pet -> AIPet changes, close the old app (or ask the user to), copy the settings.
+    Returns False if the user chose to quit."""
+    root = tk.Tk()
+    root.title(f"Claude Pet is now {APP_NAME}")
+    root.attributes("-topmost", True)
+    root.resizable(False, False)
+    grey, red = "#6b7280", "#b91c1c"
+    p = legacy.plan()
+    result = {"go": False}
+    home = "~" if IS_MAC else "%USERPROFILE%"
+    sep = "/" if IS_MAC else "\\"
+    copied = ", ".join(p["copy"]) or "nothing to copy"
+    lines = [
+        ("Settings folder", f"{home}{sep}.claude-pet  ->  {home}{sep}.aipet\nCopied: {copied}. The old folder is kept "
+                            "(older hooks still write there and AIPet keeps reading it); a note inside says when "
+                            "you can delete it."),
+        ("Claude Code hooks", "Your settings.json files still call the old claude-pet-hook. Right after this, AIPet "
+                              "offers to update them (each file is backed up first). WSL distros that aren't running "
+                              "can be updated later from the menu: Claude Code hooks."),
+    ]
+    if p["autostart"]:
+        lines.append(("Start " + ("at login" if IS_MAC else "with Windows"),
+                      "Moved from Claude Pet to AIPet."))
+    lines += [
+        ("Cowork plugin", f"Rebuilt as {hi.COWORK_ZIP}. In the Claude app: Customize > Plugins, uninstall the old "
+                          f"{hi.PLUGIN_NAME} plugin and upload the new zip (menu: Claude Code hooks > Cowork)."),
+        ("Claude Code CLI plugin", "Only if you installed it: run the two commands from Claude Code hooks > Cowork "
+                                   "again (its folder moved)."),
+        ("The old app", ("Delete ClaudePet.app" if IS_MAC else "Delete ClaudePet.exe") + " once AIPet is running."),
+    ]
+    tk.Label(root, text=f"Claude Pet has a new name: {APP_NAME}", font=("Segoe UI", 13, "bold")
+             ).pack(anchor="w", padx=16, pady=(14, 2))
+    tk.Label(root, text="Here is what changes on this computer:", fg=grey).pack(anchor="w", padx=16)
+    body = tk.Frame(root)
+    body.pack(fill="x", padx=16, pady=8)
+    for head, text in lines:
+        tk.Label(body, text=head, font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(6, 0))
+        tk.Label(body, text=text, justify="left", wraplength=480, font=("Segoe UI", 9)).pack(anchor="w")
+    status = tk.Label(root, fg=red, justify="left", wraplength=480, font=("Segoe UI", 9, "bold"))
+    status.pack(anchor="w", padx=16)
+
+    def refresh_status():
+        status.config(text="Claude Pet is still running. AIPet will close it when you continue." if legacy.old_running()
+                      else "")
+
+    def ensure_closed():
+        if not legacy.old_running():
+            return True
+        status.config(text="Closing Claude Pet...")
+        root.update()
+        while not legacy.close_old():
+            if not messagebox.askretrycancel(
+                    APP_NAME, "AIPet couldn't close Claude Pet by itself.\n\nQuit it yourself: right-click its "
+                    + ("pet > Quit" if IS_MAC else "tray icon (near the clock) > Quit") + ", then press Retry.\n\n"
+                    "Cancel quits AIPet without changing anything.", parent=root):
+                return False
+        return True
+
+    def go(copy):
+        if not ensure_closed():
+            root.destroy()
+            return
+        try:
+            if copy:
+                done = legacy.migrate(set_new_autostart=set_autostart)
+                messagebox.showinfo(APP_NAME, "Done:\n\n" + ("\n".join("- " + d for d in done) or "- nothing to copy")
+                                    + "\n\nNext, AIPet offers to update your hooks.", parent=root)
+            else:
+                legacy.mark_done()
+        except Exception as e:
+            messagebox.showerror(APP_NAME, f"Copying the old settings failed:\n{e}\n\nAIPet starts with default "
+                                           "settings; the old folder is untouched.", parent=root)
+            legacy.mark_done()
+        result["go"] = True
+        root.destroy()
+
+    row = tk.Frame(root)
+    row.pack(fill="x", padx=16, pady=(8, 14))
+    tk.Button(row, text="Continue", width=12, default="active", command=lambda: go(True)).pack(side="right")
+    tk.Button(row, text="Start fresh (don't copy)", command=lambda: go(False)).pack(side="right", padx=8)
+    tk.Button(row, text="Quit", width=8, command=root.destroy).pack(side="left")
+    root.protocol("WM_DELETE_WINDOW", root.destroy)
+    refresh_status()
+    root.update_idletasks()
+    root.geometry(f"+{max(0, (root.winfo_screenwidth() - root.winfo_reqwidth()) // 2)}"
+                  f"+{max(0, (root.winfo_screenheight() - root.winfo_reqheight()) // 3)}")
+    root.mainloop()
+    return result["go"]
 
 
 def main():
@@ -960,6 +1053,8 @@ def main():
         return
     if not single_instance():
         return  # already running in the tray
+    if legacy.needs_migration() and not migration_window():
+        return
     TrayApp().root.mainloop()
 
 

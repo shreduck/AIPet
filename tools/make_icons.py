@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the app icons from the robot sprite: assets/claude_pet.ico (Windows exe), assets/claude_pet.icns (macOS app)
+"""Build the app icons from the robot sprite: assets/aipet.ico (Windows exe), assets/aipet.icns (macOS app)
 and assets/icon.png (1024 px preview). Run from anywhere: python tools/make_icons.py
 
 Large sizes are integer nearest-neighbour enlargements, so the pixel art stays crisp; sizes too small for that are
@@ -13,14 +13,14 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 try:
     import tkinter  # noqa: F401
-except ImportError:  # claude_pet imports tkinter at module level; the sprite code doesn't need it
+except ImportError:  # aipet imports tkinter at module level; the sprite code doesn't need it
     stub = types.ModuleType("tkinter")
     stub.Tk = stub.Frame = stub.Toplevel = stub.Canvas = object
     sys.modules["tkinter"] = stub
 
 from PIL import Image  # noqa: E402
 
-import claude_pet as core  # noqa: E402
+import aipet as core  # noqa: E402
 
 FACE, LIGHTS = "happy", ("amber", "green", "off")  # the mascot as it looks while working
 FILL = 0.92  # share of the icon's height the robot uses
@@ -44,13 +44,13 @@ def main():
     assets = os.path.join(ROOT, "assets")
     ico_sizes = [16, 20, 24, 32, 40, 48, 64, 128, 256]
     master = icon(256)
-    master.save(os.path.join(assets, "claude_pet.ico"), sizes=[(s, s) for s in ico_sizes],
+    master.save(os.path.join(assets, "aipet.ico"), sizes=[(s, s) for s in ico_sizes],
                 append_images=[icon(s) for s in ico_sizes if s != 256])
     big = icon(1024)
     big.save(os.path.join(assets, "icon.png"))
-    big.save(os.path.join(assets, "claude_pet.icns"),
+    big.save(os.path.join(assets, "aipet.icns"),
              append_images=[icon(s) for s in (16, 32, 64, 128, 256, 512)])
-    print("wrote assets/claude_pet.ico, assets/claude_pet.icns, assets/icon.png")
+    print("wrote assets/aipet.ico, assets/aipet.icns, assets/icon.png")
 
 
 if __name__ == "__main__":
