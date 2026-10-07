@@ -281,7 +281,7 @@ def read_claude_code_sessions(cfg):
             paths += glob.glob(os.path.join(d, "*.json"))
         except OSError:
             continue  # e.g. WSL distro not running
-    seen_ids = set()
+    newest = {}  # session id -> (path, record): the same session can have a file in two folders (old and new hooks)
     for path in paths:
         try:
             with open(path, encoding="utf-8") as f:
@@ -295,9 +295,19 @@ def read_claude_code_sessions(cfg):
                 pass
             continue
         sid = str(rec.get("id"))
-        if sid in seen_ids:
-            continue
-        seen_ids.add(sid)
+        old = newest.get(sid)
+        if old and old[1].get("updated", 0) >= rec.get("updated", 0):
+            stale_path = path
+        else:
+            stale_path = old[0] if old else None
+            newest[sid] = (path, rec)
+        if stale_path:  # an older copy of a session that is written elsewhere now: drop it
+            try:
+                os.remove(stale_path)
+            except OSError:
+                pass
+    for path, rec in sorted(newest.values(), key=lambda pr: pr[0]):
+        sid = str(rec.get("id"))
         env, ide = rec.get("env", ""), rec.get("ide", "")
         cowork = rec.get("app") == "cowork"
         badges = ["CW"] if cowork else (["WSL"] if env == "wsl" else [])
