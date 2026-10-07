@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import aipet
 import aipet_hook
 import aipet_update
+import aipet_selftest
 import aipet_usage as usage
 import hooks_installer as installer
 
@@ -160,6 +161,31 @@ class UsageTests(unittest.TestCase):
             self.assertEqual(aipet_update.latest_release()["tag"], "v1.0.0")
             context.load_verify_locations.assert_called_once_with(cafile="trusted-ca.pem")
             self.assertIs(urlopen.call_args.kwargs["context"], context)
+
+    def test_ci_rate_limit_response_confirms_tls(self):
+        error = aipet_update.urllib.error.HTTPError(aipet_update.API_URL, 403, "rate limit exceeded",
+                                                   {"X-RateLimit-Remaining": "0"}, None)
+        with patch.object(aipet_update, "latest_release", side_effect=error):
+            result = aipet_selftest.check_update()
+        self.assertTrue(result["tls_verified"])
+        self.assertEqual(result["http_status"], 403)
+        self.assertEqual(result["rate_limit_remaining"], "0")
+        self.assertNotIn("release", result)
+
+    def test_ci_certificate_failure_remains_failure(self):
+        with patch.object(aipet_update, "latest_release", side_effect=aipet_update.ssl.SSLCertVerificationError("bad certificate")):
+            result = aipet_selftest.check_update()
+        self.assertFalse(result["tls_verified"])
+        self.assertNotIn("http_status", result)
+
+    def test_ci_token_used_only_when_explicitly_supplied(self):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = b'{"tag_name":"v1.0.0"}'
+        with patch.dict(sys.modules, {"certifi": MagicMock()}), patch.object(aipet_update.ssl, "create_default_context"), patch.object(aipet_update.urllib.request, "urlopen", return_value=response) as urlopen:
+            aipet_update.latest_release(token="ci-test-placeholder")
+            self.assertEqual(urlopen.call_args.args[0].get_header("Authorization"), "Bearer ci-test-placeholder")
+            aipet_update.latest_release()
+            self.assertIsNone(urlopen.call_args.args[0].get_header("Authorization"))
 
     def test_mac_mutually_exclusive_behaviors_are_cleared(self):
         # Execute the native flag policy without loading macOS's ObjC runtime.

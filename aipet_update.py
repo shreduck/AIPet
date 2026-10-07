@@ -57,9 +57,12 @@ def is_newer(latest, current):
     return bool(a and b and a > b)
 
 
-def latest_release(timeout=10):
+def latest_release(timeout=10, token=None):
     """{"tag", "url", "name", "published"} of the newest published release. Raises on network / API errors."""
-    req = urllib.request.Request(API_URL, headers={"Accept": "application/vnd.github+json", "User-Agent": "AIPet"})
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "AIPet"}
+    if token:  # supplied only by the opt-in CI probe; never persisted or bundled
+        headers["Authorization"] = "Bearer " + token
+    req = urllib.request.Request(API_URL, headers=headers)
     context = ssl.create_default_context()
     # Frozen macOS Python often has no system CA path. Keep platform trust and
     # supplement it with the CA bundle shipped with the app.

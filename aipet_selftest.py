@@ -4,11 +4,24 @@ import os
 import threading
 import time
 from pathlib import Path
+import urllib.error
+
+
+def check_update(token=None):
+    import aipet_update as updates
+    try:
+        return {"release": updates.latest_release(token=token), "tls_verified": True}
+    except urllib.error.HTTPError as e:
+        # An HTTP response means certificate verification already succeeded.
+        return {"error": repr(e), "tls_verified": True, "http_status": e.code,
+                "rate_limit_remaining": e.headers.get("X-RateLimit-Remaining") if e.headers else None,
+                "rate_limit_reset": e.headers.get("X-RateLimit-Reset") if e.headers else None}
+    except Exception as e:
+        return {"error": repr(e), "tls_verified": False}
 
 
 def start_spaces_probe(app, output):
     import mac_statusbar as mac
-    import aipet_update as updates
 
     os.makedirs(output, exist_ok=True)
     request_path = os.path.join(output, "request.json")
@@ -44,11 +57,8 @@ def start_spaces_probe(app, output):
             publish({"id": request["id"], "error": repr(e)})
 
     def update_probe(request):
-        try:
-            result = updates.latest_release()
-            publish({"id": request["id"], "release": result})
-        except Exception as e:
-            publish({"id": request["id"], "error": repr(e)})
+        result = check_update(token=os.environ.get("AIPET_TEST_GITHUB_TOKEN"))
+        publish({"id": request["id"], **result})
 
     def poll():
         nonlocal last_id

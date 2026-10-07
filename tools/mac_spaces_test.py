@@ -100,7 +100,11 @@ return desktopCount
 
     try:
         update = request("update-https", action="update")
-        records.append({"check": "HTTPS update check", "status": "failed" if update.get("error") else "passed"})
+        records.append({"check": "HTTPS certificate verification", "status": "passed" if update.get("tls_verified") else "failed"})
+        rate_limited = update.get("http_status") == 429 or (update.get("http_status") == 403 and update.get("rate_limit_remaining") == "0")
+        records.append({"check": "GitHub latest release lookup",
+                        "status": "skipped" if rate_limited else ("failed" if update.get("error") else "passed"),
+                        **({"reason": "GitHub rate limit exhausted; TLS verification succeeded"} if rate_limited else {})})
         baseline = check_flags("all-desktops-on", True)
         check_flags("all-desktops-off", False)
         check_flags("off-after-remap", False, remap=True)
