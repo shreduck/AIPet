@@ -61,6 +61,8 @@ Cowork runs its own Claude Code with a private config folder, so it never reads 
 2. In the Claude app: **Customize > Plugins > upload** the zip, and keep the plugin's hooks enabled.
 3. Restart the Claude app and start a new Cowork session.
 
+Cowork ends its session after every reply, so a Cowork pet isn't removed then: it turns *done* and disappears after `hide_done_after_minutes` (30 by default, in `config.json`), like any finished session. Your next message brings it back.
+
 Cowork sessions get an orange **CW** badge and are named after the folder you connected to the session (`Name +2` when there are several), or after your first prompt when no folder is connected.
 
 The plugin (`pet-hooks`) calls the same hook as `settings.json` (`~\.claude-pet\bin`), so updating Claude Pet updates it too. Remove it from Customize > Plugins.

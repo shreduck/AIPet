@@ -11,7 +11,7 @@ which claude_pet.py (running on Windows) watches.
     Notification (permission etc.) -> needs_input
     Stop                           -> done
     SessionStart                   -> idle
-    SessionEnd                     -> (file removed)
+    SessionEnd                     -> (file removed; Cowork: "done", hidden after hide_done_after_minutes)
 
 Environment detection:
     * WSL     -> writes into the *Windows* profile (/mnt/c/Users/<you>/.claude-pet),
@@ -683,6 +683,22 @@ def main():
     target = sessions_dir(wsl)
     os.makedirs(target, exist_ok=True)
     path = os.path.join(target, safe_name(session_id) + ".json")
+
+    if event == "SessionEnd" and (is_cowork() or read_json(path).get("app") == "cowork"):
+        # Cowork ends its Claude Code session after every turn (and when the app closes), so removing the pet here
+        # would make it vanish as soon as it answers. Mark it done instead: the pet then hides it after
+        # hide_done_after_minutes, like any finished session, and the next message brings it back.
+        with SessionLock(path):
+            rec = read_json(path)
+            prev_state = rec.get("state")
+            if rec:
+                now = time.time()
+                rec.update({"state": "done", "message": "", "agents": {}, "main_stopped": False, "wait_agent": "",
+                            "request": {}, "updated": now,
+                            "changed": now if prev_state != "done" else rec.get("changed", now)})
+                write_atomic(path, rec)
+            debug_log(os.path.dirname(target), event, data, prev_state, "done (cowork: kept until timeout)")
+        return
 
     if event == "SessionEnd":
         debug_log(os.path.dirname(target), event, data, read_json(path).get("state"), "(removed)")
