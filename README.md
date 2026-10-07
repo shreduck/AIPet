@@ -65,9 +65,14 @@ Backups are plain copies of your `settings.json`. If you keep secrets in it (e.g
 
 **Pet:** hover for details, click to acknowledge a pet that needs input (or dismiss a done one), drag to move. Right-click opens the menu, including *Open in VS Code*.
 
-## Taskbar / Dock icon
+## Taskbar / Dock / menu bar icon
 The tray icon (Windows) and the Dock icon (macOS) show the robot: white normally, **red** with a "?" face while a session
 needs you (worried face on an error). On macOS the Dock icon also bounces once when that starts.
+
+On macOS AIPet also has a **menu-bar icon** (top right): a line-art robot in the menu bar's own colour, red while a
+session needs you. Its menu is the same as the Windows tray menu (hooks for Claude Code and Codex, compact mode, sounds,
+theme, sizes, timeouts, start at login, quit...). It is built with the Objective-C runtime directly (`mac_statusbar.py`),
+so no extra packages are needed.
 
 ## Codex
 AIPet also shows **Codex** (OpenAI's coding agent) sessions, with a green `CX` badge. Codex has the same kind of hooks as

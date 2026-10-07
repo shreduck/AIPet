@@ -193,6 +193,25 @@ def robot_icon(state):
     return im
 
 
+def menu_bar_icons():
+    """macOS menu bar: a line-art robot as a template image (macOS paints its opaque pixels in the menu bar's colour:
+    outline, screen and lights solid, white body and cyan face left out) and the red robot for 'needs you'."""
+    from PIL import Image  # this module skips the PIL import on macOS (no pystray tray there)
+    im = core.robot_image("happy", ("off", "off", "off")).copy()
+    px = im.load()
+    for y in range(im.height):
+        for x in range(im.width):
+            r, g, b, a = px[x, y]
+            dark = a and (r * 299 + g * 587 + b * 114) / 1000 < 110
+            px[x, y] = (0, 0, 0, 255) if dark else (0, 0, 0, 0)
+    pad = Image.new("RGBA", (im.width + 4, im.height + 4), (0, 0, 0, 0))
+    pad.paste(im, (2, 2), im)
+    red = robot_icon("needs_input")
+    red_pad = Image.new("RGBA", (red.width + 4, red.height + 4), (0, 0, 0, 0))
+    red_pad.paste(red, (2, 2), red)
+    return {"normal": pad, "attention": red_pad}
+
+
 def dock_image(state, size=256):
     """macOS Dock icon (see robot_icon), centred on a square canvas."""
     from PIL import Image  # this module skips the PIL import on macOS (no tray there)
@@ -278,6 +297,13 @@ class TrayApp:
         if pystray:
             self.icon = pystray.Icon("aipet", make_icon("idle"), APP_NAME, menu=self.build_menu())
             self.icon.run_detached()
+        self.status_item = None  # macOS menu bar (pystray can't share the main thread with Tk there)
+        if IS_MAC:
+            try:
+                import mac_statusbar
+                self.status_item = mac_statusbar.StatusItem(self._mac_menu_spec, self.ui, menu_bar_icons())
+            except Exception as e:
+                core.log_error(f"menu bar icon: {e!r}")
 
         threading.Thread(target=self._startup_jobs, daemon=True).start()
         self.pump()
@@ -808,6 +834,14 @@ class TrayApp:
         if not self.icon:
             if IS_MAC:
                 self.update_dock()
+                if self.status_item:
+                    top, text = self.summary()
+                    if (top, text) != self._icon_key:
+                        self._icon_key = (top, text)
+                        try:
+                            self.status_item.set_state("attention" if top in ("needs_input", "error") else "normal", text)
+                        except Exception as e:
+                            core.log_error(f"menu bar icon: {e!r}")
             return
         top, text = self.summary()
         if (top, text) != self._icon_key:
@@ -921,6 +955,63 @@ class TrayApp:
             M.SEPARATOR,
             I("Quit", act(self.quit)),
         )
+
+    # ---- macOS menu bar: the same menu as the Windows tray, as a spec for mac_statusbar (rebuilt on every open)
+    def _mac_menu_spec(self):
+        def item(label, action=None, checked=False, enabled=True, submenu=None):
+            return {"label": label, "action": action, "checked": checked, "enabled": enabled, "submenu": submenu}
+
+        def target(name, key):
+            st = self.status.get(key, "checking…")
+            backups = hi.list_backups(key)[:15]
+            restore = [item(f"{b['when']} - {b['reason']}" + ("  [original]" if b["original"] else ""),
+                            lambda b=b: self.confirm_restore(key, b)) for b in backups] or [item("No backups yet", enabled=False)]
+            return item(f"{'✓ ' if st.startswith('installed') else ''}{name}  ({st})", submenu=[
+                item("Install / update hooks", lambda: self.confirm(key, True)),
+                item("Remove hooks", lambda: self.confirm(key, False)),
+                None,
+                item("Restore backup", submenu=restore),
+                item("Back up now", lambda: self.start_job(key, "backup")),
+                item("Open backups folder", lambda: self.open_backups(key)),
+            ])
+
+        refresh = lambda: threading.Thread(target=self.refresh_targets, daemon=True).start()  # noqa: E731
+        claude = [target("This Mac", hi.LOCAL), None,
+                  item("Cowork (Claude desktop app)...", self.show_cowork),
+                  item("Run setup again...", self.show_setup),
+                  item("Check for old Claude Pet hooks...", lambda: self.check_legacy(True)),  # LEGACY
+                  item("Re-detect / refresh status", refresh)]
+        codex = [target(lab, key) for lab, key in self.codex_targets] or [item("Codex not found", enabled=False)]
+        codex += [None, item("Run setup again...", self.show_setup), item("Re-detect / refresh status", refresh)]
+        cfg = self.pet.cfg
+        return [
+            item("Show pet" if self.hidden else "Hide pet", self.toggle),
+            None,
+            item("Claude Code hooks", submenu=claude),
+            item("Codex hooks", submenu=codex),
+            None,
+            item("Compact mode (one pet)", self.pet.toggle_compact, checked=bool(cfg.get("compact"))),
+            item("Answer Codex prompts from the pet", lambda: self.pet.set_codex_answers(not cfg.get("codex_answers")),
+                 checked=bool(cfg.get("codex_answers"))),
+            item("Mute sounds", self.toggle_mute, checked=self.c_muted),
+            item("Notifications", self.toggle_notify, checked=self.c_notify),
+            item("Dark theme", self.toggle_theme, checked=core.T.get("name") == "dark"),
+            item("Pet style", submenu=[item(label, lambda k=key: self.set_style(k), checked=core.STYLE["v"] == key)
+                                       for key, label in PET_STYLES]),
+            item("Pet size...", self.pet.open_size_slider),
+            item("Reset pet size", self.pet.reset_scale),
+            item("Answer timeout...", self.pet.open_answer_slider),
+            item("Clear finished after...", self.pet.open_done_slider),
+            item("Clear finished", self.pet.clear_finished),
+            None,
+            item("Log hook events (debug)", self.toggle_debug, checked=os.path.exists(DEBUG_FLAG)),
+            item("Start at login", self.toggle_autostart, checked=self.c_autostart),
+            item(f"Workbench: {self.c_wb}", enabled=False),
+            item("Save diagnostics...", self.pet.save_diagnostics),
+            item("Open config folder", self.open_config),
+            None,
+            item("Quit AIPet", self.quit),
+        ]
 
     # ---- actions (Tk thread)
     def _dialog_parent(self):
@@ -1092,6 +1183,8 @@ class TrayApp:
         open_path(core.HOME_DIR)
 
     def quit(self):
+        if getattr(self, "status_item", None):
+            self.status_item.remove()
         if self.icon:
             try:
                 self.icon.stop()
