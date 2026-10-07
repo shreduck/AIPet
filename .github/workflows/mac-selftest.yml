@@ -20,9 +20,17 @@ jobs:
         mode: [app, source]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # include release tags so version checks use the real build version
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Record tested revision and version
+        run: |
+          mkdir -p out
+          git log -1 --format='%H%n%s' > out/revision.txt
+          python tools/write_version.py
+          cat _build_version.py >> out/revision.txt
       - name: Build the app
         if: matrix.mode == 'app'
         run: bash build_mac.sh
