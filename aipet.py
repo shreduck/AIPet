@@ -2995,6 +2995,9 @@ def rescale_card_fonts():
         f.configure(size=max(6, int(round(size * CARD_SCALE["v"]))))
 
 
+NO_CHOICE = "\x00none"  # "nothing picked" for a question's radio buttons (Tk draws "" as all of them selected)
+
+
 class Detail:
     """A styled card, centred on the screen, with the full context of a session that needs the user. The robot
     beside it asks with a "?" and reacts when you answer."""
@@ -3351,7 +3354,10 @@ class Detail:
                      font=self.f(11, "bold")).pack(fill="x", pady=(2, 4))
             multi = bool(q.get("multiSelect"))
             picks = {}
-            choice = tk.StringVar(master=self.win, value="")
+            # Single choice starts on the first option. Never "" as the value: that is Tk's tristate value, which
+            # draws every radio button as selected
+            first = next((o["label"] for o in q.get("options") or []), NO_CHOICE)
+            choice = tk.StringVar(master=self.win, value=NO_CHOICE if multi else first)
             for opt in q.get("options") or []:
                 row = tk.Frame(block, bg=bg)
                 row.pack(fill="x", pady=1)
@@ -3366,7 +3372,10 @@ class Detail:
                     var = picks[opt["label"]] = tk.BooleanVar(master=self.win, value=False)
                     box = tk.Checkbutton(row, text=opt["label"], variable=var, anchor="w")
                 else:
-                    box = tk.Radiobutton(row, text=opt["label"], variable=choice, value=opt["label"], anchor="w")
+                    # tristatevalue: Tk draws every radio button as "half selected" while the variable holds its
+                    # tristate value, "" by default - exactly the empty "nothing picked yet" value used here
+                    box = tk.Radiobutton(row, text=opt["label"], variable=choice, value=opt["label"], anchor="w",
+                                         tristatevalue="\x00none")
                 box.configure(bg=bg, fg=fg, activebackground=bg, activeforeground=fg, selectcolor=T["entry_bg"],
                               highlightthickness=0, font=self.f(10, "bold"), cursor="hand2")
                 box.pack(fill="x")
@@ -3384,7 +3393,7 @@ class Detail:
                              highlightcolor=T["primary"], font=self.f(9))
             entry.pack(side="left", fill="x", expand=True, padx=(6, 0))
             if not multi:  # typing replaces the picked option
-                own.trace_add("write", lambda *_, c=choice, o=own: c.set("") if o.get().strip() else None)
+                own.trace_add("write", lambda *_, c=choice, o=own: c.set(NO_CHOICE) if o.get().strip() else None)
             self._qvars.append((q, multi, choice, picks, own))
         self.win.after(60, self.apply_scale)
 
@@ -3397,7 +3406,7 @@ class Detail:
             if multi:
                 value = [label for label, var in picks.items() if var.get()] + ([typed] if typed else [])
             else:
-                value = typed or choice.get()
+                value = typed or (choice.get() if choice.get() != NO_CHOICE else "")
             if not value:
                 return None
             answers[q["question"]] = value
