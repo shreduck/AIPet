@@ -22,6 +22,7 @@ import webbrowser
 from tkinter import messagebox
 
 import aipet as core
+import aipet_guide
 import aipet_settings
 import aipet_update as upd
 import hooks_installer as hi
@@ -1243,7 +1244,8 @@ class TrayApp:
         return shared[:1] + [{"label": "This session", "submenu": session_actions}, None] + shared[2:]
 
     # Shared menu specification; all actions are executed on the Tk thread.
-    def _mac_menu_spec(self):
+    def _mac_menu_spec(self, settings=False):
+        """settings=True: the settings window's version, with a few entries that only make sense there."""
         def item(label, action=None, checked=None, enabled=True, submenu=None, default=False, help=None, icon=None,
                  choice=False, slider=None):
             # help / icon / choice / slider are only read by the settings window; the menus ignore them
@@ -1309,6 +1311,10 @@ class TrayApp:
                  help="Removes the pets of sessions that are done."),
             item("Open config and data folder", self.open_config, icon="home",
                  help=f"{core.HOME_DIR}: settings (config.json, auto-approve.json), sessions, logs and backups."),
+            *([item("Copy settings guide for AI", self.copy_ai_guide,
+                    help="Copies a Markdown guide to AIPet's settings files (where they are, every option and its "
+                         "values) to the clipboard. Paste it into Claude, Codex or another assistant and ask it to "
+                         "change AIPet's settings for you.")] if settings else []),
             None,
             item("Appearance", icon="palette", help="How the pet and its windows look.", submenu=[
                 item("Pet style", choice=True, help="Which creature sits on your screen.",
@@ -1461,8 +1467,24 @@ class TrayApp:
         if getattr(self, "settings_win", None) is not None and self.settings_win.alive():
             self.settings_win.raise_()
             return
-        self.settings_win = aipet_settings.SettingsWindow(self.root, self._mac_menu_spec, version=self.version,
+        self.settings_win = aipet_settings.SettingsWindow(self.root, lambda: self._mac_menu_spec(settings=True),
+                                                          version=self.version,
                                                           zoom_fn=self.settings_zoom, set_zoom=self.set_settings_zoom)
+
+    def copy_ai_guide(self):
+        """Settings > General: the settings guide for an AI assistant, on the clipboard (Tk's clipboard is the
+        system one on Windows and macOS)."""
+        text = aipet_guide.build_guide(self.pet.cfg, core.HOME_DIR, self.version)
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self.root.update_idletasks()
+        except tk.TclError as e:
+            self.info(f"Couldn't copy to the clipboard:\n{e}", error=True)
+            return
+        self.info("The AIPet settings guide is on your clipboard.\n\nPaste it into Claude, Codex or another assistant, "
+                  "then ask it to change what you want (for example: \"switch AIPet to the dark theme and make the "
+                  "pets bigger\").")
 
     def settings_zoom(self):
         return aipet_settings.clamp_zoom(self.pet.cfg.get("settings_zoom", 1.0))
