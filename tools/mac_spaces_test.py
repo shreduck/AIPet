@@ -93,7 +93,11 @@ return desktopCount
     def check_flags(label, expected, **changes):
         data = request(label, all_spaces=expected, **changes)
         passed = (not data.get("error") and data.get("can_join_all_spaces") == expected and
-                  (not expected or (data.get("fullscreen_auxiliary") and not data.get("conflicting_flags"))))
+                  data.get("is_panel") and data.get("nonactivating") and
+                  data.get("window_level", 0) > 0 and
+                  data.get("can_join_all_applications") == (expected and data.get("all_applications_supported")) and
+                  data.get("fullscreen_auxiliary") == expected and
+                  (not expected or not data.get("conflicting_flags")))
         records.append({"check": label + " flags", "status": "passed" if passed else "failed"})
         screenshot(label)
         return data

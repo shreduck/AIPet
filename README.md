@@ -31,7 +31,7 @@ Claude has two separate options, both off by default:
 - **Claude Code hooks → target → Claude usage status line...** enables the CLI collector after a confirmation that explains the change. Hook installation itself does not change your status line. On Windows the status line command is written without quotes or spaces (8.3 short folder names if needed) so it also runs when Claude Code uses PowerShell because Git Bash is missing; if that isn't possible, AIPet refuses and keeps your settings. The collector wraps an existing command through Bash (including Git Bash on Windows) and adds one process per refresh, or adds a usage line if none existed. Restoration data lives in `~/.aipet/statuslines`, not in Claude's settings schema. Disabling the collector restores the previous setting unless you have edited the wrapper yourself. Updating from v0.3.1 backs up and restores its automatic wrapper once. VS Code and desktop sessions may not emit this data.
 - **Claude account usage (unofficial)** enables the credential-based fallback after a warning. It reads Claude Code's existing OAuth token or macOS Keychain item and calls an unofficial endpoint, which is not part of Anthropic's public API and may change or break. macOS may show Keychain access prompts. Anthropic restricts third-party use of subscription credentials; check that your use is permitted. The collector saves quota figures, not tokens, polls at most once every five minutes per login store, and stops accessing credentials when disabled. Its figures are labelled **Claude Code account · local login**; that account may differ from your desktop app account. See [Anthropic's credential rules](https://code.claude.com/docs/en/legal-and-compliance).
 
-Hover a usage badge for its reset time and reporting source. Usage tooltips use the pet's pixel border and sit alongside its body. **Tooltips → Session details / Usage details** in the right-click or tray menu lets you disable each kind separately; choices are saved.
+Hover a usage badge for its reset time and reporting source. Session and usage tooltips share the pet's pixel border, monospaced text, and colored heading; usage tooltips sit alongside its body. **Appearance → Tooltips → Session details / Usage details** in the right-click or tray menu lets you disable each kind separately; choices are saved. On macOS, tooltips and permission cards use non-activating panels so opening them does not pull you to another desktop.
 
 Finished pets show a green checkmark seal; speech bubbles are reserved for active work and interaction. Pets without usage data reserve no individual usage strip; a shared edge margin keeps the rightmost pet stable during normal usage transitions. **Show on all desktops** is available on macOS and Windows. **About AIPet** links to the app page, Duck Software and GitHub and follows the app theme.
 
@@ -48,15 +48,25 @@ The exe is unsigned, so the first time you run it SmartScreen may show "Windows 
 ## Use it
 Run `AIPet.exe`. The pet appears bottom-right and a tray icon appears near the clock.
 
-**Tray menu**
-- **Show / Hide pet**. Left-clicking the tray icon does the same. The pet's right-click menu also has *Hide to tray*.
-- **Claude Code hooks**
-  - **This PC (Windows)**: installs into `%USERPROFILE%\.claude\settings.json`. Covers terminal and VS Code sessions on Windows.
-  - **WSL: \<distro\>**: one entry per auto-detected distro. Installs into that distro's `~/.claude/settings.json` and covers terminal and VS Code Remote-WSL sessions there. Stopped distros aren't booted just to show their status. They only start when you install or remove hooks.
-  - Each target shows its status (✓ installed, not installed, needs python3, …) and offers *Install / update* and *Remove*.
-  - **Cowork (Claude desktop app)...**: builds the Cowork plugin and shows how to install it (see below).
-  - The pet's right-click menu has the same *Claude Code hooks* submenu.
-- **Mute sounds**, **Start with Windows**, **Workbench status**, **Open config folder**, **Quit**.
+**Pet and menu-bar / tray menus**
+Both menus share these sections; right-clicking a pet adds **This session** for details, opening its window or folder,
+marking it finished, and dismissing it. On macOS, right-click and Control-click open a native context menu without
+activating the pet or switching away from a full-screen app.
+
+- **Appearance**: pet style, size, compact mode, theme, session titles and tooltips.
+- **Behavior**: desktop visibility, position, click behavior, sounds and notifications, session timing, and startup.
+- **Integrations**: Claude Code and Codex hooks, usage collection, setup and connection status.
+- **Permissions**: auto-approve rules grouped by agent, and separate Claude Code and Codex toggles for answering prompts from the pet.
+- **Help**: About, updates and diagnostics.
+- **Show / Hide pet**, **Clear finished sessions**, and **Quit AIPet** stay at the top level. Left-clicking the Windows tray icon toggles visibility.
+
+**Integrations → Claude Code hooks**
+
+- **This PC (Windows)**: installs into `%USERPROFILE%\.claude\settings.json`. Covers terminal and VS Code sessions on Windows.
+- **WSL: \<distro\>**: one entry per auto-detected distro. Installs into that distro's `~/.claude/settings.json` and covers terminal and VS Code Remote-WSL sessions there. Stopped distros aren't booted just to show their status. They only start when you install or remove hooks.
+- Each target shows its status (✓ installed, not installed, needs python3, …) and offers *Install / update* and *Remove*.
+- **Cowork (Claude desktop app)...**: builds the Cowork plugin and shows how to install it (see below).
+- The pet's right-click menu has the same *Claude Code hooks* submenu.
 
 What hook install does:
 1. Copies the hook to `~\.aipet\bin` (deliberately outside AppData: apps started from a packaged app such as Claude Desktop get AppData writes redirected to a private copy that the CLI and WSL cannot see). Nothing is copied until you choose Install; an existing install is refreshed when the app starts, so updates reach every target.
@@ -164,6 +174,8 @@ click belong to the session in front:
   switch it off and a click only acknowledges the pet. The prompt window's *Go to window* still works.
 - **macOS: Show on all desktops** (on by default, saved as `all_spaces`): the pet stays visible when you switch desktops
   (Spaces, e.g. with a three-finger swipe) and over full-screen apps.
+  The overlay uses a non-activating native panel; macOS 13 and later also enable sharing with other apps' full-screen
+  Spaces and Stage Manager sets. After updating from an older build, restart AIPet to recreate its window.
 - **Click a badge** to open that session's prompt window if it needs you (in compact mode, each badge is one session), or to go to its window otherwise.
 - **Dismiss** a pet from the right-click menu (*Dismiss this pet*) or with *Clear finished*; clicking no longer dismisses.
 - When a session **needs you**, the robot's **check / cross / "?" bubble** is clickable (hand cursor): it opens an
@@ -183,7 +195,7 @@ click belong to the session in front:
 - A session that runs **subagents** shows extra robots next to the main one (up to four), and the state line shows `+N`.
   This relies on the hook payloads carrying an `agent_id` (finished agents drop off after `SubagentStop` or 90 s without
   activity). A subagent's tool call no longer hides a permission prompt that belongs to a different agent.
-- **Resize** with the slider: right-click the pet > *Size...* (or tray > *Pet size...*) opens a small window with a 30% - 300%
+- **Resize** with the slider: pet or tray menu > *Appearance > Pet size...* opens a small window with a 30% - 300%
   slider; the pet follows it live and the value is saved as `size` (1.0 = 100%). 100% is the default size (twice the drawing
   size the first versions used; an older `scale` value in `config.json` is converted once). *Reset size* restores 100%.
   The pet keeps its bottom-right corner while it grows or shrinks, but stays on the screen it is on (on macOS too, kept
@@ -193,7 +205,11 @@ click belong to the session in front:
 ## Answering permission prompts from the pet
 When Claude Code asks for permission, the popup (click the bubble's title) shows **Deny** and **Allow once**. Your click is
 handed to the `PermissionRequest` hook, which prints the decision to Claude Code.
-- The hook waits up to the **answer timeout** (default 3 minutes, set 0 - 30 minutes with right-click > *Answer timeout...*
+- Under **Permissions**, **Answer Claude Code prompts from the pet** and **Answer Codex prompts from the pet**
+  independently control manual answering for each assistant. Turning one off hides its answer buttons and stops its
+  hooks waiting for the pet, including requests already waiting. Answer those requests in the assistant instead.
+  Claude answering is on by default. These toggles do not change **Auto approve** rules.
+- The hook waits up to the **answer timeout** (default 3 minutes, set 0 - 30 minutes with right-click > *Behavior > Session timing > Answer timeout...*
   or tray > *Answer timeout...*; 0 = no limit, it waits until you answer) and **only while the pet is running** (it checks a
   heartbeat file). If you don't click, or the pet is closed, it prints nothing and the normal prompt appears as usual.
   It also stops waiting as soon as the prompt is answered in Claude Code itself.
@@ -203,7 +219,7 @@ handed to the `PermissionRequest` hook, which prints the decision to Claude Code
   lengthens that delay (with no limit, until you answer from the pet); lower the slider if you notice it.
 
 ## Auto approve
-**Auto approve** (pet right-click, the tray icon's menu, or the macOS menu-bar icon) lists every hook config: *This PC /
+**Permissions → Auto approve** (pet right-click, the tray icon's menu, or the macOS menu-bar icon) lists every hook config: *This PC /
 This Mac*, each *WSL* distro, *Cowork* (the Claude app plugin) and each place *Codex* was found. **Everything is off by
 default.** Each entry opens a window for that config:
 - **Auto approve for this config** switches it on or off.
@@ -230,14 +246,14 @@ Details:
   animate (they would never stop). The tray tooltip starts with `AUTO APPROVE ON` while any config is on.
 
 ## Stuck sessions
-Every 15 seconds (right-click or tray > *Health check every...*: 0 = off, up to 5 minutes; saved as
+Every 15 seconds (pet or tray menu > *Behavior > Session timing > Health check every...*: 0 = off, up to 5 minutes; saved as
 `health_check_seconds`) the pet checks that each working or waiting session's Claude Code / Codex process still runs. If
 it has ended without saying so (the app was closed, or Cowork moved the conversation to a new session), the session is
-shown as finished and the done timeout clears it. WSL sessions can't be checked from Windows: right-click > *Mark as
+shown as finished and the done timeout clears it. WSL sessions can't be checked from Windows: right-click > *This session > Mark as
 finished* ends any stuck session by hand (in compact mode, the one in front).
 
 ## Clearing finished sessions
-A finished session's pet is cleared after the **done timeout**: right-click > *Clear finished after...* (or the tray menu),
+A finished session's pet is cleared after the **done timeout**: right-click > *Behavior > Session timing > Clear finished after...* (or the tray menu),
 0 - 30 minutes, default 3 minutes; 0 keeps finished pets until you dismiss them. Saved as `done_timeout_minutes`.
 - There is no "always allow" button: that needs a permission-rule format I haven't verified. The VS Code extension does
   not send `PermissionRequest` events, so its prompts keep the read-only bubble.
@@ -249,7 +265,7 @@ running copy, a popup offers *Open release page*, *Later* or *Skip this version*
 vX.Y.Z...* until you install it. Nothing is downloaded or installed automatically: download the new `AIPet.exe` /
 `AIPet-mac-arm64.zip`, quit AIPet and replace your copy (settings, hooks and backups in `~/.aipet` are kept).
 - On by default; turn the daily check off with *Check for updates automatically* in the tray / menu-bar menu (saved
-  as `update_check`). The update entries are only in that menu, not in the pet's right-click menu.
+  as `update_check`). Updates are available under **Help → Updates** in both menus.
 - The menus show the running version (*AIPet v0.2.4*). Builds take it from `git describe` (`tools/write_version.py`,
   run by `build.bat`, `build_mac.sh` and CI), so a local build two commits after v0.2.4 reads `v0.2.4-2-g<commit>` and
   counts as v0.2.4.

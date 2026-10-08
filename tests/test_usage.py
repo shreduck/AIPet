@@ -395,23 +395,33 @@ class UsageTests(unittest.TestCase):
             aipet_update.latest_release()
             self.assertIsNone(urlopen.call_args.args[0].get_header("Authorization"))
 
-    def test_mac_mutually_exclusive_behaviors_are_cleared(self):
+    def test_mac_fullscreen_behavior_on_off_and_older_systems(self):
         # Execute the native flag policy without loading macOS's ObjC runtime.
         tree = ast.parse((Path(aipet.__file__).parent / "mac_statusbar.py").read_text(encoding="utf-8"))
         nodes = [node for node in tree.body if
-                 (isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id in ("ALL_SPACES", "ALL_SPACES_CONFLICTS") for t in node.targets)) or
+                 (isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id in ("ALL_SPACES", "ALL_SPACES_CONFLICTS", "ALL_APPLICATIONS") for t in node.targets)) or
                  (isinstance(node, ast.FunctionDef) and node.name == "set_all_spaces")]
-        sent = []
+        current = (1 << 1) | (1 << 2) | (1 << 3) | (1 << 5) | (1 << 7) | (1 << 9) | (1 << 11) | (1 << 16) | (1 << 17)
         def send(window, selector, *args, **kwargs):
+            nonlocal current
             if selector == "collectionBehavior":
-                return (1 << 1) | (1 << 2) | (1 << 3) | (1 << 5) | (1 << 7) | (1 << 9) | (1 << 11)
-            sent.append(args[0])
-        scope = {"send": send, "window_titled": lambda title: 1, "c_ulong": ctypes.c_ulong}
+                return current
+            if selector == "setCollectionBehavior:":
+                current = args[0]
+        scope = {"send": send, "window_titled": lambda title: 1, "c_ulong": ctypes.c_ulong, "c_long": ctypes.c_long,
+                 "supports_all_applications": lambda: True}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "mac-behavior", "exec"), scope)
         self.assertTrue(scope["set_all_spaces"]("AIPet", True))
-        self.assertEqual(sent[0] & scope["ALL_SPACES_CONFLICTS"], 0)
-        self.assertEqual(sent[0] & scope["ALL_SPACES"], scope["ALL_SPACES"])
-        self.assertTrue(sent[0] & (1 << 11))  # unrelated flags survive
+        self.assertEqual(current & scope["ALL_SPACES_CONFLICTS"], 0)
+        self.assertEqual(current & scope["ALL_SPACES"], scope["ALL_SPACES"])
+        self.assertTrue(current & (1 << 18))  # join other apps, not just ordinary desktops
+        self.assertTrue(scope["set_all_spaces"]("AIPet", False))
+        self.assertEqual(current, 1 << 11)  # unrelated flags survive; all sharing is removed
+        scope["supports_all_applications"] = lambda: False
+        self.assertTrue(scope["set_all_spaces"]("AIPet", True))
+        self.assertEqual(current, scope["ALL_SPACES"] | (1 << 11))
+        scope["window_titled"] = lambda title: None
+        self.assertFalse(scope["set_all_spaces"]("missing", True))
 
 
     def test_usage_files_follow_their_sessions(self):

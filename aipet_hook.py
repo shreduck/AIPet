@@ -544,6 +544,8 @@ def _await(path, waiting, base, seconds, session_path, request_id):
     deadline = time.time() + seconds if seconds > 0 else None
     checked, touched = time.time(), 0.0
     while deadline is None or time.time() < deadline:
+        if not answers_enabled(base):
+            return None  # toggled off while waiting: show the agent's normal prompt
         if time.time() - touched > 1:
             touched = time.time()
             try:
@@ -585,11 +587,20 @@ def configured_wait(base):
     return max(0.0, min(MAX_WAIT, value))
 
 
+def answers_enabled(base):
+    """Manual answering is independent for each agent; auto-approval has its own rules."""
+    if os.path.exists(os.path.join(base, "no-answers")):
+        return False
+    if AGENT == "codex":
+        return os.path.exists(os.path.join(base, "codex-answers"))
+    return not os.path.exists(os.path.join(base, "no-claude-answers"))
+
+
 def answer_flow(base, path, aid):
     """After the request is recorded: give the user a window to answer from the pet, then print the decision.
     Prints nothing (normal prompt) if the pet isn't running, answering is switched off, or nobody clicks in time."""
     seconds = configured_wait(base)  # 0 = wait until answered
-    if not pet_alive(base) or os.path.exists(os.path.join(base, "no-answers")):
+    if not pet_alive(base) or not answers_enabled(base):
         return  # observe only
     with SessionLock(path):
         record = read_json(path)
@@ -1168,10 +1179,8 @@ def main():
 
     with SessionLock(path):
         aid = _update_session(path, target, event, data, wsl)
-    # Codex asks its hooks BEFORE showing its own prompt, so the pet only waits for a click if the user opted in
-    # (Answer Codex prompts from the pet -> <pet dir>/codex-answers); otherwise Codex's prompt appears right away.
-    if event == "PermissionRequest" and (AGENT != "codex" or os.path.exists(os.path.join(os.path.dirname(target),
-                                                                                          "codex-answers"))):
+    # Each agent's manual-answer toggle controls whether its hook waits for the pet.
+    if event == "PermissionRequest" and answers_enabled(os.path.dirname(target)):
         answer_flow(os.path.dirname(target), path, aid or "")
 
 

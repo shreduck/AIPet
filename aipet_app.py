@@ -266,48 +266,8 @@ class TrayApp:
 
         self.pet.on_alert = self.on_alert
         self.cowork_win = None
-        m = self.pet.menu
-        hooks_menu = tk.Menu(m, tearoff=0)
-        hooks_menu.configure(postcommand=lambda: self._fill_hooks_menu(hooks_menu))
-        codex_menu = tk.Menu(m, tearoff=0)
-        codex_menu.configure(postcommand=lambda: self._fill_codex_menu(codex_menu))
-        if pystray:
-            q = m.index("Quit")
-            m.insert_cascade(q, label="Claude Code hooks", menu=hooks_menu)
-            m.insert_cascade(q + 1, label="Codex hooks", menu=codex_menu)
-            m.insert_separator(q + 2)
-            m.insert_command(m.index("Quit"), label="Hide to tray", command=self.hide)
-        else:  # no tray icon (macOS): the tray menu's essentials live in the pet's right-click menu
-            self.notify_var = tk.BooleanVar(value=self.c_notify)
-            self.autostart_var = tk.BooleanVar(value=self.c_autostart)
-            q = m.index("Quit")
-            m.insert_separator(q)
-            m.insert_cascade(q + 1, label="Claude Code hooks", menu=hooks_menu)
-            m.insert_cascade(q + 2, label="Codex hooks", menu=codex_menu)
-            m.insert_checkbutton(q + 3, label="Notifications", variable=self.notify_var,
-                                 command=lambda: self._set_notify(self.notify_var.get()))
-            self.debug_var = tk.BooleanVar(value=os.path.exists(DEBUG_FLAG))
-            m.insert_checkbutton(m.index("Quit"), label="Log hook events (debug)", variable=self.debug_var,
-                                 command=self.toggle_debug)
-            self.theme_var = tk.BooleanVar(value=core.T.get("name") == "dark")
-            m.insert_checkbutton(m.index("Quit"), label="Dark theme", variable=self.theme_var, command=self.toggle_theme)
-            self.style_var = tk.StringVar(value=core.STYLE["v"])
-            for key, label in PET_STYLES:
-                m.insert_radiobutton(m.index("Quit"), label=f"Pet: {label}", variable=self.style_var, value=key,
-                                     command=lambda k=key: self.set_style(k))
-            if IS_MAC:
-                m.insert_checkbutton(q + 4, label="Start at login", variable=self.autostart_var,
-                                     command=self.toggle_autostart)
-            m.insert_command(m.index("Quit"), label="Open config folder", command=self.open_config)
-        auto_menu = tk.Menu(m, tearoff=0)
-        auto_menu.configure(postcommand=lambda: self._fill_auto_menu(auto_menu))
-        m.insert_cascade(m.index("Codex hooks") + 1, label="Auto approve", menu=auto_menu)
-        m.entryconfigure(m.index("Quit"), command=self.quit)
-        m.insert_command(m.index("Quit"), label="About AIPet...", command=self.show_about)
-        self.claude_oauth_var = tk.BooleanVar(value=bool(self.pet.cfg.get("claude_oauth_usage", False)))
-        m.insert_checkbutton(m.index("Quit"), label="Claude account usage (unofficial)", variable=self.claude_oauth_var,
-                             command=self.toggle_claude_oauth_usage)
-        core.style_menu(m)
+        # One menu definition serves the pet, macOS menu bar and Windows tray.
+        self.pet.context_menu_spec = self._context_menu_spec
 
         self.icon = None
         if pystray:
@@ -693,63 +653,6 @@ class TrayApp:
         win.geometry(f"+{max(0, (win.winfo_screenwidth() - win.winfo_reqwidth()) // 2)}"
                      f"+{max(0, (win.winfo_screenheight() - win.winfo_reqheight()) // 3)}")
 
-    # ---- pet right-click: the same "Claude Code hooks" menu as the tray
-    def _fill_codex_menu(self, menu):
-        """Pet right-click > Codex hooks: one entry per place Codex was found."""
-        self._fill_hooks_menu(menu, codex=True)
-
-    def _fill_hooks_menu(self, menu, codex=False):
-        menu.delete(0, "end")
-
-        def target(name, key):
-            st = self.status.get(key, "checking…")
-            sub = tk.Menu(menu, tearoff=0)
-            sub.add_command(label="Install / update hooks", command=lambda: self.confirm(key, True))
-            sub.add_command(label="Remove hooks", command=lambda: self.confirm(key, False))
-            if not codex:
-                sub.add_command(label="Claude usage status line...", command=lambda: self.confirm_usage(key))
-            sub.add_separator()
-            rest = tk.Menu(sub, tearoff=0)
-            backups = hi.list_backups(key)[:15]
-            if not backups:
-                rest.add_command(label="No backups yet", state="disabled")
-            for b in backups:
-                note = "no settings.json" if b["absent"] else (
-                    ("with pet hooks" if b["pet_hooks"] else "no pet hooks") + ("" if b["valid_json"] else ", invalid JSON"))
-                rest.add_command(label=f"{b['when']} - {b['reason']} ({note}){'  [original]' if b['original'] else ''}",
-                                 command=lambda b=b: self.confirm_restore(key, b))
-            sub.add_cascade(label="Restore backup", menu=rest)
-            sub.add_command(label="Back up now", command=lambda: self.start_job(key, "backup"))
-            sub.add_command(label="Open backups folder", command=lambda: self.open_backups(key))
-            menu.add_cascade(label=f"{'✓ ' if st.startswith('installed') else ''}{name}  ({st})", menu=sub)
-
-        if codex:
-            for lab, key in self.codex_targets:
-                target(lab, key)
-            if not self.codex_targets:
-                menu.add_command(label="Codex not found (running WSL distros are checked)" if self.probed
-                                 else "Detecting…", state="disabled")
-            menu.add_separator()
-            menu.add_command(label="Run setup again...", command=self.show_setup)
-            menu.add_command(label="Re-detect / refresh status",
-                             command=lambda: threading.Thread(target=self.refresh_targets, daemon=True).start())
-            core.style_menu(menu)
-            return
-        target("This Mac" if IS_MAC else "This PC (Windows)", hi.LOCAL)
-        menu.add_separator()
-        if self.distros:
-            for n, _ in self.distros:
-                target(f"WSL: {n}", "wsl:" + n)
-        else:
-            menu.add_command(label="No WSL distros found" if self.probed else "Detecting WSL distros…", state="disabled")
-        menu.add_separator()
-        menu.add_command(label="Cowork (Claude desktop app)...", command=self.show_cowork)
-        menu.add_command(label="Run setup again...", command=self.show_setup)
-        menu.add_command(label="Check for old Claude Pet hooks...", command=lambda: self.check_legacy(True))  # LEGACY
-        menu.add_command(label="Re-detect / refresh status",
-                         command=lambda: threading.Thread(target=self.refresh_targets, daemon=True).start())
-        core.style_menu(menu)
-
     # ---- Auto approve: answer every permission prompt of chosen hook configs with "allow" (all off by default)
     def auto_sections(self):
         """[(section title, [(label, key)])] for every hook config that can be auto-approved, plus any switched-on key
@@ -777,23 +680,6 @@ class TrayApp:
                 w in st for w in ("unknown", "checking", "n/a")):
             text += "  (hooks not installed)"
         return text + "..."
-
-    def _fill_auto_menu(self, menu):
-        """Pet right-click > Auto approve: one entry per hook config, each opening its rules window."""
-        menu.delete(0, "end")
-        self.c_auto = core.auto_approve_targets()
-        menu.add_command(label="Approve permission prompts automatically for:", state="disabled")
-        for title, items in self.auto_sections():
-            menu.add_separator()
-            menu.add_command(label=title, state="disabled")
-            if not items:
-                menu.add_command(label="   not found", state="disabled")
-            for label, key in items:
-                menu.add_command(label=("\u2713 " if key in self.c_auto else "   ") + self.auto_label(label, key),
-                                 command=lambda k=key, lab=label: self.open_auto_rules(k, lab))
-        menu.add_separator()
-        menu.add_command(label="Turn all off", command=self.auto_all_off, state="normal" if self.c_auto else "disabled")
-        core.style_menu(menu)
 
     def open_auto_rules(self, key, label):
         """The rules window of one hook config: on/off, Allow all, and a whitelist and a blacklist of regexes."""
@@ -872,7 +758,7 @@ class TrayApp:
             rules = {"enabled": enabled.get(), "allow_all": allow_all.get(), **lists}
             newly_on = rules["enabled"] and not old.get("enabled")
             all_on = rules["enabled"] and rules["allow_all"] and not (old.get("enabled") and old.get("allow_all"))
-            if (all_on or newly_on) and not self.warn_auto(label, rules):
+            if (all_on or newly_on) and not self.warn_auto(label, rules, parent=win):
                 return
             if not core.save_auto_approve(key, rules):
                 self.info("Couldn't save the auto approve setting (is ~/.aipet writable?).", error=True)
@@ -894,7 +780,7 @@ class TrayApp:
 
     toggle_auto = open_auto_rules  # the menus' entry point
 
-    def warn_auto(self, label, rules):
+    def warn_auto(self, label, rules, parent=None):
         if rules.get("allow_all"):
             heading = f"Auto approve everything from {label}?"
             what = (f"Every permission request that reaches AIPet's hook from {label} will be approved at once, "
@@ -907,9 +793,9 @@ class TrayApp:
                     "your blacklist patterns will be approved without asking you, in every session there, including "
                     "subagents. A loose pattern can approve more than you meant: check them carefully.")
         return core.themed_dialog(
-            self.root, f"{APP_NAME} - auto approve", kind="warning", heading=heading,
+            parent if parent is not None else self.root, f"{APP_NAME} - auto approve", kind="warning", heading=heading,
             text=(what + "\n\nIt takes effect immediately for running sessions and only while AIPet is running.\n\n"
-                  "Turn it off any time: right-click the pet or the tray icon > Auto approve."),
+                  "Turn it off any time: pet or menu-bar / tray menu > Permissions > Auto approve."),
             buttons=(("Cancel", False, "secondary"), ("Auto approve", True, "danger")),
             cancel=False, enter_confirms=False)
 
@@ -1152,126 +1038,54 @@ class TrayApp:
             pass
 
     def build_menu(self):
-        M, I = pystray.Menu, pystray.MenuItem
+        def dispatch(fn):
+            return lambda: self.ui(fn)
 
-        def act(fn, *args):  # zero-arg action marshalled to the Tk thread
-            return lambda: self.ui(lambda: fn(*args))
+        def entries():
+            def convert(spec):
+                result = []
+                for entry in spec:
+                    if entry is None:
+                        result.append(pystray.Menu.SEPARATOR)
+                        continue
+                    action = entry.get("action")
+                    submenu = entry.get("submenu")
+                    handler = pystray.Menu(*convert(submenu)) if submenu is not None else (
+                        dispatch(action) if action else None)
+                    checked = (lambda item, value=entry["checked"]: value) if "checked" in entry else None
+                    result.append(pystray.MenuItem(entry["label"], handler, checked=checked,
+                                                   enabled=entry.get("enabled", True), default=entry.get("default", False)))
+                return result
+            return convert(self._mac_menu_spec())
+        return pystray.Menu(entries)
 
-        def label(name, key):
-            st = self.status.get(key, "checking…")
-            return f"{'✓ ' if st.startswith('installed') else ''}{name}  ({st})"
+    def _context_menu_spec(self, pet):
+        def item(label, action, enabled=True):
+            return {"label": label, "action": action, "enabled": enabled}
+        session = self.pet._menu_session(pet)
+        real_pet = bool(pet and pet.key != "_none")
+        session_actions = [
+            item("Session details...", lambda: self.pet.open_detail(pet.data.get("focus", pet.key)), real_pet),
+            item("Go to session window", lambda: self.pet.focus_session(pet), real_pet),
+            item("Open in VS Code", lambda: self.pet.open_in_vscode(pet),
+                 bool(pet and pet.data.get("source") == "CC" and pet.data.get("cwd"))),
+            None,
+            item("Mark as finished", self.pet.finish_menu_pet,
+                 bool(session and session.get("source") == "CC" and session.get("state") in
+                      ("working", "needs_input", "error"))),
+            item("Dismiss this pet", self.pet.dismiss_menu_pet, real_pet),
+        ]
+        return [{"label": "This session", "submenu": session_actions}, None] + self._mac_menu_spec()
 
-        def restore_items(key):
-            backups = hi.list_backups(key)[:15]
-            if not backups:
-                return [I("No backups yet", None, enabled=False)]
-            items = []
-            for b in backups:
-                if b["absent"]:
-                    note = "no settings.json"
-                else:
-                    note = ("with pet hooks" if b["pet_hooks"] else "no pet hooks") + ("" if b["valid_json"] else ", invalid JSON")
-                text = f"{b['when']} - {b['reason']} ({note}){'  [original]' if b['original'] else ''}"
-                items.append(I(text, act(self.confirm_restore, key, b)))
-            return items
-
-        def target_menu(name, key):
-            return I(label(name, key), M(
-                I("Install / update hooks", act(self.confirm, key, True)),
-                I("Remove hooks", act(self.confirm, key, False)),
-                I("Claude usage status line...", act(self.confirm_usage, key), visible=not hi.is_codex(key)),
-                M.SEPARATOR,
-                I("Restore backup", M(*restore_items(key))),
-                I("Back up now", act(self.start_job, key, "backup")),
-                I("Open backups folder", act(self.open_backups, key)),
-            ))
-
-        def hook_items():
-            items = [target_menu("This Mac" if IS_MAC else "This PC (Windows)", hi.LOCAL), M.SEPARATOR]
-            if self.distros:
-                items += [target_menu(f"WSL: {n}", "wsl:" + n) for n, _ in self.distros]
-            else:
-                items.append(I("No WSL distros found" if self.probed else "Detecting WSL distros…", None, enabled=False))
-            items += [M.SEPARATOR,
-                      I("Cowork (Claude desktop app)...", act(self.show_cowork)),
-                      I("Run setup again...", act(self.show_setup)),
-                      I("Check for old Claude Pet hooks...", act(self.check_legacy, True)),  # LEGACY
-                      I("Re-detect / refresh status", lambda: threading.Thread(target=self.refresh_targets, daemon=True).start())]
-            return items
-
-        def codex_items():
-            items = [target_menu(lab, key) for lab, key in self.codex_targets] or [
-                I("Codex not found (running WSL distros are checked)" if self.probed else "Detecting…", None,
-                  enabled=False)]
-            return items + [M.SEPARATOR,
-                            I("Run setup again...", act(self.show_setup)),
-                            I("Re-detect / refresh status",
-                              lambda: threading.Thread(target=self.refresh_targets, daemon=True).start())]
-
-        def auto_items():
-            items = [I("Approve permission prompts automatically for:", None, enabled=False)]
-            for title, entries in self.auto_sections():
-                items += [M.SEPARATOR, I(title, None, enabled=False)]
-                if not entries:
-                    items.append(I("   not found", None, enabled=False))
-                items += [I("   " + self.auto_label(lab, key), act(self.toggle_auto, key, lab),
-                            checked=lambda item, k=key: k in self.c_auto) for lab, key in entries]
-            return items + [M.SEPARATOR, I("Turn all off", act(self.auto_all_off), enabled=lambda item: bool(self.c_auto))]
-
-        return M(
-            I(lambda item: f"Update available: {self.update_info['tag']}..." if self.update_info else "",
-              act(self.open_update), visible=lambda item: bool(self.update_info)),
-            I(lambda item: "Show pet" if self.hidden else "Hide pet", act(self.toggle), default=True),
-            M.SEPARATOR,
-            I("Claude Code hooks", M(hook_items)),
-            I("Codex hooks", M(codex_items)),
-            I(lambda item: "Auto approve (ON)" if self.c_auto else "Auto approve", M(auto_items)),
-            I("Mute sounds", act(self.toggle_mute), checked=lambda item: self.c_muted),
-            I("Windows notifications", act(self.toggle_notify), checked=lambda item: self.c_notify),
-            I("Dark theme", act(self.toggle_theme), checked=lambda item: core.T.get("name") == "dark"),
-            I("Pet style", M(*[I(label, act(self.set_style, key), checked=lambda item, k=key: core.STYLE["v"] == k,
-                                 radio=True) for key, label in PET_STYLES])),
-            I("Pet size...", act(self.pet.open_size_slider)),
-            I("Reset pet size", act(self.pet.reset_scale)),
-            I("Reset pet position (main screen)", act(self.reset_position)),
-            I("Answer timeout...", act(self.pet.open_answer_slider)),
-            I("Clear finished after...", act(self.pet.open_done_slider)),
-            I("Health check every...", act(self.pet.open_health_slider)),
-            I("Compact mode (one pet)", act(self.pet.toggle_compact), checked=lambda item: bool(self.pet.cfg.get("compact"))),
-            I("Show on all desktops", act(lambda: self.pet.set_all_spaces(not self.pet.cfg.get("all_spaces", True))),
-              checked=lambda item: bool(self.pet.cfg.get("all_spaces", True)), visible=os.name == "nt"),
-            I("Click goes to the session's window",
-              act(lambda: self.pet.set_click_to_focus(not self.pet.cfg.get("click_to_focus", True))),
-              checked=lambda item: bool(self.pet.cfg.get("click_to_focus", True))),
-            I("Session titles", M(*[I(text, act(self.pet.set_session_titles, value), radio=True,
-                                      checked=lambda item, v=value: self.pet.cfg.get("session_titles", "name") == v)
-                                    for value, text in (("name", "Session name"), ("prompt", "Last prompt"))])),
-            I("Tooltips", M(*[I(label, act(lambda k=kind: self.pet.set_tooltip(k, not self.pet.cfg.get(k + "_tooltips", True))),
-                                 checked=lambda item, k=kind: bool(self.pet.cfg.get(k + "_tooltips", True)))
-                                for kind, label in (("session", "Session details"), ("usage", "Usage details"))])),
-            I("Claude account usage (unofficial)", act(self.toggle_claude_oauth_usage),
-              checked=lambda item: bool(self.pet.cfg.get("claude_oauth_usage", False))),
-            I("Answer Codex prompts from the pet", act(lambda: self.pet.set_codex_answers(not self.pet.cfg.get("codex_answers"))),
-              checked=lambda item: bool(self.pet.cfg.get("codex_answers"))),
-            I("Log hook events (debug)", act(self.toggle_debug), checked=lambda item: os.path.exists(DEBUG_FLAG)),
-            I("Start with Windows", act(self.toggle_autostart), checked=lambda item: self.c_autostart,
-              visible=os.name == "nt"),
-            I(lambda item: f"Workbench: {self.c_wb}", None, enabled=False),
-            I("Open config folder", act(self.open_config)),
-            M.SEPARATOR,
-            I(lambda item: f"AIPet {self.version}", None, enabled=False),
-            I("About AIPet...", act(self.show_about)),
-            I("Check for updates...", act(self.check_updates, True)),
-            I("Check for updates automatically", act(self.toggle_update_check),
-              checked=lambda item: bool(self.pet.cfg.get("update_check", True))),
-            M.SEPARATOR,
-            I("Quit", act(self.quit)),
-        )
-
-    # ---- macOS menu bar: the same menu as the Windows tray, as a spec for mac_statusbar (rebuilt on every open)
+    # Shared menu specification; all actions are executed on the Tk thread.
     def _mac_menu_spec(self):
-        def item(label, action=None, checked=False, enabled=True, submenu=None):
-            return {"label": label, "action": action, "checked": checked, "enabled": enabled, "submenu": submenu}
+        def item(label, action=None, checked=None, enabled=True, submenu=None, default=False):
+            entry = {"label": label, "action": action, "enabled": enabled, "submenu": submenu}
+            if default:
+                entry["default"] = True
+            if checked is not None:
+                entry["checked"] = checked
+            return entry
 
         def target(name, key):
             st = self.status.get(key, "checking…")
@@ -1289,68 +1103,93 @@ class TrayApp:
             ])
 
         refresh = lambda: threading.Thread(target=self.refresh_targets, daemon=True).start()  # noqa: E731
-        claude = [target("This Mac", hi.LOCAL), None,
-                  item("Cowork (Claude desktop app)...", self.show_cowork),
-                  item("Run setup again...", self.show_setup),
-                  item("Check for old Claude Pet hooks...", lambda: self.check_legacy(True)),  # LEGACY
-                  item("Re-detect / refresh status", refresh)]
+        claude = [target("This Mac" if IS_MAC else "This PC (Windows)", hi.LOCAL)]
+        claude += [target(f"WSL: {name}", "wsl:" + name) for name, _ in self.distros]
+        claude += [None, item("Cowork (Claude desktop app)...", self.show_cowork),
+                   item("Check for old Claude Pet hooks...", lambda: self.check_legacy(True))]
         codex = [target(lab, key) for lab, key in self.codex_targets] or [item("Codex not found", enabled=False)]
-        codex += [None, item("Run setup again...", self.show_setup), item("Re-detect / refresh status", refresh)]
         cfg = self.pet.cfg
-        auto = [item("Approve permission prompts automatically for:", enabled=False)]
+        auto = []
         for title, entries in self.auto_sections():
-            auto += [None, item(title, enabled=False)] + (
-                [item("   " + self.auto_label(lab, key), lambda k=key, lab=lab: self.toggle_auto(k, lab),
-                      checked=key in self.c_auto) for lab, key in entries] or [item("   not found", enabled=False)])
+            auto.append(item(title, submenu=[
+                item(self.auto_label(lab, key), lambda k=key, lab=lab: self.toggle_auto(k, lab),
+                     checked=key in self.c_auto) for lab, key in entries
+            ] or [item("Not found", enabled=False)]))
         auto += [None, item("Turn all off", self.auto_all_off, enabled=bool(self.c_auto))]
         top = [item(f"Update available: {self.update_info['tag']}...", self.open_update), None] if self.update_info else []
         return top + [
-            item("Show pet" if self.hidden else "Hide pet", self.toggle),
+            item("Show pet" if self.hidden else "Hide pet", self.toggle, default=True),
+            item("Clear finished sessions", self.pet.clear_finished),
             None,
-            item("Claude Code hooks", submenu=claude),
-            item("Codex hooks", submenu=codex),
-            item("Auto approve (ON)" if self.c_auto else "Auto approve", submenu=auto),
+            item("Appearance", submenu=[
+                item("Pet style", submenu=[item(label, lambda k=key: self.set_style(k), checked=core.STYLE["v"] == key)
+                                           for key, label in PET_STYLES]),
+                item("Pet size...", self.pet.open_size_slider),
+                item("Reset pet size", self.pet.reset_scale),
+                item("Compact mode (one pet)", self.pet.toggle_compact, checked=bool(cfg.get("compact"))),
+                None,
+                item("Dark theme", self.toggle_theme, checked=core.T.get("name") == "dark"),
+                item("Session titles", submenu=[item(text, lambda v=value: self.pet.set_session_titles(v),
+                                                     checked=cfg.get("session_titles", "name") == value)
+                                                for value, text in (("name", "Session name"), ("prompt", "Last prompt"))]),
+                item("Tooltips", submenu=[item(label, lambda k=kind: self.pet.set_tooltip(k, not cfg.get(k + "_tooltips", True)),
+                                               checked=bool(cfg.get(kind + "_tooltips", True)))
+                                          for kind, label in (("session", "Session details"), ("usage", "Usage details"))]),
+            ]),
+            item("Behavior", submenu=[
+                *([item("Show on all desktops", lambda: self.pet.set_all_spaces(not cfg.get("all_spaces", True)),
+                        checked=bool(cfg.get("all_spaces", True)))] if IS_MAC or os.name == "nt" else []),
+                item("Reset pet position (main screen)", self.reset_position),
+                item("Click goes to the session's window",
+                     lambda: self.pet.set_click_to_focus(not cfg.get("click_to_focus", True)),
+                     checked=bool(cfg.get("click_to_focus", True))),
+                None,
+                item("Sounds and notifications", submenu=[
+                    item("Mute sounds", self.toggle_mute, checked=self.c_muted),
+                    item("Notifications", self.toggle_notify, checked=self.c_notify),
+                ]),
+                item("Session timing", submenu=[
+                    item("Answer timeout...", self.pet.open_answer_slider),
+                    item("Clear finished after...", self.pet.open_done_slider),
+                    item("Health check every...", self.pet.open_health_slider),
+                ]),
+                None,
+                *([item("Start at login" if IS_MAC else "Start with Windows", self.toggle_autostart,
+                        checked=self.c_autostart)] if IS_MAC or os.name == "nt" else []),
+            ]),
+            item("Integrations", submenu=[
+                item("Claude Code hooks", submenu=claude),
+                item("Codex hooks", submenu=codex),
+                item("Claude account usage (unofficial)", self.toggle_claude_oauth_usage,
+                     checked=bool(cfg.get("claude_oauth_usage", False))),
+                None,
+                item("Run setup again...", self.show_setup),
+                item("Re-detect / refresh status", refresh),
+                item(f"Workbench: {self.c_wb}", enabled=False),
+            ]),
+            item("Permissions" + (" (auto approve ON)" if self.c_auto else ""), submenu=[
+                item("Auto approve", submenu=auto),
+                item("Answer Codex prompts from the pet", lambda: self.pet.set_codex_answers(not cfg.get("codex_answers")),
+                     checked=bool(cfg.get("codex_answers"))),
+                item("Answer Claude Code prompts from the pet", lambda: self.pet.set_claude_answers(not cfg.get("claude_answers", True)),
+                     checked=bool(cfg.get("claude_answers", True))),
+            ]),
             None,
-            item("Compact mode (one pet)", self.pet.toggle_compact, checked=bool(cfg.get("compact"))),
-            item("Click goes to the session's window",
-                 lambda: self.pet.set_click_to_focus(not cfg.get("click_to_focus", True)),
-                 checked=bool(cfg.get("click_to_focus", True))),
-            item("Show on all desktops", lambda: self.pet.set_all_spaces(not cfg.get("all_spaces", True)),
-                 checked=bool(cfg.get("all_spaces", True))),
-            item("Session titles", submenu=[item(text, lambda v=value: self.pet.set_session_titles(v),
-                                                 checked=cfg.get("session_titles", "name") == value)
-                                            for value, text in (("name", "Session name"), ("prompt", "Last prompt"))]),
-            item("Tooltips", submenu=[item(label, lambda k=kind: self.pet.set_tooltip(k, not cfg.get(k + "_tooltips", True)),
-                                           checked=bool(cfg.get(kind + "_tooltips", True)))
-                                      for kind, label in (("session", "Session details"), ("usage", "Usage details"))]),
-            item("Claude account usage (unofficial)", self.toggle_claude_oauth_usage,
-                 checked=bool(cfg.get("claude_oauth_usage", False))),
-            item("Answer Codex prompts from the pet", lambda: self.pet.set_codex_answers(not cfg.get("codex_answers")),
-                 checked=bool(cfg.get("codex_answers"))),
-            item("Mute sounds", self.toggle_mute, checked=self.c_muted),
-            item("Notifications", self.toggle_notify, checked=self.c_notify),
-            item("Dark theme", self.toggle_theme, checked=core.T.get("name") == "dark"),
-            item("Pet style", submenu=[item(label, lambda k=key: self.set_style(k), checked=core.STYLE["v"] == key)
-                                       for key, label in PET_STYLES]),
-            item("Pet size...", self.pet.open_size_slider),
-            item("Reset pet size", self.pet.reset_scale),
-            item("Reset pet position (main screen)", self.reset_position),
-            item("Answer timeout...", self.pet.open_answer_slider),
-            item("Clear finished after...", self.pet.open_done_slider),
-            item("Health check every...", self.pet.open_health_slider),
-            item("Clear finished", self.pet.clear_finished),
-            None,
-            item("Log hook events (debug)", self.toggle_debug, checked=os.path.exists(DEBUG_FLAG)),
-            item("Start at login", self.toggle_autostart, checked=self.c_autostart),
-            item(f"Workbench: {self.c_wb}", enabled=False),
-            item("Save diagnostics...", self.pet.save_diagnostics),
-            item("Open config folder", self.open_config),
-            None,
-            item(f"AIPet {self.version}", enabled=False),
-            item("About AIPet...", self.show_about),
-            item("Check for updates...", lambda: self.check_updates(True)),
-            item("Check for updates automatically", self.toggle_update_check,
-                 checked=bool(cfg.get("update_check", True))),
+            item("Help", submenu=[
+                item("About AIPet...", self.show_about),
+                item(f"Version: {self.version}", enabled=False),
+                item("Updates", submenu=[
+                    item("Check for updates...", lambda: self.check_updates(True)),
+                    item("Check for updates automatically", self.toggle_update_check,
+                         checked=bool(cfg.get("update_check", True))),
+                ]),
+                None,
+                item("Diagnostics", submenu=[
+                    item("Save diagnostics...", self.pet.save_diagnostics),
+                    item("Open config folder", self.open_config),
+                    item("Log hook events (debug)", self.toggle_debug, checked=os.path.exists(DEBUG_FLAG)),
+                ]),
+            ]),
             None,
             item("Quit AIPet", self.quit),
         ]
@@ -1416,11 +1255,10 @@ class TrayApp:
                                "On macOS, accessing the Keychain may prompt for permission.\n\n"
                                "Requests run in the background, at most once every five minutes per login store. "
                                "AIPet saves usage figures, not your token. Disable this toggle at any time."):
-            self.claude_oauth_var.set(False)
             return
         self.pet.cfg["claude_oauth_usage"] = bool(on)
         core.save_setting("claude_oauth_usage", bool(on))
-        self.claude_oauth_var.set(bool(on))
+        self.refresh_menu()
         self.pet.hide_tip()
 
     def confirm_usage(self, key):

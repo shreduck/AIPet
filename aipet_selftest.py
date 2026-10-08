@@ -27,6 +27,13 @@ def start_spaces_probe(app, output):
     request_path = os.path.join(output, "request.json")
     response_path = os.path.join(output, "response.json")
     last_id = None
+    mouse_events = []
+
+    def record_mouse(event):
+        mouse_events.append({"button": event.num, "x": event.x_root, "y": event.y_root})
+        del mouse_events[:-10]
+
+    app.root.bind_all("<ButtonPress>", record_mouse, add="+")
 
     def publish(data):
         with open(response_path + ".tmp", "w", encoding="utf-8") as f:
@@ -40,8 +47,21 @@ def start_spaces_probe(app, output):
                 raise RuntimeError("pet NSWindow not found")
             flags = mac.send(w, "collectionBehavior", restype=mac.c_ulong)
             data = {"id": request["id"], "pid": os.getpid(), "time": time.time(),
+                    "pointer": app.root.winfo_pointerxy(),
+                    "pointer_over_pet": app.pet._over_hit(*app.root.winfo_pointerxy()),
+                    "click_through": bool(mac.send(w, "ignoresMouseEvents", restype=mac.c_bool)),
+                    "mouse_events": list(mouse_events),
+                    "context_menu_created": getattr(app.pet, "_context_menu_shown", False),
+                    "mouse_bridge_received": app.pet._mouse_bridge.received,
+                    "mouse_bridge_last_target": app.pet._mouse_bridge.last_target,
                     "all_spaces": app.pet.cfg.get("all_spaces"), "collection_behavior": flags,
                     "can_join_all_spaces": bool(flags & 1), "fullscreen_auxiliary": bool(flags & (1 << 8)),
+                    "all_applications_supported": mac.supports_all_applications(),
+                    "can_join_all_applications": bool(flags & mac.ALL_APPLICATIONS),
+                    "is_panel": bool(mac.send(w, "isKindOfClass:", mac.cls("NSPanel"),
+                                              restype=mac.c_bool, argtypes=[mac.c_void_p])),
+                    "nonactivating": bool(mac.send(w, "styleMask", restype=mac.c_ulong) & (1 << 7)),
+                    "window_level": mac.send(w, "level", restype=mac.c_long),
                     "conflicting_flags": flags & mac.ALL_SPACES_CONFLICTS,
                     "window_number": mac.send(w, "windowNumber", restype=mac.c_long),
                     "on_active_space": bool(mac.send(w, "isOnActiveSpace", restype=mac.c_bool)),

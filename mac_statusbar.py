@@ -13,6 +13,7 @@ clicks arrive on the main thread during Tk's event processing.
 import ctypes
 import ctypes.util
 import io
+import platform
 from ctypes import c_bool, c_char_p, c_double, c_long, c_size_t, c_ulong, c_void_p
 
 _lib = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
@@ -27,6 +28,10 @@ _PROTOS = {}
 
 class NSSize(ctypes.Structure):
     _fields_ = [("width", c_double), ("height", c_double)]
+
+
+class NSPoint(ctypes.Structure):
+    _fields_ = [("x", c_double), ("y", c_double)]
 
 
 def cls(name):
@@ -152,6 +157,136 @@ class StatusItem:
             send(mi, "release", restype=None)
 
 
+class _BlockDescriptor(ctypes.Structure):
+    _fields_ = [("reserved", c_ulong), ("size", c_ulong)]
+
+
+class _EventBlock(ctypes.Structure):
+    _fields_ = [("isa", c_void_p), ("flags", ctypes.c_int), ("reserved", ctypes.c_int),
+                ("invoke", c_void_p), ("descriptor", ctypes.POINTER(_BlockDescriptor))]
+
+
+class PanelMouseBridge:
+    """Forward only this panel's local Cocoa mouse events to Tk 8.6.
+
+    tkProcessMouseEvent accepts TKWindow but skips TKPanel. A local monitor
+    needs no Accessibility/Input Monitoring access and never observes other apps.
+    Keep its Objective-C block and callback alive until removeMonitor: completes.
+    """
+    def __init__(self, root):
+        self.root = root
+        self.window = window_titled(root.title())
+        self._capture = self._hover = None
+        self._closed = False
+        self._pending = []
+        self.received = 0
+        self.last_target = None
+        self._invoke = ctypes.CFUNCTYPE(c_void_p, c_void_p, c_void_p)(self._event)
+        self._descriptor = _BlockDescriptor(0, ctypes.sizeof(_EventBlock))
+        self._system = ctypes.cdll.LoadLibrary(ctypes.util.find_library("System"))
+        isa = ctypes.addressof((c_void_p * 32).in_dll(self._system, "_NSConcreteGlobalBlock"))
+        self._block = _EventBlock(isa, 1 << 28, 0, ctypes.cast(self._invoke, c_void_p),
+                                  ctypes.pointer(self._descriptor))
+        mask = sum(1 << kind for kind in (1, 2, 3, 4, 5, 6, 7, 8, 9, 25, 26, 27))
+        self.monitor = send(cls("NSEvent"), "addLocalMonitorForEventsMatchingMask:handler:", mask,
+                            ctypes.byref(self._block), argtypes=[c_ulong, c_void_p])
+        send(self.window, "setAcceptsMouseMovedEvents:", True, restype=None, argtypes=[c_bool])
+        self._timer = root.after(10, self._poll)
+
+    def _event(self, _block, event):
+        if self._closed or send(event, "window") != self.window:
+            return event
+        try:
+            self.received += 1
+            point = send(event, "locationInWindow", restype=NSPoint)
+            point = send(self.window, "convertPointToScreen:", point, restype=NSPoint, argtypes=[NSPoint])
+            screens = send(cls("NSScreen"), "screens")
+            main = send(screens, "objectAtIndex:", 0, argtypes=[c_ulong])
+            x, y = int(point.x), int(_rect(main, "frame").height - point.y)
+            flags = send(event, "modifierFlags", restype=c_ulong)
+            state = (1 if flags & (1 << 17) else 0) | (4 if flags & (1 << 18) else 0)
+            state |= (8 if flags & (1 << 19) else 0) | (16 if flags & (1 << 20) else 0)
+            kind = send(event, "type", restype=c_ulong)
+            button = send(event, "buttonNumber", restype=c_long) + 1
+            # Do not re-enter Tcl from Cocoa's event monitor. The Tk timer
+            # delivers these events after the native callback has returned.
+            self._pending.append((kind, button, x, y, state))
+            return None
+        except Exception as error:
+            import aipet
+            aipet.log_error(f"panel mouse: {error!r}")
+            return event
+
+    def _poll(self):
+        if self._closed:
+            return
+        pending, self._pending = self._pending, []
+        for event in pending:
+            self._dispatch(*event)
+        if not self._closed:
+            self._timer = self.root.after(10, self._poll)
+
+    def _dispatch(self, kind, button, x, y, state):
+        if self._closed:
+            return
+        import tkinter as tk
+        try:
+            # Tk's native window lookup also excludes TKPanel. Resolve the
+            # widget from this panel's own Tk geometry instead.
+            def widget_at(widget):
+                if not widget.winfo_ismapped():
+                    return None
+                left, top = widget.winfo_rootx(), widget.winfo_rooty()
+                if not (left <= x < left + widget.winfo_width() and top <= y < top + widget.winfo_height()):
+                    return None
+                for child in reversed(widget.winfo_children()):
+                    if not isinstance(child, tk.Toplevel):
+                        match = widget_at(child)
+                        if match is not None:
+                            return match
+                return widget
+            target = widget_at(self.root)
+            self.last_target = str(target)
+            if target is not None and target.winfo_toplevel() is not self.root:
+                target = None
+            if kind == 9:
+                target = None
+            if target is not self._hover:
+                if self._hover is not None and self._hover.winfo_exists():
+                    self._hover.event_generate("<Leave>")
+                self._hover = target
+                if target is not None:
+                    target.event_generate("<Enter>", x=x - target.winfo_rootx(), y=y - target.winfo_rooty())
+            if kind in (1, 3, 25):
+                self._capture = target
+            elif kind in (2, 4, 6, 7, 26, 27):
+                target = self._capture or target
+            if target is None:
+                return
+            options = dict(x=x - target.winfo_rootx(), y=y - target.winfo_rooty(), rootx=x, rooty=y, state=state)
+            if kind in (1, 3, 25):
+                # Establish Canvas 'current' so badge and bubble tag bindings
+                # receive the same press as the Canvas widget itself.
+                target.event_generate("<Motion>", **options)
+                target.event_generate(f"<ButtonPress-{button}>", **options)
+            elif kind in (2, 4, 26):
+                target.event_generate(f"<ButtonRelease-{button}>", **options)
+                self._capture = None
+            elif kind in (5, 6, 7, 8, 27):
+                if kind in (6, 7, 27):
+                    options["state"] |= 1 << (button + 7)
+                target.event_generate("<Motion>", **options)
+        except tk.TclError:
+            self._capture = self._hover = None  # the pet may disappear during a click
+
+    def close(self):
+        self._closed = True
+        self.root.after_cancel(self._timer)
+        send(cls("NSEvent"), "removeMonitor:", self.monitor, restype=None, argtypes=[c_void_p])
+        self.monitor = None
+        self._pending.clear()
+
+
 class NSRect(ctypes.Structure):
     _fields_ = [("x", c_double), ("y", c_double), ("width", c_double), ("height", c_double)]
 
@@ -191,10 +326,26 @@ def window_titled(title):
     return None
 
 
+def raise_modal(title, parent_title):
+    """Keep a modal card above its owner's topmost window, including after owner activation."""
+    window, parent = window_titled(title), window_titled(parent_title)
+    if not window or not parent:
+        return False
+    level = send(parent, "level", restype=c_long)
+    send(window, "setLevel:", max(19, level + 1), restype=None, argtypes=[c_long])
+    return True
+
+
 # NSWindowCollectionBehavior: on every Space, not moved by Mission Control, allowed over full-screen apps, and left
 # out of the window cycle (cmd-`)
 ALL_SPACES = (1 << 0) | (1 << 4) | (1 << 6) | (1 << 8)
-ALL_SPACES_CONFLICTS = (1 << 1) | (1 << 2) | (1 << 3) | (1 << 5) | (1 << 7) | (1 << 9)
+ALL_APPLICATIONS = 1 << 18  # macOS 13+: join other apps' Stage Manager sets / full-screen Spaces
+ALL_SPACES_CONFLICTS = ((1 << 1) | (1 << 2) | (1 << 3) | (1 << 5) | (1 << 7) | (1 << 9) |
+                        (1 << 16) | (1 << 17))  # Primary / Auxiliary conflict with AllApplications
+
+
+def supports_all_applications():
+    return int(platform.mac_ver()[0].split(".")[0]) >= 13
 
 
 def set_all_spaces(title, on=True):
@@ -205,6 +356,10 @@ def set_all_spaces(title, on=True):
     cur = send(w, "collectionBehavior", restype=c_ulong)
     # Each Cocoa behavior group is mutually exclusive: clear MoveToActiveSpace,
     # Managed / Transient, ParticipatesInCycle and FullScreenPrimary / None.
-    new = ((cur & ~ALL_SPACES_CONFLICTS) | ALL_SPACES) if on else (cur & ~ALL_SPACES)
+    enabled = ALL_SPACES | (ALL_APPLICATIONS if supports_all_applications() else 0)
+    new = ((cur & ~ALL_SPACES_CONFLICTS) | enabled) if on else (cur & ~(ALL_SPACES | ALL_APPLICATIONS))
     send(w, "setCollectionBehavior:", new, restype=None, argtypes=[c_ulong])
+    # Tk's utility style can mark -topmost true without raising a newly created
+    # panel. Match Tk's kCGUtilityWindowLevel so the pet is above video windows.
+    send(w, "setLevel:", 19, restype=None, argtypes=[c_long])
     return True

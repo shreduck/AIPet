@@ -65,7 +65,8 @@ DEFAULT_CONFIG = {
     "claude_oauth_usage": False,  # experimental credential-based quota requests require explicit consent
     "all_spaces": True,  # show the pet on every virtual desktop / macOS Space
     "session_titles": "name",  # extra title for same-folder sessions: "name" (the harness's name) or "prompt" (latest prompt)
-    "codex_answers": True,  # answer Codex permission prompts in the pet's prompt window (Codex waits for it first)  # one pet for all sessions (a robot per session) instead of one pet per session
+    "codex_answers": True,  # answer Codex permission prompts in the pet's prompt window
+    "claude_answers": True,  # preserve existing Claude Code answering behavior
     "click_through": True,  # only the robot and its "needs you" bubble take clicks; the rest of the window lets them through
     # clicking a session of the VS Code extension also opens its conversation tab (vscode://anthropic.claude-code/open)
     "vscode_open_conversation": True,
@@ -237,6 +238,13 @@ def themed_color(c):
 
 def button_style(kind="secondary"):
     """Options for a tk.Button in the pet's style: 'primary' (filled), 'danger' or 'secondary' (outlined)."""
+    if IS_MAC:
+        # Aqua draws the button face itself and ignores our filled background.
+        # Its matching system text stays readable in both macOS appearances.
+        return dict(fg="systemButtonText", activeforeground="systemButtonText",
+                    bg=T["win_bg"], highlightbackground=T["win_bg"],
+                    cursor="hand2", padx=14, pady=4,
+                    font=("Segoe UI", 9, "bold") if kind in ("primary", "danger") else ("Segoe UI", 9))
     if kind == "primary":
         return dict(bg=T["primary"], fg=T["primary_fg"], activebackground=T["primary_active"],
                     activeforeground=T["primary_fg"], relief="flat", bd=0, highlightthickness=0, cursor="hand2",
@@ -261,6 +269,42 @@ def style_menu(menu):
     for child in menu.winfo_children():
         if isinstance(child, tk.Menu):
             style_menu(child)
+
+
+def fill_menu(menu, entries):
+    """Render the shared app menu spec in Tk, including native macOS menus."""
+    menu.delete(0, "end")
+    for child in menu.winfo_children():
+        child.destroy()
+    menu._check_vars = []
+    for entry in entries:
+        if entry is None:
+            menu.add_separator()
+            continue
+        options = dict(label=entry["label"], state="normal" if entry.get("enabled", True) else "disabled")
+        if entry.get("submenu") is not None:
+            sub = tk.Menu(menu, tearoff=0)
+            fill_menu(sub, entry["submenu"])
+            menu.add_cascade(menu=sub, **options)
+        elif "checked" in entry:
+            var = tk.BooleanVar(master=menu, value=entry["checked"])
+            menu._check_vars.append(var)
+            menu.add_checkbutton(variable=var, command=entry.get("action"), **options)
+        else:
+            menu.add_command(command=entry.get("action"), **options)
+    style_menu(menu)
+
+
+def popup_menu(menu, x, y):
+    """Move a context menu up when it would otherwise scroll at the screen edge."""
+    menu.update_idletasks()
+    ref = (x, y)
+    height = menu.winfo_reqheight()
+    bounds = work_area(x, y, menu)
+    if bounds and y + height + 8 > bounds[3]:
+        y -= height + 8
+    x, y = fit_on_screen(x, y, menu.winfo_reqwidth(), height, ref, menu, margin=8)
+    menu.tk_popup(x, y)
 
 
 def _ttk_scale_style(widget):
@@ -387,6 +431,10 @@ def themed_dialog(root, title, text, buttons=(("OK", True, "primary"),), kind="i
     accent = DIALOG_ACCENTS.get(kind, DIALOG_ACCENTS["info"])
     bg, fg = T["win_bg"], T["win_fg"]
     w = tk.Toplevel(root)
+    # A modal card belongs to the window that opened it. Topmost alone does
+    # not keep it above another topmost window on macOS.
+    if root.winfo_viewable():
+        w.transient(root.winfo_toplevel())
     w.overrideredirect(True)
     w.attributes("-topmost", True)
     w.configure(bg=accent)
@@ -447,6 +495,9 @@ def themed_dialog(root, title, text, buttons=(("OK", True, "primary"),), kind="i
     w.deiconify()
     w.lift()
     w.focus_force()
+    if IS_MAC:
+        import mac_statusbar
+        mac_statusbar.raise_modal(w.title(), root.winfo_toplevel().title())
     try:
         w.grab_set()
     except tk.TclError:
@@ -1389,6 +1440,7 @@ class Pet:
         if IS_MAC:  # macOS Tk: right button is Button-2; ctrl-click is the trackpad equivalent
             c.bind("<Button-2>", lambda e: app.on_menu(e, self))
             c.bind("<Control-Button-1>", lambda e: app.on_menu(e, self))
+            c.bind("<Control-ButtonRelease-1>", lambda e: "break")
         c.bind("<Enter>", lambda e: app.show_tip(self))
         c.bind("<Leave>", lambda e: app.hide_tip())
         self._on_bubble = False  # the check/cross/? bubble ("ans" items) opens the details popup when clicked
@@ -2589,7 +2641,11 @@ class Detail:
         self.app, self.key, self._shown, self.sent = app, key, None, None
         self._after, self._t0, self._moved, self._size = None, time.time(), False, None
         bg, fg, msg_fg, muted = T["bubble_bg"], T["bubble_fg"], T["bubble_msg"], T["bubble_muted"]
-        w = self.win = tk.Toplevel(app.root)
+        w = self.win = MacOverlayWindow(app.root) if IS_MAC else tk.Toplevel(app.root)
+        w.withdraw()
+        w.title(f"AIPet permission — {key}")
+        if IS_MAC:
+            w.attributes("-alpha", 0.0)
         w.overrideredirect(True)  # our own frame: accent border, draggable header, close button
         w.attributes("-topmost", True)
         w.configure(bg=self.ACCENT)
@@ -2651,6 +2707,9 @@ class Detail:
         self.btn_allow = tk.Button(self.answer_row, text="Allow once", width=14, bg=allow_bg, fg=allow_fg,
                                    activebackground=allow_active, activeforeground=allow_fg, relief="flat", cursor="hand2",
                                    font=("Segoe UI", 10, "bold"), command=lambda: self.answer("allow"))
+        if IS_MAC:
+            self.btn_allow.configure(**button_style("primary"))
+            self.btn_deny.configure(**button_style("danger"))
         self.btn_deny.pack(side="left", ipady=3)
         self.btn_allow.pack(side="right", ipady=4)
         self.answer_row.pack(fill="x")
@@ -2661,7 +2720,19 @@ class Detail:
         self.btn_go.pack(side="left", ipady=4, ipadx=14)
         self.update(item)
         self._place(first=True)
-        w.focus_force()
+        w.deiconify()
+        if IS_MAC:
+            import mac_statusbar as mac
+            w.update_idletasks()
+            mac.set_all_spaces(w.title(), app.cfg.get("all_spaces", True))
+            # Tk 8.6 skips native panel mouse events. Forward this card's events
+            # so buttons, text selection, and dragging still work without activation.
+            self._mouse_bridge = mac.PanelMouseBridge(w)
+            w.bind("<Destroy>", lambda event: self._mouse_bridge.close()
+                   if event.widget is w else None, add="+")
+            w.attributes("-alpha", 1.0)
+        else:
+            w.focus_force()
         self._tick()
 
     # ---- placement: centred on the screen, cascading a little when several are open
@@ -2772,21 +2843,20 @@ class Detail:
             self.ask.config(text=item.get("message") or "Waiting for your input")
             self.ask.pack(fill="x")
         self.wait.config(text=f"waiting {ago(item['changed'])}" if item.get("changed") else "")
-        can_answer = hook_waiting(item) and not self.sent
+        can_answer = self.app.answers_enabled(item) and hook_waiting(item) and not self.sent
         who = "Codex" if item.get("agent") == "codex" else "Claude Code"
         if self.sent:
             note = f"Sent: {self.sent}. {who} will carry on in a moment."
         elif can_answer:
             note = ("Allow once or Deny answers this prompt right from here, or answer in the session window "
                     "(Go to window). If you do neither, the normal prompt appears.")
+        elif req and not self.app.answers_enabled(item):
+            note = (f"Answer this one in {who} (Go to window). To answer prompts here instead, switch on "
+                    f"Answer {who} prompts from the pet under Permissions.")
         elif item.get("agent") == "codex" and req and self.app.cfg.get("codex_answers", True):
             note = ("Codex is no longer waiting for this window, so answer in Codex (Go to window). If this happens "
                     "right away, your Codex hooks are from an older AIPet with a short timeout: update them in the "
                     "Codex hooks menu and trust them again with /hooks in Codex.")
-        elif item.get("agent") == "codex" and req:
-            note = ("Answer this one in Codex (Go to window). To answer Codex prompts here instead, switch on "
-                    "Answer Codex prompts from the pet in the menu; Codex then shows its own prompt only if you "
-                    "don't answer on the pet in time.")
         elif req.get("source") == "transcript":
             note = ("This session type (the VS Code extension) sends no permission events, so the pet can't answer for it. "
                     "This is what Claude is asking, so you know what to approve there. Press Go to window to jump there.")
@@ -2837,6 +2907,33 @@ class Detail:
 
 
 # --------------------------------------------------------------------------- app
+class MacOverlayWindow(tk.Toplevel):
+    """Create passive overlays as panels before Tk realizes their native windows."""
+    def __init__(self, master):
+        super().__init__(master, takefocus=False)
+        # Tk's main window is already an NSWindow by the time Tk() returns.
+        # Changing MacWindowStyle later cannot turn it into an NSPanel. A fresh
+        # toplevel lets Tk allocate a non-activating panel for full-screen Spaces.
+        self.tk.call("::tk::unsupported::MacWindowStyle", "style", self._w, "utility",
+                     ("noTitleBar", "nonActivating", "doesNotHide", "doesNotCycle"))
+
+
+class MacPetWindow(MacOverlayWindow):
+    """The pet panel owns the hidden Tk root that runs its event loop."""
+    def __init__(self):
+        self._owner = tk.Tk()
+        self._owner.withdraw()
+        self._destroying = False
+        super().__init__(self._owner)
+
+    def destroy(self):
+        if self._destroying:
+            return
+        self._destroying = True
+        super().destroy()
+        self._owner.destroy()  # also end mainloop; never leave the hidden root alive
+
+
 class PetApp:
     def __init__(self):
         self.cfg = load_config()
@@ -2862,7 +2959,7 @@ class PetApp:
         DONE_TIMEOUT["v"] = clamp_done(self.cfg.get("done_timeout_minutes", 3))
         HEALTH["v"] = clamp_health(self.cfg.get("health_check_seconds", 15))
         write_answer_wait(ANSWER_WAIT["v"])
-        root = self.root = tk.Tk()
+        root = self.root = MacPetWindow() if IS_MAC else tk.Tk()
         root.title("AIPet")
         root.overrideredirect(True)
         root.attributes("-topmost", True)
@@ -2891,6 +2988,8 @@ class PetApp:
         self.tip = None
         self.drag = None
         self.menu_pet = None
+        self.context_menu_spec = None
+        self._menu_open = False
         self.on_alert = None  # optional callback(state, old_state, item), used by the tray app
         self.t0 = time.time()
 
@@ -2905,7 +3004,7 @@ class PetApp:
         m.add_command(label="Dismiss this pet", command=self.dismiss_menu_pet)
         m.add_command(label="Mark as finished", command=self.finish_menu_pet)
         self.finish_menu_index = m.index("end")
-        self.dismiss_menu_index = m.index("end")
+        self.dismiss_menu_index = m.index("Dismiss this pet")
         m.add_command(label="Size...", command=self.open_size_slider)
         self.size_menu_index = m.index("end")
         m.add_command(label="Reset size", command=self.reset_scale)
@@ -2916,6 +3015,10 @@ class PetApp:
         self._write_codex_flag()
         m.add_checkbutton(label="Answer Codex prompts from the pet", variable=self.codex_answer_var,
                           command=lambda: self.set_codex_answers(self.codex_answer_var.get()))
+        self.claude_answer_var = tk.BooleanVar(value=bool(self.cfg.get("claude_answers", True)))
+        self._write_claude_flag()
+        m.add_checkbutton(label="Answer Claude Code prompts from the pet", variable=self.claude_answer_var,
+                          command=lambda: self.set_claude_answers(self.claude_answer_var.get()))
         self.compact_var = tk.BooleanVar(value=bool(self.cfg.get("compact")))
         m.add_checkbutton(label="Compact mode (one pet)", variable=self.compact_var, command=self.toggle_compact)
         self.click_focus_var = tk.BooleanVar(value=bool(self.cfg.get("click_to_focus", True)))
@@ -2956,6 +3059,12 @@ class PetApp:
         self._pass = None
         self.refresh()
         self.animate()
+        if IS_MAC:
+            import mac_statusbar
+            root.update_idletasks()
+            self._mouse_bridge = mac_statusbar.PanelMouseBridge(root)
+            root.bind("<Destroy>", lambda event: self._mouse_bridge.close()
+                      if event.widget is root else None, add="+")
         if self.clickthru:
             root.after(500, self._pass_tick)
         root.after(60 * 1000, self._sweep_usage)
@@ -3042,7 +3151,7 @@ class PetApp:
                 self.reposition()
 
             self.sync_bubbles(real)
-            if self.wb:
+            if self.wb and not self.context_menu_spec:
                 self.menu.entryconfigure(self.wb_menu_index, label="Workbench: " + self.wb.status)
             self.first_refresh = False
         except Exception as e:
@@ -3089,7 +3198,7 @@ class PetApp:
         """Hand the user's click to the waiting PermissionRequest hook. Returns True if it was written."""
         item = next((i for i in self._last_items if i["key"] == key), None)
         req = (item or {}).get("request") or {}
-        if not hook_waiting(item) or behavior not in ("allow", "deny"):
+        if not self.answers_enabled(item) or not hook_waiting(item) or behavior not in ("allow", "deny"):
             return False
         name = answer_name(item)
         try:
@@ -3592,7 +3701,7 @@ class PetApp:
     def _pass_tick(self):
         try:
             x, y = self.root.winfo_pointerxy()
-            want = not (self.drag is not None or self._over_hit(x, y))
+            want = not (self._menu_open or self.drag is not None or self._over_hit(x, y))
             if want != self._pass:
                 self._pass = want
                 self.clickthru.set(want)
@@ -3629,6 +3738,10 @@ class PetApp:
             self.root.geometry(f"+{wx + dx}+{wy + dy}")
 
     def on_release(self, e, pet):
+        if IS_MAC and (e.state & 0x4):  # Control-click is a context menu, never a session click.
+            self.drag = None
+            pet._on_bubble, pet._on_badge = False, None
+            return "break"
         on_bubble, pet._on_bubble = pet._on_bubble, False
         on_badge, pet._on_badge = pet._on_badge, None
         if self.drag and self.drag[4]:
@@ -3686,6 +3799,30 @@ class PetApp:
                  auto_flash=any(m.get("auto_flash") for m in members))
         return [g]
 
+    def answers_enabled(self, item):
+        agent = "codex" if (item or {}).get("agent") == "codex" else "claude"
+        return bool(self.cfg.get(agent + "_answers", True))
+
+    def set_claude_answers(self, on):
+        """Choose whether Claude hooks wait for an answer from the pet."""
+        self.cfg["claude_answers"] = bool(on)
+        save_setting("claude_answers", self.cfg["claude_answers"])
+        self.claude_answer_var.set(self.cfg["claude_answers"])
+        self._write_claude_flag()
+        self.sync_bubbles(self._last_items)
+
+    def _write_claude_flag(self):
+        # An opt-out preserves Claude answering for existing installations.
+        flag = os.path.join(HOME_DIR, "no-claude-answers")
+        try:
+            if not self.cfg.get("claude_answers", True):
+                os.makedirs(HOME_DIR, exist_ok=True)
+                open(flag, "w").close()
+            elif os.path.exists(flag):
+                os.remove(flag)
+        except OSError:
+            pass
+
     def set_codex_answers(self, on):
         """Codex asks its hooks before showing its own prompt: with this on, the pet waits for your click first (up to
         the answer timeout), so Codex's prompt only appears if you don't answer on the pet."""
@@ -3694,6 +3831,7 @@ class PetApp:
         if self.codex_answer_var.get() != self.cfg["codex_answers"]:
             self.codex_answer_var.set(self.cfg["codex_answers"])
         self._write_codex_flag()
+        self.sync_bubbles(self._last_items)
 
     def _write_codex_flag(self):
         flag = os.path.join(HOME_DIR, "codex-answers")  # read by the hooks, including WSL ones (shared folder)
@@ -3764,9 +3902,33 @@ class PetApp:
             self.compact_var.set(self.cfg["compact"])
 
     def on_menu(self, e, pet=None):
+        if self._menu_open:
+            return "break"
         self.hide_tip()
+        self.drag = None
+        if pet:
+            pet._on_bubble, pet._on_badge = False, None
         self.menu_pet = pet
         self._menu_xy = (e.x_root, e.y_root)
+        if self.context_menu_spec:
+            # Keep mouse handling enabled for the entire menu tracking session.
+            self._menu_open = True
+            try:
+                if self.clickthru:
+                    self.clickthru.set(False)
+                    self._pass = False
+                entries = self.context_menu_spec(pet)
+                fill_menu(self.menu, entries)
+                self._context_menu_shown = True
+                try:
+                    # Tk posts an AppKit menu on macOS and safely manages its
+                    # nested event loop; no focus/Space switch is needed.
+                    popup_menu(self.menu, e.x_root, e.y_root)
+                finally:
+                    self.menu.grab_release()
+            finally:
+                self._menu_open = False
+            return "break"
         self.menu.entryconfigure(self.size_menu_index, label=f"Size...  ({int(round(SCALE['v'] / SCALE_UNIT * 100))}%)")
         ok = bool(pet and pet.data.get("source") == "CC" and pet.data.get("cwd"))
         self.menu.entryconfigure(self.vscode_menu_index, state="normal" if ok else "disabled")
@@ -3788,10 +3950,10 @@ class PetApp:
                 self.root.focus_force()  # Tk on macOS: also activates the application
             except tk.TclError:
                 pass
-            self.root.after(60, lambda: self.menu.tk_popup(x, y))
+            self.root.after(60, lambda: popup_menu(self.menu, x, y))
             return
         style_menu(self.menu)  # submenus added since (hooks, auto approve) pick up the theme too
-        self.menu.tk_popup(x, y)
+        popup_menu(self.menu, x, y)
 
     def open_in_vscode(self, pet=None):
         """Open/focus the session's folder in VS Code (Remote-WSL for WSL sessions)."""
@@ -3821,6 +3983,8 @@ class PetApp:
             self.root.after(1200, lambda: open_uri(uri))
 
     def show_tip(self, pet):
+        if getattr(self, "_menu_open", False):
+            return
         self.hide_tip()
         if not self.cfg.get("session_tooltips", True):
             return
@@ -3844,6 +4008,8 @@ class PetApp:
         self._show_tooltip(pet, "\n".join(lines))
 
     def show_usage_tip(self, pet, detail):
+        if getattr(self, "_menu_open", False):
+            return
         self.hide_tip()
         if not self.cfg.get("usage_tooltips", True):
             return
@@ -3862,34 +4028,41 @@ class PetApp:
             pet._usage_hover = None
 
     def _show_tooltip(self, pet, text, usage_detail=None):
-        tip = self.tip = tk.Toplevel(self.root)
+        if getattr(self, "_menu_open", False):
+            return
+        tip = self.tip = MacOverlayWindow(self.root) if IS_MAC else tk.Toplevel(self.root)
+        # Configure the native panel and position it before it becomes visible.
+        tip.withdraw()
+        tip.title("AIPet tooltip")
+        if IS_MAC:
+            tip.attributes("-alpha", 0.0)
         tip.overrideredirect(True)
         tip.attributes("-topmost", True)
-        if usage_detail is not None:
-            tip.configure(bg=TRANSPARENT)
-            try:
-                tip.attributes("-transparent", True) if IS_MAC else tip.attributes("-transparentcolor", TRANSPARENT)
-            except tk.TclError:
-                pass
-            c = tk.Canvas(tip, bg=TRANSPARENT, highlightthickness=0, bd=0)
-            c.pack()
-            title, _, body = text.partition("\n")
-            accent = "#5b8def" if usage_detail["agent"] == "codex" else "#d98960"
-            head = c.create_text(12, 10, text=title, font=(MONO_FAMILY, 9, "bold"), fill=accent, anchor="nw", width=320)
-            header_box = c.bbox(head)
+        tip.configure(bg=TRANSPARENT)
+        try:
+            tip.attributes("-transparent", True) if IS_MAC else tip.attributes("-transparentcolor", TRANSPARENT)
+        except tk.TclError:
+            pass
+        c = tk.Canvas(tip, bg=TRANSPARENT, highlightthickness=0, bd=0)
+        c.pack()
+        title, _, body = text.partition("\n")
+        title = title.strip() or "Session details"
+        data = usage_detail if usage_detail is not None else getattr(pet, "data", {})
+        agent = data.get("agent")
+        accent = "#5b8def" if agent == "codex" else "#d98960" if agent == "claude" or data.get("source") == "CC" else T["tag_fg"]
+        head = c.create_text(12, 10, text=title, font=(MONO_FAMILY, 9, "bold"), fill=accent, anchor="nw", width=320)
+        header_box = c.bbox(head)
+        w, h = header_box[2] + 12, header_box[3] + 10
+        if body.strip():
             content = c.create_text(12, header_box[3] + 6, text=body, font=(MONO_FAMILY, 8), fill=T["tag_fg"], anchor="nw", width=320)
             box = c.bbox(content)
             w, h = max(header_box[2], box[2]) + 12, box[3] + 10
-            border = c.create_polygon(6, 1, w - 6, 1, w - 6, 3, w - 3, 3, w - 3, 6, w - 1, 6,
-                                     w - 1, h - 6, w - 3, h - 6, w - 3, h - 3, w - 6, h - 3, w - 6, h - 1,
-                                     6, h - 1, 6, h - 3, 3, h - 3, 3, h - 6, 1, h - 6, 1, 6, 3, 6, 3, 3, 6, 3,
-                                     fill=T["tag_bg"], outline=T["tag_outline"], width=2)
-            c.tag_lower(border)
-            c.config(width=w, height=h)
-        else:
-            tip.configure(bg=T["tip_border"], padx=1, pady=1)
-            tk.Label(tip, text=text, justify="left", bg=T["tip_bg"], fg=T["tip_fg"],
-                     font=("Segoe UI", 9), padx=8, pady=6, wraplength=340).pack()
+        border = c.create_polygon(6, 1, w - 6, 1, w - 6, 3, w - 3, 3, w - 3, 6, w - 1, 6,
+                                 w - 1, h - 6, w - 3, h - 6, w - 3, h - 3, w - 6, h - 3, w - 6, h - 1,
+                                 6, h - 1, 6, h - 3, 3, h - 3, 3, h - 6, 1, h - 6, 1, 6, 3, 6, 3, 3, 6, 3,
+                                 fill=T["tag_bg"], outline=T["tag_outline"], width=2)
+        c.tag_lower(border)
+        c.config(width=w, height=h)
         tip.update_idletasks()
         x = pet.canvas.winfo_rootx()
         y = pet.canvas.winfo_rooty() - tip.winfo_reqheight() - 6
@@ -3899,6 +4072,18 @@ class PetApp:
             y = pet.canvas.winfo_rooty() + px(25)
         tip.geometry(geo(*fit_on_screen(x, y, tip.winfo_reqwidth(), tip.winfo_reqheight(),
                                         (pet.canvas.winfo_rootx() + 10, pet.canvas.winfo_rooty() + 10), tip)))
+        tip.deiconify()
+        if IS_MAC:
+            import mac_statusbar as mac
+            # Tk creates/resets the native window on mapping. Keep it invisible
+            # until its Space and mouse behavior have been applied.
+            tip.update_idletasks()
+            mac.set_all_spaces(tip.title(), self.cfg.get("all_spaces", True))
+            window = mac.window_titled(tip.title())
+            if window:
+                # Hover text must never intercept clicks or become the key window.
+                mac.send(window, "setIgnoresMouseEvents:", True, restype=None, argtypes=[mac.c_bool])
+            tip.attributes("-alpha", 1.0)
 
     def hide_tip(self):
         if self.tip:
