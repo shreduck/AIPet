@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Render an animated GIF of AIPet pets for the website, straight from the app's sprites (crisp pixel art instead of
-a resized screenshot). Four pets in a 2x2 grid: working, needs you, done and idle, each with its name tag and badges.
+a resized screenshot). Six pets in a 3x2 grid: working, needs you, a question, done, error and idle, each with its name
+tag and badges, then compact mode.
 
     python tools/make_demo_gif.py [out.gif] [--bg "#eef3f4"] [--unit 2]
 
@@ -30,7 +31,7 @@ args = [a for a in sys.argv[1:] if not a.startswith("--")]
 OUT = args[0] if args else os.path.join(ROOT, "demo.gif")
 BG = sys.argv[sys.argv.index("--bg") + 1] if "--bg" in sys.argv else "#eef3f4"
 U = int(sys.argv[sys.argv.index("--unit") + 1]) if "--unit" in sys.argv else 2  # pixels per drawing unit
-FRAMES, FPS = 72, 12  # 6 s: the compact pet's queue moves on halfway
+FRAMES, FPS = 96, 12  # 8 s: the compact pet's queue moves on halfway; long enough for a working pet's blink
 
 core.set_theme("light")
 T = core.T
@@ -38,10 +39,12 @@ SPR = core.load_sprites()
 W, H = core.CANVAS_W, core.CANVAS_H
 G, TRIM = core.BADGE_GUTTER, core.TOP_TRIM
 
-PETS = [  # (title, state, badges)
+PETS = [  # (title, state, badges); "question" = needs you with a question (a single "?" bubble)
     ("duck-software", "working", ["Claude CLI"]),
     ("ai-pet", "needs_input", ["Codex WSL"]),
+    ("esign", "question", ["Claude WSL"]),
     ("Cowork", "done", ["Claude Cowork"]),
+    ("api", "error", ["Claude CLI"]),
     ("notes", "idle", ["Claude VS"]),
 ]
 
@@ -73,10 +76,17 @@ def text_w(f, s):
     return f.getlength(s)
 
 
+BLINK_PHASE = 5.0  # shifts the 6.7 s blink so the working pet blinks inside the 8 s loop
+
+
 def draw_pet(title, st, badges, t, rnd, heads=None, hot=None, collapse=False):
     """One pet at drawing time t (seconds), in px, coordinates as in aipet.py after the gutter/trim move.
     Compact mode: heads = the sessions' states, the one in front first (as in PetApp._compact_items); hot = per badge,
     faint red while that session needs you; collapse = the expanded badges' collapse tab on top."""
+    question = st == "question"
+    st = "needs_input" if question else st
+    if heads:
+        heads = ["needs_input" if h_ == "question" else h_ for h_ in heads]
     im = Image.new("RGBA", (W * U, H * U), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
     X = lambda v: (v + G) * U  # noqa: E731  - drawing units -> px (x shifted right by the badge column)
@@ -90,10 +100,15 @@ def draw_pet(title, st, badges, t, rnd, heads=None, hot=None, collapse=False):
         main = i == len(states) - 1
         ph = t + i * 1.7
         dy, squash, face = 0.0, 1.0, core.STATE_FACE.get(hst, "sleep")
-        if hst == "working":
+        cx_shift = 0.0
+        if hst == "working":  # as PetApp: a travelling wavy mouth and a slow cosine blink
             dy = -abs(math.sin(ph * (5 if main else 4.2))) * 3 * k
-            if (ph % 4) < 0.15:
-                face = "blink"
+            frame = int(ph * 8) % core.TALK_FRAMES
+            blink = math.cos(2 * math.pi * core.BLINK_RATIO * (8 / core.TALK_FRAMES) * (ph + BLINK_PHASE)) \
+                > core.BLINK_THRESHOLD
+            face = f"talkblink{frame}" if blink else f"talk{frame}"
+        elif hst == "error":
+            cx_shift = 2 * math.sin(ph * 25)
         elif hst == "needs_input":
             dy = -abs(math.sin(ph * 7)) * 8 * (1 if main else 0.6)
             squash = 1.0 if dy < -1.2 else 0.94
@@ -102,7 +117,7 @@ def draw_pet(title, st, badges, t, rnd, heads=None, hot=None, collapse=False):
         sw = rw0 * k * 1.1
         paste(im, SPR["img"]["shadow"], sw * U, max(2, int(sw * 0.25)) * U, X(cx0 + dx), Y(ground + 2), "center")
         paste(im, core.robot_image(face, core.light_cycle(hst, ph)), rw0 * k * U, rh0 * k * squash * U,
-              X(cx0 + dx), Y(ground + dy), "s")
+              X(cx0 + dx + cx_shift), Y(ground + dy), "s")
         if main:
             top_main = ground + dy - rh0 * k * squash
 
@@ -126,10 +141,17 @@ def draw_pet(title, st, badges, t, rnd, heads=None, hot=None, collapse=False):
             y = by1 + 6 + i * (by2 - by1 - 8) / 2.6
             d.text((X(bx1 + 5), Y(y)), row[:-1], font=MONO, fill="#22c55e", anchor="lm")
             d.text((X(bx1 + 5) + text_w(MONO, row[:-1]), Y(y)), row[-1], font=MONO, fill="#d1fae5", anchor="lm")
-    elif st == "done":
+    elif st == "done":  # the completion seal
+        x, y = cx0 - 27, top_main + 8
+        d.ellipse((X(x - 9), Y(y - 9), X(x + 9), Y(y + 9)), fill="#dcfce7", outline="#15803d", width=U)
+        mark("ok", x, y)
+    elif st == "error":
         top = by2 - 19
         bubble(cx0 - 22, top, cx0 + 10, by2, "#fafafa", "#111827")
-        mark("ok", cx0 - 6, (top + by2) / 2 - (1 if int(t * 3) % 2 else 0))
+        mark("no", cx0 - 6, (top + by2) / 2 - (1 if int(t * 3) % 2 else 0))
+    elif st == "needs_input" and question:  # a question: just a bobbing "?"
+        bubble(bx1 + 4, by1, bx2 - 6, by2, "#fafafa", "#111827")
+        mark("?", cx0 - 1, (by1 + by2) / 2 - (1 if int(t * 3) % 2 else 0))
     elif st == "needs_input":
         bubble(bx1 + 4, by1, bx2 - 6, by2, "#fafafa", "#111827")
         y, pulse = (by1 + by2) / 2, int(t * 2) % 3
@@ -170,14 +192,14 @@ def draw_pet(title, st, badges, t, rnd, heads=None, hot=None, collapse=False):
 def main():
     random.seed(7)
     rows = ["".join(random.choice(core.TERMINAL_CHARS) for _ in range(15)) for _ in range(3)]
-    cols, pad = 2, 6 * U
+    cols, pad = 3, 6 * U
     frames = []
     for f in range(FRAMES):
         t = f / FPS
         for i in range(3):  # scroll the terminal rows a little each frame
             if random.random() < (0.55, 0.85, 0.4)[i]:
                 rows[i] = rows[i][1:] + random.choice(core.TERMINAL_CHARS)
-        sheet = Image.new("RGBA", (cols * W * U + pad * 3, 3 * H * U + pad * 5), BG)
+        sheet = Image.new("RGBA", (cols * W * U + pad * (cols + 1), 3 * H * U + pad * 5), BG)
         for n, (title, st, badges) in enumerate(PETS):
             pet = draw_pet(title, st, badges, t + n * 0.37, rows)
             sheet.alpha_composite(pet, (pad + (n % cols) * (W * U + pad), pad + (n // cols) * (H * U + pad)))
@@ -195,7 +217,7 @@ def main():
         pet = draw_pet(sessions[0][0], sessions[0][1], [b for _, _, b in sessions], t, rows,
                        heads=[s_ for _, s_, _ in sessions], hot=[s_ == "needs_input" for _, s_, _ in sessions],
                        collapse=True)
-        sheet.alpha_composite(pet, ((sheet.width - W * U) // 2 + pad * 3, y0))
+        sheet.alpha_composite(pet, ((sheet.width - W * U) // 2, y0))
         frames.append(sheet.convert("RGB"))
     pal = frames[0].quantize(colors=128, method=Image.Quantize.MEDIANCUT)
     out = [fr.quantize(palette=pal, dither=Image.Dither.NONE) for fr in frames]
