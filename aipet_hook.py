@@ -400,6 +400,29 @@ def build_request(data):
 
 
 QUESTION_TOOL = "AskUserQuestion"
+# Codex asks through a tool that returns at once ({"accepted": true}) and then sleeps until the user types the answer,
+# which arrives as a new prompt. Seen as PostToolUse request_user_input_async {"questions": [{"title", "options": [...]}]}
+# followed by PostToolUse clocksleep. Hooks can't type into Codex, so the pet shows these read-only.
+CODEX_QUESTION_TOOLS = {"request_user_input_async", "request_user_input"}
+
+
+def codex_questions(data):
+    inp = data.get("tool_input") if isinstance(data.get("tool_input"), dict) else {}
+    out = []
+    for q in (inp.get("questions") or [])[:6]:
+        if not isinstance(q, dict):
+            continue
+        text = str(q.get("title") or q.get("question") or "").strip()
+        if not text:
+            continue
+        opts = []
+        for o in (q.get("options") or [])[:8]:
+            label = o.get("label") if isinstance(o, dict) else o
+            if label:
+                opts.append({"label": str(label)[:120], "description": str(o.get("description") or "")[:300]
+                             if isinstance(o, dict) else ""})
+        out.append({"question": text[:600], "header": "", "multiSelect": False, "options": opts})
+    return out
 
 
 def question_list(data):
@@ -996,6 +1019,14 @@ def _update_session(path, target, event, data, wsl, auto=None):
         auto_t, auto_n, auto_kind = t_now, auto_n + 1, auto
         req = build_request(data)
         auto_what = (req["tool"] + (": " + req["detail"].splitlines()[0] if req["detail"] else ""))[:120]
+    elif event == "PostToolUse" and data.get("tool_name") in CODEX_QUESTION_TOOLS and codex_questions(data):
+        # Codex asked a question: needs you until the answer comes in as the next prompt. Read-only on the pet.
+        req = {"tool": str(data.get("tool_name")), "description": "", "detail": "", "id": request_id(data),
+               "t": time.time(), "kind": "question", "source": "codex-question", "agent": aid,
+               "sig": tool_signature(data), "shown": True, "questions": codex_questions(data)}
+        requests = [r for r in requests if r.get("source") != "transcript"] + [req]
+        state, message = "needs_input", permission_message(requests[0])
+        wait_agent = requests[0].get("agent", aid)
     elif event in WORKING_EVENTS:
         # A waiting prompt survives activity that doesn't answer it: another agent working (a subagent while the
         # main agent asks, or the main agent while a subagent asks), the same agent starting ANOTHER tool (Claude

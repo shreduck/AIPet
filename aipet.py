@@ -741,6 +741,8 @@ def unconfirmed_prompts(rec, now=None):
     if rec.get("state") != "needs_input" or not rec.get("notifies") or rec.get("agent") == "codex":
         return False
     reqs = [r for r in (rec.get("requests") or []) if isinstance(r, dict) and r.get("source") != "transcript"]
+    if any(r.get("kind") == "question" for r in reqs):
+        return False  # a question is never hidden: it stays until it is answered
     now = time.time() if now is None else now
     return bool(reqs) and all(not r.get("shown") and now - float(r.get("t") or now) > PROMPT_CONFIRM_SECONDS
                               for r in reqs)
@@ -3139,6 +3141,7 @@ class Detail:
                               font=(UI_FONT, int(9 + 7 * (1 - ph)), "bold"))
 
     def update(self, item):
+        self._item = item
         self._state = item.get("state", "needs_input")
         req = item.get("request") or {}
         if self.sent and self._state == "needs_input" and req.get("id") and req.get("id") != getattr(self, "_sent_id", None):
@@ -3209,6 +3212,11 @@ class Detail:
                     "(Go to window). If you do neither, Claude Code asks you itself.")
         elif question and self.sent:
             note = f"Sent your answer. {who} will carry on in a moment."
+        elif question and req.get("source") == "codex-question":
+            note = ("Codex is waiting for your answer in its own window: press Go to window and answer there "
+                    "(the pet can't type into Codex).")
+        elif question:
+            note = f"Answer this in {who}: press Go to window."
         self.note.config(text=note)
         self.answer_row.pack_forget()
         self.q_row.pack_forget()
@@ -3230,9 +3238,10 @@ class Detail:
     def _show_questions(self, req):
         """Build the question blocks once per prompt (the card refreshes every poll: keep what was picked)."""
         self.qframe.pack(fill="x")
-        if self._qid == req.get("id"):
+        readonly = not hook_waiting({"request": req}) or not self.app.answers_enabled(self._item or {})
+        if self._qid == (req.get("id"), readonly):
             return
-        self._qid, self._qvars = req.get("id"), []
+        self._qid, self._qvars = (req.get("id"), readonly), []
         for child in self.qframe.winfo_children():
             child.destroy()
         bg, fg, muted = T["bubble_bg"], T["bubble_fg"], T["bubble_muted"]
@@ -3250,6 +3259,13 @@ class Detail:
             for opt in q.get("options") or []:
                 row = tk.Frame(block, bg=bg)
                 row.pack(fill="x", pady=1)
+                if readonly:  # answered in the session's own window (Codex, or answering from the pet is off)
+                    tk.Label(row, text="\u2022 " + opt["label"], bg=bg, fg=fg, anchor="w", justify="left",
+                             wraplength=420, font=(UI_FONT, 10, "bold")).pack(fill="x")
+                    if opt.get("description"):
+                        tk.Label(row, text=opt["description"], bg=bg, fg=muted, anchor="w", justify="left",
+                                 wraplength=400, font=(UI_FONT, 8)).pack(fill="x", padx=(14, 0))
+                    continue
                 if multi:
                     var = picks[opt["label"]] = tk.BooleanVar(master=self.win, value=False)
                     box = tk.Checkbutton(row, text=opt["label"], variable=var, anchor="w")
@@ -3261,6 +3277,8 @@ class Detail:
                 if opt.get("description"):
                     tk.Label(row, text=opt["description"], bg=bg, fg=muted, anchor="w", justify="left",
                              wraplength=400, font=(UI_FONT, 8)).pack(fill="x", padx=(24, 0))
+            if readonly:
+                continue
             own = tk.StringVar(master=self.win, value="")
             other = tk.Frame(block, bg=bg)
             other.pack(fill="x", pady=(4, 0))

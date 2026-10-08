@@ -59,8 +59,9 @@ box. Every switch and button runs exactly the menu's action, and the window stay
 
 **Questions from Claude** (its AskUserQuestion tool) open in the pet's popup like permission prompts: each question with
 its options (check boxes when several may be picked) and a field for your own answer. *Send answer* hands the answers to
-Claude Code, which carries on as if you had answered there. Auto approve never answers a question. Codex has no hook for
-its questions, so those stay in Codex.
+Claude Code, which carries on as if you had answered there. Auto approve never answers a question, and a question is
+never hidden as a stale prompt. **Codex questions** show too, read-only: Codex takes the answer as your next message,
+which a hook can't type, so the card shows the question and its options and *Go to window* takes you there.
 
 **API errors** that end a turn (usage limit reached, overloaded, billing, signed out...) show the session as an error,
 with the reason, until you send Claude a new message. Permission prompts that Claude Code settles by itself (auto mode,

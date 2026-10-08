@@ -92,6 +92,32 @@ class QuestionTests(unittest.TestCase):
     def test_other_tools_are_not_questions(self):
         self.assertEqual(hook.question_list({"tool_name": "Bash", "tool_input": QUESTIONS}), [])
 
+    def test_codex_question_shows_until_answered_and_survives_the_wait(self):
+        with patch.object(hook, "AGENT", "codex"):
+            ask = {"session_id": "s", "hook_event_name": "PostToolUse", "tool_name": "request_user_input_async",
+                   "tool_use_id": "call_1", "tool_input": {"questions": [
+                       {"title": "Which fruit should the robot like?", "options": ["Apple", "Banana", "Cherry"]}]}}
+            hook._update_session(self.path, self.target, "PostToolUse", ask, False)
+            rec = self.record()
+            self.assertEqual((rec["state"], rec["message"]), ("needs_input", "Codex has a question for you"))
+            req = rec["request"]
+            self.assertEqual((req["kind"], req["source"]), ("question", "codex-question"))
+            self.assertEqual([o["label"] for o in req["questions"][0]["options"]], ["Apple", "Banana", "Cherry"])
+            sleep = {"session_id": "s", "hook_event_name": "PostToolUse", "tool_name": "clocksleep",
+                     "tool_use_id": "call_2", "tool_input": {"duration_ms": 60000}}
+            hook._update_session(self.path, self.target, "PostToolUse", sleep, False)  # Codex waits: still asking
+            self.assertEqual(self.record()["state"], "needs_input")
+            hook._update_session(self.path, self.target, "UserPromptSubmit",
+                                 {"session_id": "s", "hook_event_name": "UserPromptSubmit", "prompt": "Apple"}, False)
+            rec = self.record()
+            self.assertEqual((rec["state"], rec["requests"]), ("working", []))
+
+    def test_questions_are_never_hidden_as_ghost_prompts(self):
+        import aipet
+        hook._update_session(self.path, self.target, "PermissionRequest", self.data, False)
+        rec = dict(self.record(), notifies=True)
+        self.assertFalse(aipet.unconfirmed_prompts(rec, now=rec["request"]["t"] + 600))
+
 
 if __name__ == "__main__":
     unittest.main()
