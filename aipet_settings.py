@@ -144,6 +144,7 @@ def draw_icon(canvas, name, color=None, x=0, y=0, px=2, tile=True, bright=False)
 
 
 ZOOM_MIN, ZOOM_MAX, ZOOM_STEP = 0.8, 2.0, 0.1
+BASE_SCALE = 1.5  # "100%" is drawn half again as big as the pet's other windows: easier to read
 
 
 def clamp_zoom(value):
@@ -165,7 +166,7 @@ class SettingsWindow:
         w = self.win = tk.Toplevel(root)
         w.withdraw()
         w.title("AIPet settings")
-        w.minsize(660, 440)
+        w.minsize(int(560 * BASE_SCALE), int(380 * BASE_SCALE))
         w.protocol("WM_DELETE_WINDOW", self.close)
         w.bind("<Escape>", lambda e: self.close())
         mod = "Command" if IS_MAC else "Control"
@@ -207,7 +208,7 @@ class SettingsWindow:
             pass
 
     def _place(self):
-        w, h = 840, 600
+        w, h = int(840 * self.scale), int(600 * self.scale)
         try:
             ref = (self.root.winfo_x() + self.root.winfo_width() // 2, self.root.winfo_y() + self.root.winfo_height() // 2)
             left, top, right, bottom = core.work_area(*ref, self.win) or (
@@ -224,16 +225,21 @@ class SettingsWindow:
         self._after = self.win.after(POLL_MS, self._poll)
 
     # ---- size
+    @property
+    def scale(self):
+        """What everything is multiplied by: the user's zoom on top of the comfortable base size."""
+        return self.zoom * BASE_SCALE
+
     def font(self, size, *style):
-        return (UI_FONT, max(6, int(round(size * self.zoom)))) + style
+        return (UI_FONT, max(6, int(round(size * self.scale)))) + style
 
     @property
     def px(self):  # sprite pixel size of icons
-        return max(1, int(round(2 * self.zoom)))
+        return max(1, int(round(2 * self.scale)))
 
     @property
     def px_big(self):
-        return max(2, int(round(3 * self.zoom)))
+        return max(2, int(round(3 * self.scale)))
 
     def zoom_by(self, step):
         """Ctrl + plus / minus (step 1 / -1), Ctrl + 0 (step 0: back to 100%)."""
@@ -283,7 +289,7 @@ class SettingsWindow:
         w.configure(bg=self.bg)
         core.titlebar_theme(w)
 
-        side = self.side = tk.Frame(w, bg=self.side_bg, width=int(220 * self.zoom))
+        side = self.side = tk.Frame(w, bg=self.side_bg, width=int(220 * self.scale))
         side.pack(side="left", fill="y")
         side.pack_propagate(False)
         head = tk.Frame(side, bg=self.side_bg)
@@ -335,7 +341,7 @@ class SettingsWindow:
         self.canvas.itemconfigure(self._body_id, width=e.width)
         for label, inset in self._wrap:
             try:
-                label.configure(wraplength=max(200, e.width - int(inset * self.zoom)))
+                label.configure(wraplength=max(200, e.width - int(inset * self.scale)))
             except tk.TclError:
                 pass
 
@@ -577,7 +583,7 @@ class SettingsWindow:
 
     def _switch(self, parent, on, enabled):
         T = core.T
-        z = self.zoom
+        z = self.scale
         c = tk.Canvas(parent, width=int(38 * z), height=int(20 * z), bg=self.bg, highlightthickness=0, bd=0)
         track = (T["primary"] if on else T["border"]) if enabled else T["menu_disabled"]
 
@@ -601,8 +607,8 @@ class SettingsWindow:
         shown = tk.Label(line, text=fmt(spec["value"]), bg=self.bg, fg=T["win_fg"], font=self.font(10, "bold"),
                          width=6, anchor="e")
         scale = tk.Scale(line, from_=spec["min"], to=spec["max"], resolution=spec.get("step", 0.1), orient="horizontal",
-                         variable=var, showvalue=False, length=int(260 * self.zoom), sliderlength=int(18 * self.zoom),
-                         width=int(10 * self.zoom), bg=self.bg, troughcolor=T["entry_bg"], activebackground=T["primary"],
+                         variable=var, showvalue=False, length=int(260 * self.scale), sliderlength=int(18 * self.scale),
+                         width=int(10 * self.scale), bg=self.bg, troughcolor=T["entry_bg"], activebackground=T["primary"],
                          highlightthickness=0, bd=0, relief="flat", command=lambda v: shown.configure(text=fmt(float(v))))
         scale.pack(side="left")
         shown.pack(side="left", padx=(10, 0))
