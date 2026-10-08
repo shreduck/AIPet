@@ -57,6 +57,15 @@ activating the pet or switching away from a full-screen app.
 (General, Appearance, Behavior, Integrations, Permissions, Help), each with an icon and a short explanation, plus a search
 box. Every switch and button runs exactly the menu's action, and the window stays in step with changes made from the menus.
 
+**Questions from Claude** (its AskUserQuestion tool) open in the pet's popup like permission prompts: each question with
+its options (check boxes when several may be picked) and a field for your own answer. *Send answer* hands the answers to
+Claude Code, which carries on as if you had answered there. Auto approve never answers a question. Codex has no hook for
+its questions, so those stay in Codex.
+
+**API errors** that end a turn (usage limit reached, overloaded, billing, signed out...) show the session as an error,
+with the reason, until you send Claude a new message. Permission prompts that Claude Code settles by itself (auto mode,
+an allow rule) or that belonged to a subagent that stopped no longer leave a pet stuck on "needs you".
+
 - **Appearance**: pet style, size, compact mode, theme, session titles and tooltips.
 - **Behavior**: desktop visibility, position, click behavior, sounds and notifications, session timing, and startup.
 - **Integrations**: Claude Code and Codex hooks, usage collection, setup and connection status.

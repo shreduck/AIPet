@@ -36,6 +36,9 @@ HOOK_EVENTS = [
     ("SubagentStart", None),  # lets the pet see a subagent the moment it starts (even one running a single long command)
     ("SubagentStop", None),  # ... and drop it when it finishes
     ("PermissionRequest", None),  # gives the pet the command/description behind a permission prompt (observe only)
+    ("PostToolUseFailure", "*"),  # an approved tool that failed: its prompt is over too (there is no PostToolUse)
+    ("PermissionDenied", "*"),  # a prompt denied without the user (auto mode): no longer waiting
+    ("StopFailure", None),  # the turn ended on an API error: usage limit, overloaded, billing... shown on the pet
 ]
 HOOK_TIMEOUTS = {"PermissionRequest": 86400}  # seconds; the answer timeout can be "no limit" (the hook
 # still ends as soon as the prompt is answered anywhere, or the pet closes)

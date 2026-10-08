@@ -732,6 +732,20 @@ def clamp_health(v):
         return 15
 
 
+PROMPT_CONFIRM_SECONDS = 12  # Claude Code's permission_prompt Notification comes ~6 s after the prompt appears
+
+
+def unconfirmed_prompts(rec, now=None):
+    """True when a session shows "needs you" only for permission prompts Claude Code never put on screen: none got
+    its permission_prompt Notification in time. Only for Claude Code sessions known to send those notifications."""
+    if rec.get("state") != "needs_input" or not rec.get("notifies") or rec.get("agent") == "codex":
+        return False
+    reqs = [r for r in (rec.get("requests") or []) if isinstance(r, dict) and r.get("source") != "transcript"]
+    now = time.time() if now is None else now
+    return bool(reqs) and all(not r.get("shown") and now - float(r.get("t") or now) > PROMPT_CONFIRM_SECONDS
+                              for r in reqs)
+
+
 def answer_name(item):
     req = (item or {}).get("request") or {}
     return "".join(ch if ch.isalnum() or ch in "_.-" else "_" for ch in str(req.get("id") or (item or {}).get("sid") or "request"))[:120]
@@ -1084,6 +1098,10 @@ def read_claude_code_sessions(cfg):
             # its Claude Code / Codex process is gone without a Stop or SessionEnd (the app was closed, or Cowork moved
             # the conversation to a new session): show it as done, so the done timeout clears it
             rec = dict(rec, state="done", message="", request={}, changed=rec.get("updated", 0))
+        if unconfirmed_prompts(rec):
+            # Claude Code announces every prompt it really shows (a Notification ~6 s in). These never were: settled
+            # without the user (auto mode, a rule...), so the session is working, not waiting for you.
+            rec = dict(rec, state="working", message="", request={}, requests=[])
         env, ide = rec.get("env", ""), rec.get("ide", "")
         cowork = rec.get("app") == "cowork"
         codex = rec.get("agent") == "codex"
@@ -2243,8 +2261,11 @@ class Pet:
             elif st == "needs_input":  # the answer bubble: check / cross / question mark (click it for the popup)
                 self._bubble(bx1 + 4, by1, bx2 - 6, by2, tail, "#fafafa", "#111827", tags=("ans",))
                 y, pulse = (by1 + by2) / 2, int(t * 2) % 3
-                for i, (x, kind) in enumerate(((cx0 - 16, "ok"), (cx0 - 1, "no"), (cx0 + 14, "?"))):
-                    self._mark(kind, x, y - (1 if i == pulse else 0), tags=("ans",))
+                if (self.data.get("request") or {}).get("kind") == "question":  # a question: just a bobbing "?"
+                    self._mark("?", cx0 - 1, y - (1 if int(t * 3) % 2 else 0), tags=("ans",))
+                else:
+                    for i, (x, kind) in enumerate(((cx0 - 16, "ok"), (cx0 - 1, "no"), (cx0 + 14, "?"))):
+                        self._mark(kind, x, y - (1 if i == pulse else 0), tags=("ans",))
             else:  # idle: sleeping, rising z's
                 for i in range(3):
                     ph = (t * 0.5 + i / 3) % 1
@@ -2986,6 +3007,16 @@ class Detail:
         self.golink.bind("<Button-1>", lambda e: self.go())
         self.note = tk.Label(right, bg=bg, fg=muted, anchor="w", justify="left", wraplength=430, font=(UI_FONT, 8))
         self.note.pack(fill="x", pady=(2, 8))
+        # Escape hatch for a prompt that is gone (its agent died, it was settled elsewhere) but still shows here
+        self.clearlink = tk.Label(right, text="Not asking anymore? Clear this prompt", bg=bg, fg=muted, cursor="hand2",
+                                  anchor="w", font=(UI_FONT, 8, "underline"))
+        self.clearlink.bind("<Button-1>", lambda e: self.clear_prompt())
+        # Questions (Claude's AskUserQuestion): one block per question, options as toggles, plus an own-answer field
+        self.qframe = tk.Frame(self.body, bg=bg)
+        self._qid, self._qvars = None, []
+        self.q_row = tk.Frame(right, bg=bg)
+        self.btn_send = tk.Button(self.q_row, text="Send answer", command=self.send_answers, **button_style("primary"))
+        self.btn_send.pack(side="right", ipady=2)
         self.answer_row = tk.Frame(right, bg=bg)
         self.btn_deny = tk.Button(self.answer_row, text="Deny", width=12, bg=bg, fg=themed_color("#dc2626"),
                                   activebackground=T["btn_active"], activeforeground=themed_color("#b91c1c"),
@@ -3084,7 +3115,7 @@ class Detail:
             return
         c = self.robot
         c.delete("all")
-        if self.sent == "Allow once":
+        if self.sent in ("Allow once", "Answer"):
             face, state, dy = "joy", "done", -abs(math.sin(t * 6)) * 4
         elif self.sent == "Deny":
             face, state, dy = "worried", "error", 0.0
@@ -3115,13 +3146,16 @@ class Detail:
         if self._state != "needs_input" and not self.sent:
             return self._update_status(item)
         pending = item.get("pending", 0)
-        self.status.config(text="needs your permission" + (f"  ·  {pending} prompts waiting" if pending > 1 else ""),
-                           fg=self.ACCENT)
+        question = req.get("kind") == "question"
+        self.status.config(text=("has a question for you" if question else "needs your permission")
+                           + (f"  ·  {pending} prompts waiting" if pending > 1 else ""), fg=self.ACCENT)
         self.head.config(text=item.get("title", "session"))
         self.where.config(text=" \u00b7 ".join(x for x in (item.get("where"), item.get("detail")) if x))
-        for widget in (self.ask, self.desc, self.code):
+        for widget in (self.ask, self.desc, self.code, self.qframe):
             widget.pack_forget()
-        if req:
+        if question:
+            self._show_questions(req)
+        elif req:
             who = "Codex" if item.get("agent") == "codex" else "Claude"
             self.ask.config(text=f"Allow {who} to use {req.get('tool') or 'this tool'}?")
             self.ask.pack(fill="x")
@@ -3170,11 +3204,21 @@ class Detail:
         else:
             note = ("No command details were reported for this prompt, so there is nothing to answer here. "
                     "Press Go to window to jump to the session.")
+        if question and can_answer:
+            note = ("Pick an answer (or type your own) and press Send answer, or answer in the session window "
+                    "(Go to window). If you do neither, Claude Code asks you itself.")
+        elif question and self.sent:
+            note = f"Sent your answer. {who} will carry on in a moment."
         self.note.config(text=note)
+        self.answer_row.pack_forget()
+        self.q_row.pack_forget()
         if can_answer:
-            self.answer_row.pack(fill="x", after=self.note)
+            (self.q_row if question else self.answer_row).pack(fill="x", after=self.note)
+        self._req_id = req.get("id")
+        if req and not self.sent and req.get("source") != "transcript":
+            self.clearlink.pack(fill="x", pady=(0, 6), after=self.note)
         else:
-            self.answer_row.pack_forget()
+            self.clearlink.pack_forget()
         if can_answer or self.sent:  # small link while the answer buttons (or the "sent" note) are showing
             self.golink.pack(side="right")
             self.go_row.pack_forget()
@@ -3182,6 +3226,79 @@ class Detail:
             self.golink.pack_forget()
             self.go_row.pack(fill="x", after=self.note)
         self._place()
+
+    def _show_questions(self, req):
+        """Build the question blocks once per prompt (the card refreshes every poll: keep what was picked)."""
+        self.qframe.pack(fill="x")
+        if self._qid == req.get("id"):
+            return
+        self._qid, self._qvars = req.get("id"), []
+        for child in self.qframe.winfo_children():
+            child.destroy()
+        bg, fg, muted = T["bubble_bg"], T["bubble_fg"], T["bubble_muted"]
+        for i, q in enumerate(req.get("questions") or []):
+            block = tk.Frame(self.qframe, bg=bg)
+            block.pack(fill="x", pady=(0 if i == 0 else 12, 0))
+            if q.get("header"):
+                tk.Label(block, text=q["header"].upper(), bg=bg, fg=self.ACCENT, anchor="w",
+                         font=(UI_FONT, 8, "bold")).pack(fill="x")
+            tk.Label(block, text=q["question"], bg=bg, fg=fg, anchor="w", justify="left", wraplength=430,
+                     font=(UI_FONT, 11, "bold")).pack(fill="x", pady=(2, 4))
+            multi = bool(q.get("multiSelect"))
+            picks = {}
+            choice = tk.StringVar(master=self.win, value="")
+            for opt in q.get("options") or []:
+                row = tk.Frame(block, bg=bg)
+                row.pack(fill="x", pady=1)
+                if multi:
+                    var = picks[opt["label"]] = tk.BooleanVar(master=self.win, value=False)
+                    box = tk.Checkbutton(row, text=opt["label"], variable=var, anchor="w")
+                else:
+                    box = tk.Radiobutton(row, text=opt["label"], variable=choice, value=opt["label"], anchor="w")
+                box.configure(bg=bg, fg=fg, activebackground=bg, activeforeground=fg, selectcolor=T["entry_bg"],
+                              highlightthickness=0, font=(UI_FONT, 10, "bold"), cursor="hand2")
+                box.pack(fill="x")
+                if opt.get("description"):
+                    tk.Label(row, text=opt["description"], bg=bg, fg=muted, anchor="w", justify="left",
+                             wraplength=400, font=(UI_FONT, 8)).pack(fill="x", padx=(24, 0))
+            own = tk.StringVar(master=self.win, value="")
+            other = tk.Frame(block, bg=bg)
+            other.pack(fill="x", pady=(4, 0))
+            tk.Label(other, text="Or your own answer:", bg=bg, fg=muted, font=(UI_FONT, 8)).pack(side="left")
+            entry = tk.Entry(other, textvariable=own, bg=T["entry_bg"], fg=T["entry_fg"], relief="flat",
+                             insertbackground=T["entry_fg"], highlightthickness=1, highlightbackground=T["border"],
+                             highlightcolor=T["primary"], font=(UI_FONT, 9))
+            entry.pack(side="left", fill="x", expand=True, padx=(6, 0))
+            if not multi:  # typing replaces the picked option
+                own.trace_add("write", lambda *_, c=choice, o=own: c.set("") if o.get().strip() else None)
+            self._qvars.append((q, multi, choice, picks, own))
+        self.win.after(60, self._place)
+
+    def question_answers(self):
+        """{question text: label} (single choice) or {question text: [labels]} (multi-select); typed answers count
+        as a label. None until every question has an answer."""
+        answers = {}
+        for q, multi, choice, picks, own in self._qvars:
+            typed = own.get().strip()
+            if multi:
+                value = [label for label, var in picks.items() if var.get()] + ([typed] if typed else [])
+            else:
+                value = typed or choice.get()
+            if not value:
+                return None
+            answers[q["question"]] = value
+        return answers or None
+
+    def send_answers(self):
+        answers = self.question_answers()
+        if not answers:
+            self.note.config(text="Answer every question first (pick an option or type your own).")
+            return
+        item = next((i for i in self.app._last_items if i["key"] == self.key), {})
+        if self.app.send_answer(self.key, "allow", answers=answers):
+            self.sent = "Answer"
+            self._sent_id = (item.get("request") or {}).get("id")
+            self.update(item or {"request": {}})
 
     def _update_status(self, item):
         """A session that isn't asking anything: show what it's doing, with no answer buttons."""
@@ -3197,6 +3314,8 @@ class Detail:
         self.wait.config(text=f"since {ago(item['changed'])}" if item.get("changed") else "")
         self.note.config(text="Press Go to window to jump to the session.")
         self.answer_row.pack_forget()
+        self.q_row.pack_forget()
+        self.qframe.pack_forget()
         self.golink.pack_forget()
         self.go_row.pack(fill="x", after=self.note)
         self._place()
@@ -3205,6 +3324,9 @@ class Detail:
         """Bring the session's window to the front and dismiss this popup."""
         self.app.focus_key(self.key)
         self.close()
+
+    def clear_prompt(self):
+        self.app.clear_prompt(self.key, getattr(self, "_req_id", None))  # the next poll moves the card on / closes it
 
     def answer(self, behavior):
         item = next((i for i in self.app._last_items if i["key"] == self.key), {})
@@ -3531,8 +3653,9 @@ class PetApp:
         except OSError:
             pass
 
-    def send_answer(self, key, behavior):
-        """Hand the user's click to the waiting PermissionRequest hook. Returns True if it was written."""
+    def send_answer(self, key, behavior, answers=None):
+        """Hand the user's click to the waiting PermissionRequest hook. Returns True if it was written.
+        answers: for a question, {question text: label, or [labels] for multi-select}."""
         item = next((i for i in self._last_items if i["key"] == key), None)
         req = (item or {}).get("request") or {}
         if not self.answers_enabled(item) or not hook_waiting(item) or behavior not in ("allow", "deny"):
@@ -3542,10 +3665,37 @@ class PetApp:
             os.makedirs(answers_dir(), exist_ok=True)
             path = os.path.join(answers_dir(), name + ".json")
             with open(path + ".tmp", "w", encoding="utf-8") as f:
-                json.dump({"behavior": behavior, "t": time.time()}, f)
+                json.dump(dict({"behavior": behavior, "t": time.time()}, **({"answers": answers} if answers else {})), f)
             os.replace(path + ".tmp", path)
             return True
         except OSError:
+            return False
+
+    def clear_prompt(self, key, req_id):
+        """Drop one permission prompt from a session that still shows it although nobody is asking anymore (its
+        subagent died on an API error, say). A hook still waiting for it notices and lets go."""
+        item = next((i for i in self._last_items if i["key"] == key), None)
+        path = (item or {}).get("path")
+        if not path or not req_id:
+            return False
+        try:
+            with open(path, encoding="utf-8") as f:
+                rec = json.load(f)
+            reqs = [r for r in (rec.get("requests") or ([rec["request"]] if rec.get("request") else []))
+                    if isinstance(r, dict) and r.get("id") != req_id]
+            now = time.time()
+            rec.update(requests=reqs, request=reqs[0] if reqs else {}, updated=now)
+            if not reqs and rec.get("state") == "needs_input":
+                rec.update(state="working", message="", wait_agent="", changed=now)
+            elif reqs:
+                rec["message"] = f"Claude needs your permission to use {reqs[0].get('tool') or 'a tool'}"
+            tmp = path + ".pet.tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(rec, f)
+            os.replace(tmp, path)
+            return True
+        except (OSError, ValueError) as e:
+            log_error(f"clear prompt: {e!r}")
             return False
 
     def open_detail(self, key):

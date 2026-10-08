@@ -112,6 +112,52 @@ class PermissionQueueTests(unittest.TestCase):
         self.event("PostToolUse", call(1, "ls"))
         self.assertEqual(self.record()["state"], "working")
 
+    def test_tool_failure_or_denial_also_settles_its_prompt(self):
+        for ending in ("PostToolUseFailure", "PermissionDenied"):
+            with self.subTest(ending=ending):
+                os.path.exists(self.path) and os.remove(self.path)
+                self.event("PermissionRequest", call(1, "make"))
+                done = dict(call(1, "make"))
+                done["tool_input"] = dict(done["tool_input"], timeout=600000, description="added later")  # extra fields
+                self.event(ending, done)
+                self.assertEqual(self.record()["state"], "working")
+
+    def test_subagent_stopping_drops_its_prompts(self):
+        sub = dict(call(1, "mvn test"), agent_id="tester")
+        self.event("PermissionRequest", sub)
+        self.event("Stop", {"session_id": "s"})  # the main turn ends while the tester asks
+        self.assertEqual(self.record()["state"], "needs_input")
+        hook._update_session(self.path, self.target, "SubagentStop",
+                             {"session_id": "s", "agent_id": "tester", "hook_event_name": "SubagentStop"}, False)
+        rec = self.record()
+        self.assertEqual((rec["state"], rec["requests"]), ("done", []))
+
+    def test_api_error_shows_why_the_turn_stopped(self):
+        self.event("UserPromptSubmit", {"session_id": "s", "prompt": "go"})
+        hook._update_session(self.path, self.target, "StopFailure",
+                             {"session_id": "s", "hook_event_name": "StopFailure", "error_type": "rate_limit"}, False)
+        self.event("Stop", {"session_id": "s"})
+        rec = self.record()
+        self.assertEqual((rec["state"], rec["error_kind"]), ("error", "rate_limit"))
+        self.assertIn("Usage limit", rec["message"])
+        self.event("UserPromptSubmit", {"session_id": "s", "prompt": "again"})
+        self.assertEqual((self.record()["state"], self.record()["error_kind"]), ("working", ""))
+
+    def test_prompts_never_announced_stop_showing_after_a_while(self):
+        import aipet
+        self.event("PermissionRequest", call(1, "ls"))
+        self.event("Notification", {"session_id": "s", "notification_type": "permission_prompt",
+                                    "message": "Claude needs your permission to use Bash"})
+        rec = self.record()
+        self.assertTrue(rec["notifies"] and rec["requests"][0]["shown"])
+        self.assertFalse(aipet.unconfirmed_prompts(rec, now=rec["requests"][0]["t"] + 60))  # shown: really waiting
+        self.event("PostToolUse", call(1, "ls"))
+        self.event("PermissionRequest", call(2, "cat x"))  # settled by auto mode: never announced
+        rec = self.record()
+        t = rec["requests"][0]["t"]
+        self.assertFalse(aipet.unconfirmed_prompts(rec, now=t + 3))  # give the Notification time
+        self.assertTrue(aipet.unconfirmed_prompts(rec, now=t + 30))
+
 
 if __name__ == "__main__":
     unittest.main()

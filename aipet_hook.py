@@ -47,7 +47,17 @@ except Exception:
     claude_usage = None
 
 AGENT = "codex" if "--codex" in sys.argv[1:] else "claude"
-WORKING_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart"}
+WORKING_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "PostToolUseFailure", "PermissionDenied"}
+# a tool call is over: PostToolUse (it ran), PostToolUseFailure (it ran and failed), PermissionDenied (auto mode said no)
+TOOL_DONE_EVENTS = {"PostToolUse", "PostToolUseFailure", "PermissionDenied"}
+# StopFailure error types (the hook matcher values) -> what the pet says
+STOP_FAILURES = {"rate_limit": "Usage limit reached", "overloaded": "Claude is overloaded - try again shortly",
+                 "billing_error": "Billing problem: usage is off for this account",
+                 "authentication_failed": "Signed out: log in again", "oauth_org_not_allowed": "Organisation not allowed",
+                 "account_on_hold": "Account on hold", "invalid_request": "The request was rejected",
+                 "model_not_found": "Model not available", "server_error": "API server error",
+                 "max_output_tokens": "Reply too long: hit the output limit",
+                 "cloud_credential_error": "Cloud credentials could not be loaded"}
 # Notification kinds that ask the user to act. Everything else (idle reminders, auth_success, agent_completed, elicitation_complete,
 # quota_auto_resume_fired, ...) is informational and must not raise a "needs you".
 ACTIONABLE_NOTIFICATIONS = {"permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input",
@@ -381,8 +391,32 @@ def build_request(data):
             break
     if not detail and inp:
         detail = "\n".join(f"{k}: {str(v)[:200]}" for k, v in list(inp.items())[:6])
-    return {"tool": str(data.get("tool_name") or ""), "description": str(inp.get("description") or "")[:300],
-            "detail": detail[:1500], "id": request_id(data), "t": time.time()}
+    req = {"tool": str(data.get("tool_name") or ""), "description": str(inp.get("description") or "")[:300],
+           "detail": detail[:1500], "id": request_id(data), "t": time.time()}
+    questions = question_list(data)
+    if questions:  # Claude's AskUserQuestion: the pet shows the questions and can send the answers back
+        req.update(kind="question", questions=questions, detail="", description="")
+    return req
+
+
+QUESTION_TOOL = "AskUserQuestion"
+
+
+def question_list(data):
+    """The questions of an AskUserQuestion call, trimmed to what the pet shows:
+    [{"question", "header", "multiSelect", "options": [{"label", "description"}]}]. [] for any other tool."""
+    if data.get("tool_name") != QUESTION_TOOL:
+        return []
+    inp = data.get("tool_input") if isinstance(data.get("tool_input"), dict) else {}
+    out = []
+    for q in (inp.get("questions") or [])[:6]:
+        if not isinstance(q, dict) or not q.get("question"):
+            continue
+        opts = [{"label": str(o.get("label") or "")[:120], "description": str(o.get("description") or "")[:300]}
+                for o in (q.get("options") or [])[:8] if isinstance(o, dict) and o.get("label")]
+        out.append({"question": str(q["question"])[:600], "header": str(q.get("header") or "")[:40],
+                    "multiSelect": bool(q.get("multiSelect")), "options": opts})
+    return out
 
 
 def request_id(data):
@@ -400,11 +434,22 @@ def request_id(data):
 
 
 def tool_signature(data):
-    """Tool name + input, hashed: links a PermissionRequest (no tool_use_id) to the PreToolUse of the same call."""
-    try:
-        raw = json.dumps([data.get("tool_name"), data.get("tool_input")], sort_keys=True, default=str)
-    except Exception:
-        raw = repr([data.get("tool_name"), data.get("tool_input")])
+    """Tool name + its main argument (the command, path, url... as build_request shows it), hashed: links a
+    PermissionRequest (no tool_use_id) to the PostToolUse / PostToolUseFailure of the same call. Not the whole input:
+    Claude Code adds or normalises other fields (timeout, description...) between the two events."""
+    inp = data.get("tool_input")
+    key = ""
+    if isinstance(inp, dict):
+        key = next((str(inp[k]) for k in ("command", "file_path", "path", "url", "pattern", "query", "prompt")
+                    if inp.get(k)), "")
+        if not key:
+            try:
+                key = json.dumps(inp, sort_keys=True, default=str)
+            except Exception:
+                key = repr(inp)
+    elif inp:
+        key = str(inp)
+    raw = "%s\n%s" % (data.get("tool_name") or "", key.strip())
     return hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()[:16]
 
 
@@ -418,7 +463,33 @@ def pending_requests(record):
     return [req] if isinstance(req, dict) and req else []
 
 
+def stop_failure_kind(data):
+    """The StopFailure error type. Read defensively: the field's name isn't pinned down in every version."""
+    for key in ("error_type", "error", "reason", "stop_reason"):
+        v = data.get(key)
+        if isinstance(v, dict):
+            v = v.get("type") or v.get("error_type")
+        if isinstance(v, str) and v:
+            return v.strip().lower()
+    return "unknown"
+
+
+def stop_failure_message(data, kind):
+    detail = ""
+    for key in ("error_message", "error_details", "message", "details"):
+        v = data.get(key)
+        if isinstance(v, dict):
+            v = v.get("message")
+        if isinstance(v, str) and v.strip():
+            detail = " ".join(v.split())[:140]
+            break
+    head = STOP_FAILURES.get(kind, "Stopped on an API error")
+    return head + (": " + detail if detail and detail.lower() not in head.lower() else "")
+
+
 def permission_message(req):
+    if req.get("kind") == "question":
+        return f"{'Codex' if AGENT == 'codex' else 'Claude'} has a question for you"
     return f"{'Codex' if AGENT == 'codex' else 'Claude'} needs your permission to use {req.get('tool') or 'a tool'}"
 
 
@@ -453,10 +524,12 @@ def write_stdout(text):
             pass
 
 
-def decision_output(behavior):
+def decision_output(behavior, updated_input=None):
     decision = {"behavior": behavior}
     if behavior == "deny":
         decision["message"] = "Denied from AIPet"
+    elif updated_input is not None:  # e.g. AskUserQuestion: the questions plus the answers picked on the pet
+        decision["updatedInput"] = updated_input
     return json.dumps({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": decision}})
 
 
@@ -566,6 +639,9 @@ def await_answer(base, key, seconds, session_path=None, request_id=None):
             pass
 
 
+LAST_ANSWER = {}  # the whole answer file of the last click (behavior, and "answers" for a question)
+
+
 def _await(path, waiting, base, seconds, session_path, request_id):
     deadline = time.time() + seconds if seconds > 0 else None
     checked, touched = time.time(), 0.0
@@ -592,6 +668,8 @@ def _await(path, waiting, base, seconds, session_path, request_id):
             except OSError:
                 pass
             if data.get("behavior") in ("allow", "deny"):
+                LAST_ANSWER.clear()
+                LAST_ANSWER.update(data)  # answers to a question travel with the click
                 return data["behavior"]
         if not pet_alive(base):
             return None  # the pet was closed: fall back to the normal prompt
@@ -633,7 +711,7 @@ def _set_requests(record, requests):
         record.update(state="working", message="", wait_agent="", changed=now, updated=now)
 
 
-def answer_flow(base, path, aid, request_id=None):
+def answer_flow(base, path, aid, request_id=None, tool_input=None):
     """After the request is recorded: give the user a window to answer from the pet, then print the decision.
     Prints nothing (normal prompt) if the pet isn't running, answering is switched off, or nobody clicks in time.
     request_id: this hook's own prompt (several can wait at once); None = the one on screen."""
@@ -666,7 +744,15 @@ def answer_flow(base, path, aid, request_id=None):
                 _set_requests(cur, requests)
             write_atomic(path, cur)
     if decision:
-        write_stdout(decision_output(decision))
+        updated = None
+        answers = LAST_ANSWER.get("answers")
+        if decision == "allow" and req.get("kind") == "question":
+            if not isinstance(answers, dict) or not answers:
+                return  # a question can't be "allowed" without answers: leave it to Claude Code's own dialog
+            # the questions exactly as Claude Code sent them, plus {question text: label, or [labels] if multi-select}
+            updated = dict(tool_input if isinstance(tool_input, dict) else {"questions": req.get("questions")},
+                           answers=answers)
+        write_stdout(decision_output(decision, updated))
 
 def request_from_transcript(path, max_bytes=300000):
     """Fallback for sessions that only send a Notification (the VS Code extension): the tool call that has no result
@@ -884,10 +970,12 @@ def _update_session(path, target, event, data, wsl, auto=None):
     started = {k: v for k, v in (prev.get("started") or {}).items() if isinstance(v, list) and t_now - v[1] < 900}
     use_id = str(data.get("tool_use_id") or "")
     answered = [a for a in (prev.get("answered") or []) if isinstance(a, dict)]  # allowed from the pet, not yet run
+    notifies = bool(prev.get("notifies"))  # this session announces its permission prompts (Notification)
+    error_kind = prev.get("error_kind", "") if state == "error" else ""
     if event == "PreToolUse" and use_id:
         started[use_id] = [tool_signature(data), t_now]
         started = dict(sorted(started.items(), key=lambda kv: kv[1][1])[-30:])
-    elif event == "PostToolUse":  # a tool ran: if it had a prompt, that prompt was answered (terminal or pet)
+    elif event in TOOL_DONE_EVENTS:  # a tool call is over: if it had a prompt, that prompt was answered
         started.pop(use_id, None)
         sig = tool_signature(data)
         mine = [r for r in requests if use_id and r.get("tool_use_id") == use_id]
@@ -946,6 +1034,13 @@ def _update_session(path, target, event, data, wsl, auto=None):
         actionable = ntype in ACTIONABLE_NOTIFICATIONS or (not ntype and not is_idle_reminder and "permission" in msg.lower())
         if actionable and (ntype == "permission_prompt" or "permission" in msg.lower()) and t_now - auto_t < 5:
             actionable = False  # the permission prompt we just auto-approved: Claude Code may still announce it
+        if ntype == "permission_prompt":
+            # Claude Code announces a prompt it really shows (about 6 s after it appears). A PermissionRequest that
+            # never gets this was settled without the user (auto mode, an allow rule...): the pet stops showing it.
+            notifies = True
+            unshown = [r for r in requests if not r.get("shown") and r.get("source") != "transcript"]
+            if unshown:
+                unshown[0]["shown"] = True
         if actionable:
             state, message = "needs_input", msg
             # a transcript guess is recomputed; real PermissionRequest prompts are kept whatever their age
@@ -957,11 +1052,18 @@ def _update_session(path, target, event, data, wsl, auto=None):
                 if ntype == "permission_prompt" or "permission" in msg.lower():
                     guess = request_from_transcript(data.get("transcript_path"))  # sessions without PermissionRequest
                     requests = [guess] if guess else []
+    elif event == "StopFailure":  # the turn died on an API error (usage limit, overloaded...): show it, red
+        kind = stop_failure_kind(data)
+        state, message, main_stopped = "error", stop_failure_message(data, kind), False
+        requests, wait_agent = [], ""
+        error_kind = kind
     elif event == "Interrupt":  # Codex: the user interrupted the turn
         state, message, main_stopped = "done", "", False
         requests, wait_agent = [], ""
     elif event == "Stop":
-        if agents:  # the turn is over but background subagents are still running: not done yet
+        if prev.get("state") == "error" and error_kind:
+            pass  # a StopFailure just ended this turn: keep showing why it stopped
+        elif agents:  # the turn is over but background subagents are still running: not done yet
             if prev.get("state") != "needs_input":
                 state, message = "working", ""
             main_stopped = True
@@ -970,6 +1072,15 @@ def _update_session(path, target, event, data, wsl, auto=None):
     elif event == "SessionStart":
         state = "idle"
     elif event == "SubagentStop":
+        # A subagent that stops (finished, or killed by an API error such as the usage limit) asks nothing anymore
+        mine = [r for r in requests if aid and r.get("agent") == aid]
+        if mine:
+            requests = [r for r in requests if r not in mine]
+            if prev.get("state") == "needs_input" and not [r for r in requests if r.get("source") != "transcript"]:
+                state, message, wait_agent = ("done", "", "") if not agents and main_stopped else ("working", "", "")
+                main_stopped = main_stopped and state != "done"
+            elif requests:
+                message, wait_agent = permission_message(requests[0]), requests[0].get("agent", "")
         if not agents and main_stopped and prev.get("state") == "working":
             state, message, main_stopped = "done", "", False  # the last background agent finished and the main one is idle
     else:
@@ -1037,6 +1148,8 @@ def _update_session(path, target, event, data, wsl, auto=None):
         "requests": requests if state == "needs_input" else [],  # all waiting prompts, oldest first
         "started": started,
         "answered": answered if state != "done" else [],
+        "notifies": notifies,
+        "error_kind": error_kind if state == "error" else "",
         "cwd": cwd,
         "state": state,
         "message": message,
@@ -1255,7 +1368,7 @@ def main():
         return
 
     auto = None
-    if event == "PermissionRequest":
+    if event == "PermissionRequest" and data.get("tool_name") != QUESTION_TOOL:  # never auto-"approve" a question
         auto = auto_decision(auto_approve_rules(os.path.dirname(target), auto_approve_key(wsl)), data)
     if auto:
         with SessionLock(path):
@@ -1269,7 +1382,7 @@ def main():
         aid = _update_session(path, target, event, data, wsl)
     # Each agent's manual-answer toggle controls whether its hook waits for the pet.
     if event == "PermissionRequest" and answers_enabled(os.path.dirname(target)):
-        answer_flow(os.path.dirname(target), path, aid or "", data.get("_aipet_request_id"))
+        answer_flow(os.path.dirname(target), path, aid or "", data.get("_aipet_request_id"), data.get("tool_input"))
 
 
 if __name__ == "__main__":
