@@ -30,6 +30,7 @@ or "allow" at once when auto-approval is on for this hook config (<pet dir>/auto
 import json
 import base64
 import glob
+import hashlib
 import os
 import re
 import shutil
@@ -389,11 +390,36 @@ def request_id(data):
     Codex only sends a turn_id (shared by every prompt in a turn), so without the unique part two prompts in a row had
     the same id (""): settling the first one (after Allow once on the pet) then wiped the second one from the session,
     and a waiting hook could no longer tell that its prompt had been answered in the app."""
+    if data.get("_aipet_request_id"):  # chosen once per hook run (main), so recording and waiting agree
+        return str(data["_aipet_request_id"])
     base = str(data.get("tool_use_id") or "")
     if base:
         return base
     turn = str(data.get("turn_id") or "")
     return (turn + "-" if turn else "pr-") + "%d-%d" % (os.getpid(), time.time_ns())
+
+
+def tool_signature(data):
+    """Tool name + input, hashed: links a PermissionRequest (no tool_use_id) to the PreToolUse of the same call."""
+    try:
+        raw = json.dumps([data.get("tool_name"), data.get("tool_input")], sort_keys=True, default=str)
+    except Exception:
+        raw = repr([data.get("tool_name"), data.get("tool_input")])
+    return hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def pending_requests(record):
+    """The permission prompts still waiting, oldest first. Claude Code can ask several at once (parallel tool calls,
+    subagents); it shows them one after the other, so the oldest is the one on screen. Older records kept only one."""
+    reqs = record.get("requests")
+    if isinstance(reqs, list):
+        return [r for r in reqs if isinstance(r, dict) and r]
+    req = record.get("request")
+    return [req] if isinstance(req, dict) and req else []
+
+
+def permission_message(req):
+    return f"{'Codex' if AGENT == 'codex' else 'Claude'} needs your permission to use {req.get('tool') or 'a tool'}"
 
 
 def pet_alive(base):
@@ -556,7 +582,7 @@ def _await(path, waiting, base, seconds, session_path, request_id):
                 pass
         if session_path and request_id and time.time() - checked > 2:
             checked = time.time()
-            if ((read_json(session_path).get("request") or {}).get("id")) != request_id:
+            if request_id not in {r.get("id") for r in pending_requests(read_json(session_path))}:
                 return None  # answered elsewhere: the record no longer holds this prompt
         if os.path.exists(path):
             time.sleep(0.05)
@@ -596,29 +622,48 @@ def answers_enabled(base):
     return not os.path.exists(os.path.join(base, "no-claude-answers"))
 
 
-def answer_flow(base, path, aid):
+def _set_requests(record, requests):
+    """Store the queue and show its oldest prompt; with none left the session is working again."""
+    record["requests"] = requests
+    record["request"] = requests[0] if requests else {}
+    now = time.time()
+    if requests:
+        record.update(message=permission_message(requests[0]), wait_agent=requests[0].get("agent", ""), updated=now)
+    else:
+        record.update(state="working", message="", wait_agent="", changed=now, updated=now)
+
+
+def answer_flow(base, path, aid, request_id=None):
     """After the request is recorded: give the user a window to answer from the pet, then print the decision.
-    Prints nothing (normal prompt) if the pet isn't running, answering is switched off, or nobody clicks in time."""
+    Prints nothing (normal prompt) if the pet isn't running, answering is switched off, or nobody clicks in time.
+    request_id: this hook's own prompt (several can wait at once); None = the one on screen."""
     seconds = configured_wait(base)  # 0 = wait until answered
     if not pet_alive(base) or not answers_enabled(base):
         return  # observe only
     with SessionLock(path):
         record = read_json(path)
-        req = record.get("request") or {}
+        requests = pending_requests(record)
+        req = next((r for r in requests if r.get("id") == request_id), None) if request_id else (requests or [None])[0]
         if not req:
             return
         key = safe_name(req.get("id") or record.get("id") or "request")
         req["answerable"] = True
-        record["request"] = req
+        record["requests"], record["request"] = requests, requests[0]
         write_atomic(path, record)
     decision = await_answer(base, key, seconds, path, req.get("id"))  # no lock held while waiting
     with SessionLock(path):
         cur = read_json(path)
-        if (cur.get("request") or {}).get("id") == req.get("id"):  # still the same prompt: settle the record
+        requests = pending_requests(cur)
+        mine = [r for r in requests if r.get("id") == req.get("id")]
+        if mine:  # still waiting: settle this prompt only; any others stay queued and the next one shows
             if decision:
-                cur.update(state="working", message="", request={}, wait_agent="", changed=time.time(), updated=time.time())
+                _set_requests(cur, [r for r in requests if r not in mine])
+                if decision == "allow":  # its PostToolUse must not retire another queued prompt for the same command
+                    cur["answered"] = (cur.get("answered") or [])[-9:] + [
+                        {"tool_use_id": mine[0].get("tool_use_id", ""), "sig": mine[0].get("sig", "")}]
             else:
-                cur["request"]["answerable"] = False
+                mine[0]["answerable"] = False
+                _set_requests(cur, requests)
             write_atomic(path, cur)
     if decision:
         write_stdout(decision_output(decision))
@@ -830,33 +875,67 @@ def _update_session(path, target, event, data, wsl, auto=None):
         agents[aid] = t_now
     agents = dict(sorted(agents.items(), key=lambda kv: kv[1])[-8:])
     wait_agent = prev.get("wait_agent", "")
-    request = prev.get("request") or {}
+    requests = pending_requests(prev)  # every prompt still waiting, oldest (the one on screen) first
     main_stopped = bool(prev.get("main_stopped"))  # the main agent finished its turn while subagents kept running
     auto_t, auto_n = prev.get("auto_t", 0), prev.get("auto_approved", 0)
     auto_kind, auto_what = prev.get("auto_kind", ""), prev.get("auto_what", "")
+    # Tool calls that started (PreToolUse) and haven't finished: lets a PermissionRequest, which carries no
+    # tool_use_id, be matched to its call, so the call's PostToolUse can retire exactly that prompt.
+    started = {k: v for k, v in (prev.get("started") or {}).items() if isinstance(v, list) and t_now - v[1] < 900}
+    use_id = str(data.get("tool_use_id") or "")
+    answered = [a for a in (prev.get("answered") or []) if isinstance(a, dict)]  # allowed from the pet, not yet run
+    if event == "PreToolUse" and use_id:
+        started[use_id] = [tool_signature(data), t_now]
+        started = dict(sorted(started.items(), key=lambda kv: kv[1][1])[-30:])
+    elif event == "PostToolUse":  # a tool ran: if it had a prompt, that prompt was answered (terminal or pet)
+        started.pop(use_id, None)
+        sig = tool_signature(data)
+        mine = [r for r in requests if use_id and r.get("tool_use_id") == use_id]
+        done = [a for a in answered if (use_id and a.get("tool_use_id") == use_id) or
+                (not a.get("tool_use_id") and a.get("sig") == sig)][:1]
+        if done and not mine:  # the prompt answered from the pet: already settled
+            answered.remove(done[0])
+            mine = [None]
+        if not mine:  # not linked by id: the same tool with the same input, oldest first
+            mine = [r for r in requests if not r.get("tool_use_id") and r.get("sig") == sig][:1]
+        if not mine:  # a record from before prompts were tracked one by one
+            mine = [r for r in requests if not r.get("sig") and r.get("source") != "transcript"][:1]
+        requests = [r for r in requests if r not in mine]
 
     if event == "PermissionRequest" and auto:  # answered "allow" right away: never shows as "needs you"
-        state, message = ("working", "") if prev.get("state") != "needs_input" or wait_agent == aid else (state, message)
+        if not [r for r in requests if r.get("source") != "transcript"]:
+            state, message = ("working", "") if prev.get("state") != "needs_input" or wait_agent == aid else (state, message)
         auto_t, auto_n, auto_kind = t_now, auto_n + 1, auto
         req = build_request(data)
         auto_what = (req["tool"] + (": " + req["detail"].splitlines()[0] if req["detail"] else ""))[:120]
     elif event in WORKING_EVENTS:
         # A waiting prompt survives activity that doesn't answer it: another agent working (a subagent while the
-        # main agent asks, or the main agent while a subagent asks), or the same agent starting ANOTHER tool - Claude
-        # Code runs PreToolUse for parallel tool calls while the first one's permission prompt is still open (the
-        # prompt's own PreToolUse came before its PermissionRequest). Its answer shows up as PostToolUse / Stop.
+        # main agent asks, or the main agent while a subagent asks), the same agent starting ANOTHER tool (Claude
+        # Code runs PreToolUse for parallel tool calls while the first one's prompt is still open), or a tool finishing
+        # while other prompts are still queued - answering one of several prompts must not look like "working".
         other_agent = (aid or "") != (wait_agent or "")
-        parallel = (event == "PreToolUse" and not other_agent and bool(request)
-                    and request.get("source") != "transcript")
-        keep = event != "UserPromptSubmit" and prev.get("state") == "needs_input" and (other_agent or parallel)
-        if not keep:  # otherwise the prompt is still waiting for the user
-            state, message = "working", ""
+        real = [r for r in requests if r.get("source") != "transcript"]
+        if event == "UserPromptSubmit":
+            requests = []
+        keep = event != "UserPromptSubmit" and prev.get("state") == "needs_input" and (other_agent or bool(real))
+        if keep:
+            requests = real or requests
+            if real and requests[0].get("id") != (pending_requests(prev)[:1] or [{}])[0].get("id"):
+                message, wait_agent = permission_message(requests[0]), requests[0].get("agent", wait_agent)
+        else:  # otherwise the prompt is still waiting for the user
+            state, message, requests = "working", "", []
         if not aid:
             main_stopped = False  # the main agent itself is active again
     elif event == "PermissionRequest":  # observe only: print nothing, so the normal prompt is untouched
-        request = build_request(data)
-        state, message = "needs_input", f"{'Codex' if AGENT == 'codex' else 'Claude'} needs your permission to use {request['tool'] or 'a tool'}"
-        wait_agent = aid
+        req = build_request(data)
+        req["agent"] = aid
+        taken = {r.get("tool_use_id") for r in requests}
+        req["sig"] = sig = tool_signature(data)
+        match = [k for k, v in sorted(started.items(), key=lambda kv: kv[1][1]) if v[0] == sig and k not in taken]
+        req["tool_use_id"] = use_id or (match[0] if match else "")
+        requests = [r for r in requests if r.get("source") != "transcript" and r.get("id") != req["id"]] + [req]
+        state, message = "needs_input", permission_message(requests[0])
+        wait_agent = requests[0].get("agent", aid)
     elif event == "Notification":
         msg = data.get("message", "") or ""
         ntype = data.get("notification_type", "") or ""
@@ -869,14 +948,18 @@ def _update_session(path, target, event, data, wsl, auto=None):
             actionable = False  # the permission prompt we just auto-approved: Claude Code may still announce it
         if actionable:
             state, message = "needs_input", msg
-            wait_agent = aid
-            if request and request.get("source") == "transcript":
-                request = {}  # a transcript guess is recomputed; a real PermissionRequest one is kept whatever its age
-            if not request and (ntype == "permission_prompt" or "permission" in msg.lower()):
-                request = request_from_transcript(data.get("transcript_path"))  # sessions without PermissionRequest
+            # a transcript guess is recomputed; real PermissionRequest prompts are kept whatever their age
+            requests = [r for r in requests if r.get("source") != "transcript"]
+            if requests:
+                wait_agent = requests[0].get("agent", wait_agent)
+            else:
+                wait_agent = aid
+                if ntype == "permission_prompt" or "permission" in msg.lower():
+                    guess = request_from_transcript(data.get("transcript_path"))  # sessions without PermissionRequest
+                    requests = [guess] if guess else []
     elif event == "Interrupt":  # Codex: the user interrupted the turn
         state, message, main_stopped = "done", "", False
-        request, wait_agent = {}, ""
+        requests, wait_agent = [], ""
     elif event == "Stop":
         if agents:  # the turn is over but background subagents are still running: not done yet
             if prev.get("state") != "needs_input":
@@ -950,7 +1033,10 @@ def _update_session(path, target, event, data, wsl, auto=None):
         "agents": agents,
         "main_stopped": main_stopped,
         "wait_agent": wait_agent if state == "needs_input" else "",
-        "request": request if state == "needs_input" else {},
+        "request": requests[0] if state == "needs_input" and requests else {},  # the prompt on screen
+        "requests": requests if state == "needs_input" else [],  # all waiting prompts, oldest first
+        "started": started,
+        "answered": answered if state != "done" else [],
         "cwd": cwd,
         "state": state,
         "message": message,
@@ -1154,7 +1240,7 @@ def main():
             if rec:
                 now = time.time()
                 rec.update({"state": "done", "message": "", "agents": {}, "main_stopped": False, "wait_agent": "",
-                            "request": {}, "updated": now,
+                            "request": {}, "requests": [], "updated": now,
                             "changed": now if prev_state != "done" else rec.get("changed", now)})
                 write_atomic(path, rec)
             debug_log(os.path.dirname(target), event, data, prev_state, "done (cowork: kept until timeout)")
@@ -1177,11 +1263,13 @@ def main():
         write_stdout(decision_output("allow"))
         return
 
+    if event == "PermissionRequest":
+        data["_aipet_request_id"] = request_id(data)  # this prompt's id, recorded and waited on by this run
     with SessionLock(path):
         aid = _update_session(path, target, event, data, wsl)
     # Each agent's manual-answer toggle controls whether its hook waits for the pet.
     if event == "PermissionRequest" and answers_enabled(os.path.dirname(target)):
-        answer_flow(os.path.dirname(target), path, aid or "")
+        answer_flow(os.path.dirname(target), path, aid or "", data.get("_aipet_request_id"))
 
 
 if __name__ == "__main__":

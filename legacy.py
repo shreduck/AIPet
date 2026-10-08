@@ -27,6 +27,8 @@ import time
 
 import hooks_installer as hi
 
+UI_FONT = "Consolas" if os.name == "nt" else ("Menlo" if sys.platform == "darwin" else "DejaVu Sans Mono")
+
 IS_MAC = sys.platform == "darwin"
 HOME = os.path.expanduser("~")
 WARNED = os.path.join(os.path.expanduser("~"), ".aipet", "legacy-warned")  # date of the last daily reminder
@@ -328,15 +330,15 @@ def migration_window(APP_NAME, set_autostart):
                                    "again (its folder moved)."),
         ("The old app", ("Delete ClaudePet.app" if IS_MAC else "Delete ClaudePet.exe") + " once AIPet is running."),
     ]
-    tk.Label(root, text=f"Claude Pet has a new name: {APP_NAME}", font=("Segoe UI", 13, "bold")
+    tk.Label(root, text=f"Claude Pet has a new name: {APP_NAME}", font=(UI_FONT, 13, "bold")
              ).pack(anchor="w", padx=16, pady=(14, 2))
     tk.Label(root, text="Here is what changes on this computer:", fg=grey).pack(anchor="w", padx=16)
     body = tk.Frame(root)
     body.pack(fill="x", padx=16, pady=8)
     for head, text in lines:
-        tk.Label(body, text=head, font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(6, 0))
-        tk.Label(body, text=text, justify="left", wraplength=480, font=("Segoe UI", 9)).pack(anchor="w")
-    status = tk.Label(root, fg=red, justify="left", wraplength=480, font=("Segoe UI", 9, "bold"))
+        tk.Label(body, text=head, font=(UI_FONT, 9, "bold")).pack(anchor="w", pady=(6, 0))
+        tk.Label(body, text=text, justify="left", wraplength=480, font=(UI_FONT, 9)).pack(anchor="w")
+    status = tk.Label(root, fg=red, justify="left", wraplength=480, font=(UI_FONT, 9, "bold"))
     status.pack(anchor="w", padx=16)
 
     def refresh_status():

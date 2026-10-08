@@ -22,6 +22,7 @@ import webbrowser
 from tkinter import messagebox
 
 import aipet as core
+import aipet_settings
 import aipet_update as upd
 import hooks_installer as hi
 import legacy  # LEGACY: moving over from Claude Pet
@@ -37,6 +38,8 @@ except ImportError:  # still runs, just without a tray icon
 
 APP_NAME = "AIPet"
 PET_STYLES = [("robot", "Robot"), ("mole", "Mole"), ("cat", "Cat")]
+# Remnants of earlier versions, kept under Appearance > Alpha
+BETA_STYLES = {"mole": "The very first pet, rising from a dirt mound.", "cat": "An early experiment: a round cat."}
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 LAUNCH_AGENT = os.path.expanduser("~/Library/LaunchAgents/com.aipet.app.plist")
 RANK = {"needs_input": 0, "error": 1, "working": 2, "done": 3, "idle": 4}
@@ -136,6 +139,30 @@ def set_autostart(on):
                 winreg.DeleteValue(k, "AIPet")
             except FileNotFoundError:
                 pass
+
+
+def set_window_icon(root):
+    """The robot as the icon of every AIPet window (title bar and taskbar), in place of Tk's feather. Kept on the
+    root so the images aren't garbage-collected. macOS shows the app's Dock icon instead."""
+    if IS_MAC:
+        return
+    try:
+        from PIL import ImageTk
+        spr = core.load_sprites()
+        if not spr:
+            return
+        robot = core.robot_image("happy", ("amber", "green", "off"), spr)
+        photos = []
+        for size in (256, 64, 32, 16):  # Windows picks the closest size for the taskbar, title bar and Alt+Tab
+            k = min(size / robot.width, size / robot.height)
+            im = robot.resize((max(1, int(robot.width * k)), max(1, int(robot.height * k))), Image.NEAREST)
+            square = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+            square.paste(im, ((size - im.width) // 2, size - im.height), im)
+            photos.append(ImageTk.PhotoImage(square, master=root))
+        root.iconphoto(True, *photos)  # True: also every Toplevel created later
+        root._aipet_icons = photos
+    except Exception as e:
+        core.log_error(f"window icon: {e!r}")
 
 
 def make_icon(state):
@@ -243,6 +270,7 @@ class TrayApp:
         core.ensure_home()
         self.pet = core.PetApp()
         self.root = self.pet.root
+        set_window_icon(self.root)
         self.q = queue.Queue()
         self.hidden = False
         self.busy = False
@@ -369,7 +397,7 @@ class TrayApp:
         win.resizable(False, False)
         grey = "#6b7280"
 
-        tk.Label(win, text="Where should AIPet watch Claude Code?", font=("Segoe UI", 12, "bold")
+        tk.Label(win, text="Where should AIPet watch Claude Code?", font=(core.UI_FONT, 12, "bold")
                  ).pack(anchor="w", padx=16, pady=(14, 2))
         tk.Label(win, justify="left", wraplength=430, fg=grey,
                  text="These are the Claude Code installs I found. Tick the ones to hook up.").pack(anchor="w", padx=16)
@@ -386,7 +414,7 @@ class TrayApp:
             row = tk.Frame(body)
             row.pack(fill="x", pady=3)
             tk.Checkbutton(row, text=t["label"], variable=var, state="normal" if usable else "disabled",
-                           font=("Segoe UI", 10)).pack(anchor="w")
+                           font=(core.UI_FONT, 10)).pack(anchor="w")
             state_text, color = {
                 "ready": ("not installed yet", grey),
                 "installed": ("hooks installed and up to date", "#15803d"),
@@ -395,22 +423,22 @@ class TrayApp:
                 "needs_python": (t["note"], "#b91c1c"),
                 "missing": (t["note"], grey),
             }.get(t["kind"], (t["note"], grey))
-            tk.Label(row, text=state_text, fg=color, font=("Segoe UI", 8, "bold"), wraplength=400, justify="left"
+            tk.Label(row, text=state_text, fg=color, font=(core.UI_FONT, 8, "bold"), wraplength=400, justify="left"
                      ).pack(anchor="w", padx=(26, 0))
             if t["kind"] in ("ready", "installed", "outdated"):
-                tk.Label(row, text=t["note"], fg=grey, font=("Segoe UI", 8), wraplength=400, justify="left"
+                tk.Label(row, text=t["note"], fg=grey, font=(core.UI_FONT, 8), wraplength=400, justify="left"
                          ).pack(anchor="w", padx=(26, 0))
             if t["key"] == "mac" and usable:
                 self._mac_runtime_ui(row, t, runtime)
         if not targets and not stopped:
             tk.Label(body, text="No Claude Code installs found.", fg=grey).pack(anchor="w")
         if hidden:
-            tk.Label(body, fg=grey, font=("Segoe UI", 8), wraplength=420, justify="left",
+            tk.Label(body, fg=grey, font=(core.UI_FONT, 8), wraplength=420, justify="left",
                      text=f"{hidden} WSL distro{'s' if hidden != 1 else ''} hidden: Claude Code isn't installed there."
                      ).pack(anchor="w", pady=(6, 0))
 
         if stopped:
-            tk.Label(body, fg=grey, font=("Segoe UI", 8), wraplength=420, justify="left",
+            tk.Label(body, fg=grey, font=(core.UI_FONT, 8), wraplength=420, justify="left",
                      text="Not checked (not running): " + ", ".join(t["label"][5:] for t in stopped)
                      ).pack(anchor="w", pady=(6, 0))
             def check_stopped():
@@ -420,15 +448,15 @@ class TrayApp:
             tk.Button(win, text="Check stopped WSL distros (starts them)...", command=check_stopped
                       ).pack(anchor="w", padx=16, pady=(0, 6))
 
-        tk.Label(win, justify="left", wraplength=430, fg=grey, font=("Segoe UI", 8),
+        tk.Label(win, justify="left", wraplength=430, fg=grey, font=(core.UI_FONT, 8),
                  text="Each settings.json is backed up first, and your other hooks and settings are kept. "
                       "Only Claude Code sessions started afterwards show up. You can change this any time from "
                       "the tray menu: Claude Code hooks."
                  ).pack(anchor="w", padx=16, pady=(0, 8))
 
-        cw = tk.LabelFrame(win, text=" Claude desktop app - Cowork ", font=("Segoe UI", 9, "bold"))
+        cw = tk.LabelFrame(win, text=" Claude desktop app - Cowork ", font=(core.UI_FONT, 9, "bold"))
         cw.pack(fill="x", padx=16, pady=(0, 10))
-        tk.Label(cw, justify="left", wraplength=410, font=("Segoe UI", 8),
+        tk.Label(cw, justify="left", wraplength=410, font=(core.UI_FONT, 8),
                  text="Cowork ignores settings.json, so it needs the hooks as a plugin, which only the Claude app "
                       "can install. AIPet built it for you:\n" + (zip_path or hi.COWORK_ZIP + " (not built yet)") + "\n"
                       "1. Claude app > Customize > Plugins > upload that zip, and keep its hooks on.\n"
@@ -471,13 +499,13 @@ class TrayApp:
         var = runtime["var"] = tk.StringVar(value="python" if py else "builtin")
         box = tk.Frame(parent)
         box.pack(anchor="w", padx=(26, 0), pady=(4, 0))
-        tk.Label(box, text="Hook runtime", font=("Segoe UI", 8, "bold")).pack(anchor="w")
-        tk.Radiobutton(box, variable=var, value="python", state="normal" if py else "disabled", font=("Segoe UI", 9),
+        tk.Label(box, text="Hook runtime", font=(core.UI_FONT, 8, "bold")).pack(anchor="w")
+        tk.Radiobutton(box, variable=var, value="python", state="normal" if py else "disabled", font=(core.UI_FONT, 9),
                        text=f"Your Python 3 (faster) - {py}" if py else "Your Python 3 (faster) - not found"
                        ).pack(anchor="w")
-        tk.Radiobutton(box, variable=var, value="builtin", font=("Segoe UI", 9),
+        tk.Radiobutton(box, variable=var, value="builtin", font=(core.UI_FONT, 9),
                        text="Built-in hook (nothing to install)").pack(anchor="w")
-        warn = tk.Label(box, fg="#b45309", font=("Segoe UI", 8), wraplength=380, justify="left")
+        warn = tk.Label(box, fg="#b45309", font=(core.UI_FONT, 8), wraplength=380, justify="left")
         warn.pack(anchor="w", pady=(2, 0))
 
         def refresh(*_):
@@ -529,10 +557,10 @@ class TrayApp:
             self.root.clipboard_append(text)
 
         def h(text):
-            tk.Label(win, text=text, font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=16, pady=(12, 2))
+            tk.Label(win, text=text, font=(core.UI_FONT, 11, "bold")).pack(anchor="w", padx=16, pady=(12, 2))
 
         def p(text, **kw):
-            tk.Label(win, text=text, justify="left", wraplength=wrap, font=("Segoe UI", 9), **kw
+            tk.Label(win, text=text, justify="left", wraplength=wrap, font=(core.UI_FONT, 9), **kw
                      ).pack(anchor="w", padx=16)
 
         def path_row(path, open_cmd):
@@ -620,7 +648,7 @@ class TrayApp:
         win.title(f"{APP_NAME}: update old hooks")
         win.attributes("-topmost", True)
         win.resizable(False, False)
-        tk.Label(win, text="Some hooks still use the old Claude Pet name", font=("Segoe UI", 12, "bold")
+        tk.Label(win, text="Some hooks still use the old Claude Pet name", font=(core.UI_FONT, 12, "bold")
                  ).pack(anchor="w", padx=16, pady=(14, 2))
         tk.Label(win, fg="#6b7280", justify="left", wraplength=480,
                  text="They keep working for now, but support for the old name will be removed in a future version. "
@@ -628,8 +656,8 @@ class TrayApp:
         body = tk.Frame(win)
         body.pack(fill="x", padx=16, pady=8)
         for what, how in found:
-            tk.Label(body, text=what, font=("Segoe UI", 9, "bold"), justify="left", wraplength=480).pack(anchor="w", pady=(6, 0))
-            tk.Label(body, text=how, font=("Segoe UI", 9), justify="left", wraplength=480).pack(anchor="w")
+            tk.Label(body, text=what, font=(core.UI_FONT, 9, "bold"), justify="left", wraplength=480).pack(anchor="w", pady=(6, 0))
+            tk.Label(body, text=how, font=(core.UI_FONT, 9), justify="left", wraplength=480).pack(anchor="w")
         row = tk.Frame(win)
         row.pack(fill="x", padx=16, pady=(6, 14))
         keys = [k for k in [hi.LOCAL] + ["wsl:" + n for n, _ in self.distros] if any(
@@ -1009,6 +1037,8 @@ class TrayApp:
         self.refresh_menu()
 
     def refresh_menu(self):
+        if getattr(self, "settings_win", None) is not None:
+            self.ui(self.settings_win.refresh)  # may be called from a worker thread: rebuild on the Tk thread
         if self.icon:
             try:
                 self.icon.update_menu()
@@ -1129,16 +1159,27 @@ class TrayApp:
                       ("working", "needs_input", "error"))),
             item("Dismiss this pet", self.pet.dismiss_menu_pet, real_pet),
         ]
-        return [{"label": "This session", "submenu": session_actions}, None] + self._mac_menu_spec()
+        shared = self._mac_menu_spec()  # starts with Settings... and a separator
+        return shared[:1] + [{"label": "This session", "submenu": session_actions}, None] + shared[2:]
 
     # Shared menu specification; all actions are executed on the Tk thread.
     def _mac_menu_spec(self):
-        def item(label, action=None, checked=None, enabled=True, submenu=None, default=False):
+        def item(label, action=None, checked=None, enabled=True, submenu=None, default=False, help=None, icon=None,
+                 choice=False, slider=None):
+            # help / icon / choice / slider are only read by the settings window; the menus ignore them
             entry = {"label": label, "action": action, "enabled": enabled, "submenu": submenu}
             if default:
                 entry["default"] = True
             if checked is not None:
                 entry["checked"] = checked
+            if help:
+                entry["help"] = help
+            if icon:
+                entry["icon"] = icon
+            if choice:
+                entry["choice"] = True  # the submenu is a pick-one list
+            if slider:
+                entry["slider"] = slider  # the settings window shows a slider; the menus show the choice list
             return entry
 
         def target(name, key):
@@ -1147,20 +1188,28 @@ class TrayApp:
             restore = [item(f"{b['when']} - {b['reason']}" + ("  [original]" if b["original"] else ""),
                             lambda b=b: self.confirm_restore(key, b)) for b in backups] or [item("No backups yet", enabled=False)]
             return item(f"{'✓ ' if st.startswith('installed') else ''}{name}  ({st})", submenu=[
-                item("Install / update hooks", lambda: self.confirm(key, True)),
-                item("Remove hooks", lambda: self.confirm(key, False)),
-                *([] if hi.is_codex(key) else [item("Claude usage status line...", lambda: self.confirm_usage(key))]),
+                item("Install / update hooks", lambda: self.confirm(key, True),
+                     help="Adds AIPet's hooks to this install's settings, or brings them up to date. Your own hooks stay."),
+                item("Remove hooks", lambda: self.confirm(key, False),
+                     help="Takes AIPet's hooks out again. The pet stops seeing sessions from here."),
+                *([] if hi.is_codex(key) else [item(
+                    "Claude usage status line...", lambda: self.confirm_usage(key),
+                    help="Lets the pet show Claude's usage limits by recording them from Claude Code's status line.")]),
                 None,
-                item("Restore backup", submenu=restore),
-                item("Back up now", lambda: self.start_job(key, "backup")),
+                item("Restore backup", submenu=restore,
+                     help="Puts back a settings file saved before AIPet changed it."),
+                item("Back up now", lambda: self.start_job(key, "backup"),
+                     help="Saves a copy of the current settings file."),
                 item("Open backups folder", lambda: self.open_backups(key)),
-            ])
+            ], help=f"Hook status: {st}.")
 
         refresh = lambda: threading.Thread(target=self.refresh_targets, daemon=True).start()  # noqa: E731
         claude = [target("This Mac" if IS_MAC else "This PC (Windows)", hi.LOCAL)]
         claude += [target(f"WSL: {name}", "wsl:" + name) for name, _ in self.distros]
-        claude += [None, item("Cowork (Claude desktop app)...", self.show_cowork),
-                   item("Check for old Claude Pet hooks...", lambda: self.check_legacy(True))]
+        claude += [None, item("Cowork (Claude desktop app)...", self.show_cowork,
+                              help="How to let the pet follow Cowork sessions in the Claude desktop app."),
+                   item("Check for old Claude Pet hooks...", lambda: self.check_legacy(True),
+                        help="Finds hooks left behind by Claude Pet, this app's old name, and offers to remove them.")]
         codex = [target(lab, key) for lab, key in self.codex_targets] or [item("Codex not found", enabled=False)]
         cfg = self.pet.cfg
         auto = []
@@ -1169,84 +1218,166 @@ class TrayApp:
                 item(self.auto_label(lab, key), lambda k=key, lab=lab: self.toggle_auto(k, lab),
                      checked=key in self.c_auto) for lab, key in entries
             ] or [item("Not found", enabled=False)]))
-        auto += [None, item("Turn all off", self.auto_all_off, enabled=bool(self.c_auto))]
-        top = [item(f"Update available: {self.update_info['tag']}...", self.open_update), None] if self.update_info else []
-        return top + [
-            item("Show pet" if self.hidden else "Hide pet", self.toggle, default=True),
-            item("Clear finished sessions", self.pet.clear_finished),
+        auto += [None, item("Turn all off", self.auto_all_off, enabled=bool(self.c_auto),
+                            help="Switches auto approve off everywhere at once.")]
+        top = [item(f"Update available: {self.update_info['tag']}...", self.open_update, icon="refresh",
+                    help="A newer AIPet is out. See what changed and update."), None] if self.update_info else []
+        return [self.settings_item(), None] + top + [
+            item("Show pet" if self.hidden else "Hide pet", self.toggle, default=True,
+                 help="Hides the pet from the screen. AIPet keeps watching your sessions in the background."),
+            item("Clear finished sessions", self.pet.clear_finished,
+                 help="Removes the pets of sessions that are done."),
             None,
-            item("Appearance", submenu=[
-                item("Pet style", submenu=[item(label, lambda k=key: self.set_style(k), checked=core.STYLE["v"] == key)
-                                           for key, label in PET_STYLES]),
-                item("Pet size...", self.pet.open_size_slider),
-                item("Reset pet size", self.pet.reset_scale),
-                item("Compact mode (one pet)", self.pet.toggle_compact, checked=bool(cfg.get("compact"))),
+            item("Appearance", icon="palette", help="How the pet and its windows look.", submenu=[
+                item("Pet style", choice=True, help="Which creature sits on your screen.",
+                     submenu=[item(label, lambda k=key: self.set_style(k), checked=core.STYLE["v"] == key)
+                              for key, label in PET_STYLES if key not in BETA_STYLES]),
+                item("Pet size...", self.pet.open_size_slider, help="Make the pet bigger or smaller."),
+                item("Reset pet size", self.pet.reset_scale, help="Back to the standard size."),
+                item("Compact mode (one pet)", self.pet.toggle_compact, checked=bool(cfg.get("compact")),
+                     help="One pet stands in for every session, showing the one that needs you most."),
                 None,
-                item("Dark theme", self.toggle_theme, checked=core.T.get("name") == "dark"),
-                item("Session titles", submenu=[item(text, lambda v=value: self.pet.set_session_titles(v),
-                                                     checked=cfg.get("session_titles", "name") == value)
-                                                for value, text in (("name", "Session name"), ("prompt", "Last prompt"))]),
-                item("Tooltips", submenu=[item(label, lambda k=kind: self.pet.set_tooltip(k, not cfg.get(k + "_tooltips", True)),
-                                               checked=bool(cfg.get(kind + "_tooltips", True)))
-                                          for kind, label in (("session", "Session details"), ("usage", "Usage details"))]),
+                item("Dark theme", self.toggle_theme, checked=core.T.get("name") == "dark",
+                     help="Dark name tags, bubbles and windows."),
+                item("Settings window size", choice=True,
+                     help="Text and icons in this window. Also Ctrl + plus / minus / 0, or Ctrl + mouse wheel here.",
+                     slider={"value": self.settings_zoom(), "min": aipet_settings.ZOOM_MIN,
+                             "max": aipet_settings.ZOOM_MAX, "step": aipet_settings.ZOOM_STEP,
+                             "set": self.set_settings_zoom, "format": lambda v: f"{int(round(v * 100))}%"},
+                     submenu=[item(f"{int(v * 100)}%", lambda v=v: self.set_settings_zoom(v),
+                                   checked=abs(self.settings_zoom() - v) < 0.01)
+                              for v in (0.8, 1.0, 1.25, 1.5, 1.75, 2.0)]),
+                item("Session titles", choice=True, help="What the name tag under each pet shows.",
+                     submenu=[item(text, lambda v=value: self.pet.set_session_titles(v),
+                                   checked=cfg.get("session_titles", "name") == value)
+                              for value, text in (("name", "Session name"), ("prompt", "Last prompt"))]),
+                item("Tooltips", help="What appears when you hover over a pet.",
+                     submenu=[item(label, lambda k=kind: self.pet.set_tooltip(k, not cfg.get(k + "_tooltips", True)),
+                                   checked=bool(cfg.get(kind + "_tooltips", True)), help=text)
+                              for kind, label, text in (
+                                  ("session", "Session details", "Title, state, last message and how long ago."),
+                                  ("usage", "Usage details", "Usage limits when you hover over a usage badge."))]),
+                None,
+                item("Alpha", icon="wrench",
+                     help="Pet styles left over from earlier AIPet versions, no longer looked after. "
+                          "Switch one off to go back to the robot.",
+                     submenu=[item(f"{label} style", lambda k=key: self.set_style("robot" if core.STYLE["v"] == k else k),
+                                   checked=core.STYLE["v"] == key, help=BETA_STYLES[key])
+                              for key, label in PET_STYLES if key in BETA_STYLES]),
             ]),
-            item("Behavior", submenu=[
+            item("Behavior", icon="gear", help="What the pet does and when.", submenu=[
                 *([item("Show on all desktops", lambda: self.pet.set_all_spaces(not cfg.get("all_spaces", True)),
-                        checked=bool(cfg.get("all_spaces", True)))] if IS_MAC or os.name == "nt" else []),
-                item("Reset pet position (main screen)", self.reset_position),
+                        checked=bool(cfg.get("all_spaces", True)),
+                        help="Keep the pet visible when you switch virtual desktops" +
+                             (" or Spaces." if IS_MAC else "."))] if IS_MAC or os.name == "nt" else []),
+                item("Reset pet position (main screen)", self.reset_position,
+                     help="Moves the pet back to the main screen, in case it ended up out of sight."),
                 item("Click goes to the session's window",
                      lambda: self.pet.set_click_to_focus(not cfg.get("click_to_focus", True)),
-                     checked=bool(cfg.get("click_to_focus", True))),
+                     checked=bool(cfg.get("click_to_focus", True)),
+                     help="Clicking a pet brings its terminal or editor window to the front."),
                 None,
-                item("Sounds and notifications", submenu=[
-                    item("Mute sounds", self.toggle_mute, checked=self.c_muted),
-                    item("Notifications", self.toggle_notify, checked=self.c_notify),
+                item("Sounds and notifications", icon="bell", help="How the pet gets your attention.", submenu=[
+                    item("Mute sounds", self.toggle_mute, checked=self.c_muted,
+                         help="No sound when a session needs you or finishes."),
+                    item("Notifications", self.toggle_notify, checked=self.c_notify,
+                         help="System notifications when a session needs you, hits an error or finishes."),
+                    *([item("Sound style", choice=True,
+                            help="AIPet's chimes sound like the Mac version: a glassy ting when a session is done, "
+                                 "a soft knock when one needs you.",
+                            submenu=[item(text, lambda v=value: self.pet.set_sound_style(v),
+                                          checked=cfg.get("sound_style", "chimes") == value)
+                                     for value, text in (("chimes", "AIPet chimes"), ("system", "Windows sounds"))])]
+                      if os.name == "nt" else []),
+                    item("Test sounds", icon="speaker", help="Hear each sound the pet makes, and when it plays it.",
+                         submenu=[
+                             item("Needs you: a permission prompt or a question", lambda: self.pet.beep(True, force=True),
+                                  help="Also plays as a reminder while the session keeps waiting for you."),
+                             item("Error: a session hit an error", lambda: self.pet.beep(True, force=True, kind="error"),
+                                  help="Two low falling notes: something went wrong and needs a look."),
+                             item("Done: a session finished its work", lambda: self.pet.beep(False, force=True),
+                                  help="Plays when a working session finishes (switch off with sound_on_done in config)."),
+                         ]),
                 ]),
-                item("Session timing", submenu=[
-                    item("Answer timeout...", self.pet.open_answer_slider),
-                    item("Clear finished after...", self.pet.open_done_slider),
-                    item("Health check every...", self.pet.open_health_slider),
+                item("Session timing", icon="clock", help="How long the pet waits for things.", submenu=[
+                    item("Answer timeout...", self.pet.open_answer_slider,
+                         help="How long a permission prompt waits for your answer from the pet."),
+                    item("Clear finished after...", self.pet.open_done_slider,
+                         help="How long a finished session's pet stays before it leaves."),
+                    item("Health check every...", self.pet.open_health_slider,
+                         help="How often the pet checks that sessions are still running."),
                 ]),
                 None,
                 *([item("Start at login" if IS_MAC else "Start with Windows", self.toggle_autostart,
-                        checked=self.c_autostart)] if IS_MAC or os.name == "nt" else []),
+                        checked=self.c_autostart, help="Start AIPet automatically when you sign in.")]
+                  if IS_MAC or os.name == "nt" else []),
             ]),
-            item("Integrations", submenu=[
-                item("Claude Code hooks", submenu=claude),
-                item("Codex hooks", submenu=codex),
+            item("Integrations", icon="plug", help="Where the pet gets its sessions from.", submenu=[
+                item("Claude Code hooks", icon="link", submenu=claude,
+                     help="Hooks let Claude Code tell the pet what each session is doing."),
+                item("Codex hooks", icon="link", submenu=codex,
+                     help="Hooks let Codex tell the pet what each session is doing."),
                 item("Claude account usage (unofficial)", self.toggle_claude_oauth_usage,
-                     checked=bool(cfg.get("claude_oauth_usage", False))),
+                     checked=bool(cfg.get("claude_oauth_usage", False)),
+                     help="Reads your Claude plan's usage from an unofficial endpoint. Experimental; asks before turning on."),
                 None,
-                item("Run setup again...", self.show_setup),
-                item("Re-detect / refresh status", refresh),
+                item("Run setup again...", self.show_setup, help="The first-run setup: pick which installs to hook up."),
+                item("Re-detect / refresh status", refresh, help="Look again for Claude Code, Codex and WSL installs."),
                 item(f"Workbench: {self.c_wb}", enabled=False),
             ]),
-            item("Permissions" + (" (auto approve ON)" if self.c_auto else ""), submenu=[
-                item("Auto approve", submenu=auto),
+            item("Permissions" + (" (auto approve ON)" if self.c_auto else ""), icon="shield",
+                 help="Answering permission prompts.", submenu=[
+                item("Auto approve", icon="check", submenu=auto,
+                     help="Approve every permission prompt from these installs without asking. Use with care."),
                 item("Answer Codex prompts from the pet", lambda: self.pet.set_codex_answers(not cfg.get("codex_answers")),
-                     checked=bool(cfg.get("codex_answers"))),
+                     checked=bool(cfg.get("codex_answers")),
+                     help="Codex permission prompts get Allow / Deny buttons in the pet's popup."),
                 item("Answer Claude Code prompts from the pet", lambda: self.pet.set_claude_answers(not cfg.get("claude_answers", True)),
-                     checked=bool(cfg.get("claude_answers", True))),
+                     checked=bool(cfg.get("claude_answers", True)),
+                     help="Claude Code permission prompts get Allow / Deny buttons in the pet's popup."),
             ]),
             None,
-            item("Help", submenu=[
+            item("Help", icon="help", help="About AIPet, updates and troubleshooting.", submenu=[
                 item("About AIPet...", self.show_about),
                 item(f"Version: {self.version}", enabled=False),
-                item("Updates", submenu=[
+                item("Updates", icon="refresh", submenu=[
                     item("Check for updates...", lambda: self.check_updates(True)),
                     item("Check for updates automatically", self.toggle_update_check,
-                         checked=bool(cfg.get("update_check", True))),
+                         checked=bool(cfg.get("update_check", True)),
+                         help="Look for a new AIPet now and then. Nothing is installed without asking."),
                 ]),
                 None,
-                item("Diagnostics", submenu=[
-                    item("Save diagnostics...", self.pet.save_diagnostics),
-                    item("Open config folder", self.open_config),
-                    item("Log hook events (debug)", self.toggle_debug, checked=os.path.exists(DEBUG_FLAG)),
+                item("Diagnostics", icon="wrench", help="For when something isn't working.", submenu=[
+                    item("Save diagnostics...", self.pet.save_diagnostics,
+                         help="Saves a report you can attach to a bug report."),
+                    item("Open config folder", self.open_config, help="Where AIPet keeps its settings and logs."),
+                    item("Log hook events (debug)", self.toggle_debug, checked=os.path.exists(DEBUG_FLAG),
+                         help="Writes what the hooks report to events.log (no prompt text)."),
                 ]),
             ]),
             None,
             item("Quit AIPet", self.quit),
         ]
+
+    def settings_item(self):
+        return {"label": "Settings...", "action": self.show_settings, "enabled": True, "submenu": None,
+                "settings": True}
+
+    def show_settings(self):
+        if getattr(self, "settings_win", None) is not None and self.settings_win.alive():
+            self.settings_win.raise_()
+            return
+        self.settings_win = aipet_settings.SettingsWindow(self.root, self._mac_menu_spec, version=self.version,
+                                                          zoom_fn=self.settings_zoom, set_zoom=self.set_settings_zoom)
+
+    def settings_zoom(self):
+        return aipet_settings.clamp_zoom(self.pet.cfg.get("settings_zoom", 1.0))
+
+    def set_settings_zoom(self, value):
+        value = aipet_settings.clamp_zoom(value)
+        self.pet.cfg["settings_zoom"] = value
+        core.save_setting("settings_zoom", value)
+        self.refresh_menu()
 
     # ---- actions (Tk thread)
     def show_about(self):
@@ -1260,7 +1391,7 @@ class TrayApp:
         win.resizable(False, False)
         bg, fg = core.T["tag_bg"], core.T["tag_fg"]
         win.configure(bg=bg)
-        tk.Label(win, text=f"AIPet {self.version}", font=("Segoe UI", 18, "bold"), bg=bg, fg=fg).pack(padx=28, pady=(24, 8))
+        tk.Label(win, text=f"AIPet {self.version}", font=(core.UI_FONT, 18, "bold"), bg=bg, fg=fg).pack(padx=28, pady=(24, 8))
         tk.Label(win, text="A little companion for your AI sessions.\nCreated by shreduck.", bg=bg, fg=fg).pack(padx=28, pady=(0, 16))
         for label, url in (("AIPet app page", "https://shreduck.github.io/duck-software/apps/aipet/"),
                            ("Duck Software · creator's page", "https://shreduck.github.io/duck-software/"),
@@ -1531,6 +1662,11 @@ def main():
         return
     if not single_instance():
         return  # already running in the tray
+    if os.name == "nt":
+        try:  # AIPet's own taskbar identity: its windows show the robot there, not python.exe's or Tk's icon
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("AIPet.AIPet")
+        except Exception:
+            pass
     if legacy.needs_migration() and not legacy.migration_window(APP_NAME, set_autostart):  # LEGACY
         return
     TrayApp().root.mainloop()

@@ -33,6 +33,9 @@ import urllib.request
 import tkinter as tk
 import aipet_usage as usage
 
+# Every AIPet window uses a console font, like the pet's own name tags and tooltips
+UI_FONT = "Consolas" if os.name == "nt" else ("Menlo" if sys.platform == "darwin" else "DejaVu Sans Mono")
+
 try:
     import winsound
 except ImportError:  # not Windows
@@ -50,6 +53,7 @@ DEFAULT_CONFIG = {
     "max_pets": 10,
     "sounds": True,
     "sound_on_done": True,
+    "sound_style": "chimes",  # Windows: "chimes" (AIPet's own, close to the macOS sounds) or "system" (Windows beeps)
     "notifications": False,  # Windows toast notifications; off by default (toggle in the tray menu)
     "theme": "light",  # "light" (default) or "dark"; toggle in the tray / right-click menu
     "answer_wait_seconds": 180,  # how long a permission prompt can be answered from the pet: 0 (no limit) - 1800
@@ -162,6 +166,7 @@ USAGE_EDGE_ROOM = 18  # one shared margin keeps the rightmost pet stable as usag
 INK = "#1f2937"
 MOUND, MOUND_DARK = "#a16207", "#713f12"
 EMERGE_SECONDS, EMERGE_DEPTH, EMERGE_STAGGER = 0.7, 62, 0.25
+DONE_FLASH_SECONDS = 1.6  # a working pet shows the done check this long when a subagent or another session finishes
 BUBBLE_W = 270
 # Colours of what the pet draws around the creatures (name tags, bubbles, tooltips). Light is the default.
 THEMES = {
@@ -244,18 +249,18 @@ def button_style(kind="secondary"):
         return dict(fg="systemButtonText", activeforeground="systemButtonText",
                     bg=T["win_bg"], highlightbackground=T["win_bg"],
                     cursor="hand2", padx=14, pady=4,
-                    font=("Segoe UI", 9, "bold") if kind in ("primary", "danger") else ("Segoe UI", 9))
+                    font=(UI_FONT, 9, "bold") if kind in ("primary", "danger") else (UI_FONT, 9))
     if kind == "primary":
         return dict(bg=T["primary"], fg=T["primary_fg"], activebackground=T["primary_active"],
                     activeforeground=T["primary_fg"], relief="flat", bd=0, highlightthickness=0, cursor="hand2",
-                    padx=14, pady=4, font=("Segoe UI", 9, "bold"))
+                    padx=14, pady=4, font=(UI_FONT, 9, "bold"))
     if kind == "danger":
         return dict(bg=T["danger"], fg="#ffffff", activebackground=T["danger_active"], activeforeground="#ffffff",
                     relief="flat", bd=0, highlightthickness=0, cursor="hand2", padx=14, pady=4,
-                    font=("Segoe UI", 9, "bold"))
+                    font=(UI_FONT, 9, "bold"))
     return dict(bg=T["btn_bg"], fg=T["btn_fg"], activebackground=T["btn_active"], activeforeground=T["btn_fg"],
                 relief="flat", bd=0, highlightthickness=1, highlightbackground=T["border"], highlightcolor=T["border"],
-                cursor="hand2", padx=12, pady=3, disabledforeground=T["menu_disabled"], font=("Segoe UI", 9))
+                cursor="hand2", padx=12, pady=3, disabledforeground=T["menu_disabled"], font=(UI_FONT, 9))
 
 
 def style_menu(menu):
@@ -305,6 +310,156 @@ def popup_menu(menu, x, y):
         y -= height + 8
     x, y = fit_on_screen(x, y, menu.winfo_reqwidth(), height, ref, menu, margin=8)
     menu.tk_popup(x, y)
+
+
+# --------------------------------------------------------------------------- native context menu (Windows)
+# Tk draws its Windows menu items itself (classic look). Building a real Win32 menu instead lets Windows draw it, so the
+# pet's right-click menu looks like the tray menu and every other Windows 11 menu (rounded corners, shadow, spacing).
+NATIVE_WIN_MENU = os.name == "nt"
+MF_GRAYED, MF_CHECKED, MF_POPUP, MF_SEPARATOR = 0x1, 0x8, 0x10, 0x800
+TPM_RIGHTBUTTON, TPM_RETURNCMD, GA_ROOT, WM_NULL = 0x2, 0x100, 2, 0
+_WIN_MENU_API = None
+
+
+def _win_menu_api():
+    """A private user32 handle, so these prototypes never clash with pystray's or _user32()'s."""
+    global _WIN_MENU_API
+    if _WIN_MENU_API is None:
+        import ctypes
+        from ctypes import wintypes
+        u = ctypes.WinDLL("user32", use_last_error=True)
+        u.CreatePopupMenu.argtypes = []
+        u.CreatePopupMenu.restype = wintypes.HMENU
+        u.AppendMenuW.argtypes = [wintypes.HMENU, wintypes.UINT, ctypes.c_size_t, wintypes.LPCWSTR]
+        u.AppendMenuW.restype = wintypes.BOOL
+        u.SetMenuDefaultItem.argtypes = [wintypes.HMENU, wintypes.UINT, wintypes.UINT]
+        u.TrackPopupMenuEx.argtypes = [wintypes.HMENU, wintypes.UINT, ctypes.c_int, ctypes.c_int, wintypes.HWND,
+                                       ctypes.c_void_p]
+        u.TrackPopupMenuEx.restype = ctypes.c_int  # with TPM_RETURNCMD: the chosen id, 0 when dismissed
+        u.DestroyMenu.argtypes = [wintypes.HMENU]
+        u.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+        u.GetAncestor.restype = wintypes.HWND
+        u.SetForegroundWindow.argtypes = [wintypes.HWND]
+        u.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        _WIN_MENU_API = u
+    return _WIN_MENU_API
+
+
+def build_win_menu(u, entries, actions):
+    """Turn the shared menu spec into an HMENU. Command id N runs actions[N - 1]."""
+    hmenu = u.CreatePopupMenu()
+    if not hmenu:
+        raise OSError("CreatePopupMenu failed")
+    try:
+        for entry in entries:
+            if entry is None:
+                u.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
+                continue
+            label = str(entry["label"]).replace("&", "&&")  # a single & would underline the next letter
+            flags = 0 if entry.get("enabled", True) else MF_GRAYED
+            if entry.get("submenu") is not None:
+                sub = build_win_menu(u, entry["submenu"], actions)
+                if not u.AppendMenuW(hmenu, flags | MF_POPUP, sub, label):
+                    u.DestroyMenu(sub)
+                    raise OSError("AppendMenuW failed")
+                continue
+            if entry.get("checked"):
+                flags |= MF_CHECKED
+            actions.append(entry.get("action"))
+            if not u.AppendMenuW(hmenu, flags, len(actions), label):
+                raise OSError("AppendMenuW failed")
+            if entry.get("default"):
+                u.SetMenuDefaultItem(hmenu, len(actions), 0)
+    except Exception:
+        u.DestroyMenu(hmenu)  # also frees the submenus already attached
+        raise
+    return hmenu
+
+
+def popup_native_menu(widget, entries, x, y, api=None):
+    """Show the menu spec as a Win32 menu at (x, y). Returns the chosen action, or None when dismissed."""
+    u = api or _win_menu_api()
+    actions = []
+    hmenu = build_win_menu(u, entries, actions)
+    try:
+        hwnd = u.GetAncestor(widget.winfo_id(), GA_ROOT) or widget.winfo_id()
+        u.SetForegroundWindow(hwnd)  # without this, clicking elsewhere does not close the menu
+        chosen = u.TrackPopupMenuEx(hmenu, TPM_RETURNCMD | TPM_RIGHTBUTTON, int(x), int(y), hwnd, None)
+        u.PostMessageW(hwnd, WM_NULL, 0, 0)  # documented fix: lets the next menu open on the first click
+    finally:
+        u.DestroyMenu(hmenu)
+    return actions[chosen - 1] if 0 < chosen <= len(actions) else None
+
+
+# --------------------------------------------------------------------------- chimes (Windows)
+# macOS plays its system sounds (Glass when a session is done, Funk when one needs you). Those files are Apple's and only
+# exist on a Mac, so on Windows AIPet plays two sounds of its own, synthesized here as two xylophone notes each: "ting"
+# rises when a session is done, "knock" falls when one needs you. They are written once to ~/.aipet/sounds as WAV files.
+CHIME_VERSION = 4  # bump when the sounds change, so the new WAV files get written
+CHIME_RATE = 44100
+
+
+# Two xylophone notes each: (frequency, start in seconds, loudness, ring time)
+CHIMES = {
+    # Mid register and mellow on purpose: noticeable without being shrill while you're concentrating
+    "ting": ((440.0, 0.0, 0.9, 0.17), (587.3, 0.22, 1.0, 0.22)),  # done: A4 then D5, rising
+    "knock": ((392.0, 0.0, 1.0, 0.14), (329.6, 0.24, 0.95, 0.17)),  # needs you: G4 then E4, like a doorbell
+    # error: a low, falling tritone (F4 then B3) - clearly "something's off", still soft, never a buzzer
+    "thud": ((349.2, 0.0, 1.0, 0.13), (246.9, 0.24, 1.0, 0.2)),
+}
+
+
+def xylophone_note(out, f0, start, amp, ring):
+    """Add one soft-mallet xylophone note: the bar's fundamental, its tuned 3rd harmonic and a faint high overtone
+    that die away quickly, with a tiny downward bend at the strike."""
+    rate, phase = CHIME_RATE, 0.0
+    first, n = int(start * rate), int(ring * 6 * rate)
+    attack, release = int(0.008 * rate), int(n * 0.3)
+    for i in range(n):
+        t = i / rate
+        phase += 2 * math.pi * f0 * (1 + 0.02 * math.exp(-t / 0.006)) / rate
+        v = (math.exp(-t / ring) * math.sin(phase)
+             + 0.12 * math.exp(-t / (ring * 0.3)) * math.sin(3 * phase)
+             + 0.02 * math.exp(-t / (ring * 0.12)) * math.sin(6.27 * phase))
+        # Smooth (raised-cosine) 8 ms attack and a release that lands exactly on zero: any corner in the envelope,
+        # at the start or where a note stops, is heard as a tick
+        env = 0.5 - 0.5 * math.cos(math.pi * i / attack) if i < attack else 1.0
+        if i > n - release:
+            env *= 0.5 - 0.5 * math.cos(math.pi * (n - i) / release)
+        if first + i < len(out):
+            out[first + i] += amp * v * env
+
+
+CHIME_PAD = (0.06, 0.2)  # seconds of silence before / after, so opening and closing the audio device is not heard
+
+
+def chime_samples(kind):
+    """The chime as floats in -1..1, padded with silence."""
+    notes = CHIMES.get(kind, CHIMES["ting"])
+    out = [0.0] * int(CHIME_RATE * max(start + ring * 6 for _, start, _, ring in notes))
+    for f0, start, amp, ring in notes:
+        xylophone_note(out, f0, start, amp, ring)
+    peak = max(abs(v) for v in out) or 1.0
+    lead, tail = (int(CHIME_RATE * s) for s in CHIME_PAD)
+    return [0.0] * lead + [v / peak * 0.5 for v in out] + [0.0] * tail
+
+
+def chime_path(kind):
+    """A WAV file for the chime, created on first use."""
+    import struct
+    import wave
+    folder = os.path.join(HOME_DIR, "sounds")
+    path = os.path.join(folder, f"{kind}-v{CHIME_VERSION}.wav")
+    if not os.path.exists(path):
+        os.makedirs(folder, exist_ok=True)
+        data = b"".join(struct.pack("<h", int(v * 32767)) for v in chime_samples(kind))
+        with wave.open(path + ".tmp", "wb") as f:
+            f.setnchannels(1)
+            f.setsampwidth(2)
+            f.setframerate(CHIME_RATE)
+            f.writeframes(data)
+        os.replace(path + ".tmp", path)
+    return path
 
 
 def _ttk_scale_style(widget):
@@ -399,6 +554,17 @@ def native_menu_theme():
         pass
 
 
+def use_console_font(root):
+    """Widgets that don't name a font (buttons, check boxes, entries, Tk menus...) get the console font too."""
+    try:
+        from tkinter import font as tkfont
+        for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont", "TkCaptionFont",
+                     "TkSmallCaptionFont", "TkIconFont", "TkTooltipFont"):
+            tkfont.Font(root=root, name=name, exists=True).configure(family=UI_FONT)
+    except Exception:
+        pass
+
+
 def theme_window(win):
     """Style a finished Toplevel like the pet and keep it in step with later theme switches."""
     theme_widget(win)
@@ -450,16 +616,16 @@ def themed_dialog(root, title, text, buttons=(("OK", True, "primary"),), kind="i
     body.pack(fill="both", padx=18, pady=(12, 14))
     top = tk.Frame(body, bg=bg)
     top.pack(fill="x")
-    head = tk.Label(top, text=heading or title, bg=bg, fg=fg, anchor="w", font=("Segoe UI", 12, "bold"))
+    head = tk.Label(top, text=heading or title, bg=bg, fg=fg, anchor="w", font=(UI_FONT, 12, "bold"))
     head.pack(side="left", fill="x", expand=True)
-    x = tk.Label(top, text="✕", bg=bg, fg=T["muted"], cursor="hand2", font=("Segoe UI", 11), padx=4)
+    x = tk.Label(top, text="✕", bg=bg, fg=T["muted"], cursor="hand2", font=(UI_FONT, 11), padx=4)
     x.pack(side="right")
     if kind in ("warning", "error"):
         tk.Label(body, text="warning" if kind == "warning" else "something went wrong", bg=bg, fg=accent, anchor="w",
-                 font=("Segoe UI", 9, "bold")).pack(fill="x")
+                 font=(UI_FONT, 9, "bold")).pack(fill="x")
     tk.Frame(body, bg=T["border"], height=1).pack(fill="x", pady=8)
     tk.Label(body, text=text, bg=bg, fg=T["bubble_msg"], justify="left", anchor="w", wraplength=440,
-             font=("Segoe UI", 10)).pack(fill="x")
+             font=(UI_FONT, 10)).pack(fill="x")
     row = tk.Frame(body, bg=bg)
     row.pack(fill="x", pady=(14, 0))
 
@@ -705,7 +871,7 @@ def px(n):
 
 
 def fnt(size, weight=""):
-    f = ("Segoe UI", max(5, int(round(size * SCALE["v"]))))
+    f = (UI_FONT, max(5, int(round(size * SCALE["v"]))))
     return f + (weight,) if weight else f
 
 
@@ -951,6 +1117,7 @@ def read_claude_code_sessions(cfg):
             "hwnd": rec.get("hwnd"),
             "subagents": _active_agents(rec),
             "request": rec.get("request") or {},
+            "pending": len(rec.get("requests") or []) or (1 if rec.get("request") else 0),  # prompts queued
             "pid": rec.get("pid"),
             "sid": str(rec.get("id")),
             "auto_approved": rec.get("auto_approved", 0),
@@ -1205,6 +1372,27 @@ EYE_PIXELS = {"open": [".2.", "111", "111", ".1."], "arc": [".1.", "1.1"], "line
               "x": ["1.1", ".1.", "1.1"]}
 QUESTION_PIXELS = [".111.", "1...1", "....1", "...1.", "..1..", "..1..", ".....", "..1.."]
 MOUTH_PIXELS = {"smile": ["1.....1", ".1...1.", "..111.."], "flat": [".111."], "wavy": [".1.1.1.", "1.1.1.1"]}
+# Working robots "talk": a sine wave that travels along the mouth, so they stand out from the idle / done ones
+TALK_FRAMES = 4  # one pixel of travel per frame; the wave is 4 pixels long, so 4 frames loop it
+# Working robots blink at 0.075x the mouth wave's 2 Hz: every 6.7 s (3/40, so blink and wave line up every 20 s).
+# The threshold keeps each blink about 0.13 s long whatever the ratio.
+BLINK_RATIO, BLINK_SECONDS = 0.075, 0.13
+BLINK_THRESHOLD = math.cos(math.pi * BLINK_SECONDS * BLINK_RATIO * 2)
+
+
+def _sine_mouth(frame, width=7, rows=2):
+    """A low, short squiggle (two humps across the mouth): a full-width wave would read as smile / frown."""
+    grid = [["."] * width for _ in range(rows)]
+    for i in range(width):
+        y = 0.5 - 0.5 * math.sin(2 * math.pi * (i + frame) / 4.0 + 0.3)  # 0..1, top to bottom
+        grid[int(round(y))][i] = "1"
+    return ["".join(r) for r in grid]
+
+
+for _f in range(TALK_FRAMES):
+    MOUTH_PIXELS[f"sine{_f}"] = _sine_mouth(_f)
+    FACE_PARTS[f"talk{_f}"] = ("open", f"sine{_f}")
+    FACE_PARTS[f"talkblink{_f}"] = ("line", f"sine{_f}")
 
 
 def load_sprites(directory=None):
@@ -1379,7 +1567,7 @@ def log_error(msg):
         pass
 
 
-MONO_FAMILY = "Consolas" if os.name == "nt" else ("Menlo" if IS_MAC else "DejaVu Sans Mono")
+MONO_FAMILY = UI_FONT
 
 
 def mono(size):
@@ -1986,6 +2174,8 @@ class Pet:
             states = [(st, self.acked)] * len(heads)
         top_main = ground
         flash = bool(self.data.get("auto_flash")) and st not in ("needs_input", "error")
+        # a subagent or another session just finished: the done check briefly takes over the working bubble
+        done_flash = st == "working" and time.time() < self.app.done_flash.get(self.data.get("focus", self.key), 0)
         for i, (dx, k) in enumerate(heads):
             main = i == len(heads) - 1
             hst, hacked = states[i]
@@ -1997,8 +2187,13 @@ class Pet:
                 dy = -abs(math.sin(ph * 2.5)) * 1.5
             elif hst == "working":
                 dy = -abs(math.sin(ph * (5 if main else 4.2))) * 3 * k
-                if (ph % 4) < 0.15:
-                    face = "blink"
+                frame = int(ph * 8) % TALK_FRAMES  # the wave travels along the mouth (one loop = 0.5 s, 2 Hz)
+                # Blink on a cosine at BLINK_RATIO x the mouth's frequency: a short blink near each peak. The two
+                # rhythms drift apart and line up again now and then.
+                blink = math.cos(2 * math.pi * BLINK_RATIO * (8 / TALK_FRAMES) * ph) > BLINK_THRESHOLD
+                face = f"talkblink{frame}" if blink else f"talk{frame}"
+                if main and done_flash:
+                    face = "joy"
             elif hst == "needs_input":  # hops while it waits for you
                 dy = (-abs(math.sin(ph * 7)) * 8 if not hacked else -1.5 * math.sin(ph * 3)) * (1 if main else 0.6)
                 squash = 1.0 if dy < -1.2 else 0.94
@@ -2025,6 +2220,8 @@ class Pet:
                 y = (top + by2) / 2
                 self._mark("ok", cx0 - 15, y)
                 c.create_text(cx0 + 3, y, text="auto", fill="#4b8f63", font=fnt(5))
+            elif done_flash:
+                self._completion_seal(cx0 - 27, top_main + 8)
             elif st == "working":  # hacker-screen bubble
                 self._bubble(bx1, by1, bx2, by2, tail, "#0b1220", "#34d399")
                 font = mono(5)
@@ -2546,23 +2743,66 @@ def _user32():
     return u
 
 
+def _go_to_desktop_of(hwnd):
+    """Windows 10/11 virtual desktops: switch to the desktop the window is on. SetForegroundWindow alone often
+    leaves you where you are when the window lives on another desktop (the pet is on every desktop, so this happens)."""
+    try:
+        from pyvda import AppView, VirtualDesktop
+        view = AppView(hwnd=int(hwnd))
+        if view.is_pinned():
+            return
+        target = view.desktop
+        if target.number != VirtualDesktop.current().number:
+            target.go()
+            time.sleep(0.15)  # let the switch animation hand over before activating the window
+    except Exception:
+        pass  # pyvda missing or this Windows build unsupported: focusing still works on the current desktop
+
+
 def focus_hwnd(hwnd):
-    """Bring a window to the front. True if the window exists (and we asked for it)."""
+    """Bring a window to the front, on whatever virtual desktop it is. True if it really came to the front."""
     if os.name != "nt" or not hwnd:
         return False
     try:
-        u = _user32()
-        if not u.IsWindow(int(hwnd)):
+        import ctypes
+        from ctypes import wintypes
+        u, k32 = _user32(), ctypes.windll.kernel32
+        h = int(hwnd)
+        if not u.IsWindow(h):
             return False
-        if u.IsIconic(int(hwnd)):
-            u.ShowWindow(int(hwnd), 9)  # SW_RESTORE
-        u.SetForegroundWindow(int(hwnd))
-        if u.GetForegroundWindow() != int(hwnd):  # foreground lock: a tap of ALT lets the call through
+        _go_to_desktop_of(h)
+        if u.IsIconic(h):
+            u.ShowWindow(h, 9)  # SW_RESTORE
+        u.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.c_void_p]
+        u.GetWindowThreadProcessId.restype = wintypes.DWORD
+        u.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
+        u.BringWindowToTop.argtypes = [wintypes.HWND]
+
+        def front():
+            return u.GetForegroundWindow() == h
+
+        u.SetForegroundWindow(h)
+        if not front():
+            # Windows only lets the foreground app hand the foreground on. Borrow it: attach to the thread that
+            # owns the current foreground window for the call, then detach again.
+            mine = k32.GetCurrentThreadId()
+            theirs = u.GetWindowThreadProcessId(u.GetForegroundWindow(), None)
+            attached = bool(theirs and theirs != mine and u.AttachThreadInput(mine, theirs, True))
+            try:
+                u.BringWindowToTop(h)
+                u.SetForegroundWindow(h)
+            finally:
+                if attached:
+                    u.AttachThreadInput(mine, theirs, False)
+        if not front():  # last resort: a tap of ALT unlocks SetForegroundWindow
             u.keybd_event(0x12, 0, 0, 0)
             u.keybd_event(0x12, 0, 2, 0)
-            u.SetForegroundWindow(int(hwnd))
-        return True
-    except Exception:
+            u.SetForegroundWindow(h)
+        if not front():
+            log_error(f"go to window: couldn't bring {h:#x} to the front")
+        return front()
+    except Exception as e:
+        log_error(f"go to window: {e!r}")
         return False
 
 
@@ -2653,6 +2893,13 @@ def focus_wsl_terminal(d, others=()):
     a terminal whose title mentions the distro or project folder; for sessions run by the desktop app, that app's
     window; a terminal of this agent, else one that doesn't say; the agent's desktop app."""
     agent = "codex" if d.get("agent") == "codex" else "claude"
+    if agent == "claude" and ("desktop" in (d.get("entry") or "").lower() or d.get("app") == "cowork"):
+        # Run by the Claude desktop app (its Code tab, here in WSL): that app's window, always. Not a terminal that
+        # happens to mention the distro or folder, and not "claimed": one app window hosts all of its sessions, so
+        # a Cowork session having recorded it doesn't make it someone else's.
+        app = claude_app_windows("claude.exe")
+        if app:
+            return focus_hwnd(app[0])
     claimed = {int(o["hwnd"]) for o in others if o.get("hwnd")}
     folder = _folder(d)
     needles = [n.lower() for n in (d.get("distro"), folder, d.get("raw_title")) if n]
@@ -2680,6 +2927,7 @@ class Detail:
 
     def __init__(self, app, key, item):
         self.app, self.key, self._shown, self.sent = app, key, None, None
+        self.pinned = item.get("state") != "needs_input"  # opened from the menu: not a prompt that closes when answered
         self._after, self._t0, self._moved, self._size = None, time.time(), False, None
         bg, fg, msg_fg, muted = T["bubble_bg"], T["bubble_fg"], T["bubble_msg"], T["bubble_muted"]
         w = self.win = MacOverlayWindow(app.root) if IS_MAC else tk.Toplevel(app.root)
@@ -2707,14 +2955,15 @@ class Detail:
 
         top = tk.Frame(right, bg=bg)
         top.pack(fill="x")
-        self.head = tk.Label(top, bg=bg, fg=fg, anchor="w", font=("Segoe UI", 15, "bold"))
+        self.head = tk.Label(top, bg=bg, fg=fg, anchor="w", font=(UI_FONT, 15, "bold"))
         self.head.pack(side="left", fill="x", expand=True)
-        close = tk.Label(top, text="\u2715", bg=bg, fg=muted, cursor="hand2", font=("Segoe UI", 12), padx=4)
+        close = tk.Label(top, text="\u2715", bg=bg, fg=muted, cursor="hand2", font=(UI_FONT, 12), padx=4)
         close.pack(side="right")
         close.bind("<Button-1>", lambda e: self.close())
-        tk.Label(right, text="needs your permission", bg=bg, fg=self.ACCENT, anchor="w",
-                 font=("Segoe UI", 9, "bold")).pack(fill="x")
-        self.where = tk.Label(right, bg=bg, fg=muted, anchor="w", justify="left", wraplength=430, font=("Segoe UI", 8))
+        self.status = tk.Label(right, text="needs your permission", bg=bg, fg=self.ACCENT, anchor="w",
+                               font=(UI_FONT, 9, "bold"))
+        self.status.pack(fill="x")
+        self.where = tk.Label(right, bg=bg, fg=muted, anchor="w", justify="left", wraplength=430, font=(UI_FONT, 8))
         self.where.pack(fill="x", pady=(2, 0))
         tk.Frame(right, bg=T["border"], height=1).pack(fill="x", pady=8)
         for widget in (top, self.head):  # drag the card by its header
@@ -2723,31 +2972,31 @@ class Detail:
 
         self.body = tk.Frame(right, bg=bg)
         self.body.pack(fill="x")
-        self.ask = tk.Label(self.body, bg=bg, fg=fg, anchor="w", justify="left", wraplength=430, font=("Segoe UI", 11, "bold"))
-        self.desc = tk.Label(self.body, bg=bg, fg=msg_fg, anchor="w", justify="left", wraplength=430, font=("Segoe UI", 10))
+        self.ask = tk.Label(self.body, bg=bg, fg=fg, anchor="w", justify="left", wraplength=430, font=(UI_FONT, 11, "bold"))
+        self.desc = tk.Label(self.body, bg=bg, fg=msg_fg, anchor="w", justify="left", wraplength=430, font=(UI_FONT, 10))
         self.code = tk.Text(self.body, height=1, width=60, wrap="word", bg="#0b1220", fg="#d1fae5", relief="flat",
                             borderwidth=0, highlightthickness=0, padx=10, pady=8, font=("Consolas", 9), state="disabled",
                             insertbackground="#d1fae5")
         wait_row = tk.Frame(right, bg=bg)
         wait_row.pack(fill="x", pady=(8, 0))
-        self.wait = tk.Label(wait_row, bg=bg, fg=muted, anchor="w", font=("Segoe UI", 9))
+        self.wait = tk.Label(wait_row, bg=bg, fg=muted, anchor="w", font=(UI_FONT, 9))
         self.wait.pack(side="left")
         self.golink = tk.Label(wait_row, text="Go to window ›", bg=bg, fg=self.ACCENT, cursor="hand2",
-                               font=("Segoe UI", 9, "underline"))
+                               font=(UI_FONT, 9, "underline"))
         self.golink.bind("<Button-1>", lambda e: self.go())
-        self.note = tk.Label(right, bg=bg, fg=muted, anchor="w", justify="left", wraplength=430, font=("Segoe UI", 8))
+        self.note = tk.Label(right, bg=bg, fg=muted, anchor="w", justify="left", wraplength=430, font=(UI_FONT, 8))
         self.note.pack(fill="x", pady=(2, 8))
         self.answer_row = tk.Frame(right, bg=bg)
         self.btn_deny = tk.Button(self.answer_row, text="Deny", width=12, bg=bg, fg=themed_color("#dc2626"),
                                   activebackground=T["btn_active"], activeforeground=themed_color("#b91c1c"),
                                   relief="flat", bd=0, highlightthickness=1, highlightbackground=themed_color("#dc2626"),
                                   cursor="hand2",
-                                  font=("Segoe UI", 10, "bold"), command=lambda: self.answer("deny"))
+                                  font=(UI_FONT, 10, "bold"), command=lambda: self.answer("deny"))
         dark = T.get("name") == "dark"  # dark theme: black text on a brighter green
         allow_fg, allow_bg, allow_active = ("#111827", "#22c55e", "#16a34a") if dark else ("white", "#16a34a", "#15803d")
         self.btn_allow = tk.Button(self.answer_row, text="Allow once", width=14, bg=allow_bg, fg=allow_fg,
                                    activebackground=allow_active, activeforeground=allow_fg, relief="flat", cursor="hand2",
-                                   font=("Segoe UI", 10, "bold"), command=lambda: self.answer("allow"))
+                                   font=(UI_FONT, 10, "bold"), command=lambda: self.answer("allow"))
         if IS_MAC:
             self.btn_allow.configure(**button_style("primary"))
             self.btn_deny.configure(**button_style("danger"))
@@ -2756,7 +3005,7 @@ class Detail:
         self.answer_row.pack(fill="x")
         self.go_row = tk.Frame(right, bg=bg)
         self.btn_go = tk.Button(self.go_row, text="Go to window", bg=self.ACCENT, fg="#111827", activebackground="#d97706",
-                                activeforeground="#111827", relief="flat", cursor="hand2", font=("Segoe UI", 10, "bold"),
+                                activeforeground="#111827", relief="flat", cursor="hand2", font=(UI_FONT, 10, "bold"),
                                 command=self.go)
         self.btn_go.pack(side="left", ipady=4, ipadx=14)
         self.update(item)
@@ -2839,6 +3088,8 @@ class Detail:
             face, state, dy = "joy", "done", -abs(math.sin(t * 6)) * 4
         elif self.sent == "Deny":
             face, state, dy = "worried", "error", 0.0
+        elif getattr(self, "_state", "needs_input") != "needs_input" and self._state in STATE_FACE:
+            face, state, dy = STATE_FACE[self._state], self._state, -abs(math.sin(t * 2)) * 3
         else:
             face, state, dy = "ask", "needs_input", -abs(math.sin(t * 4)) * 10
         rw, rh = spr["meta"]["robot"]["size"]
@@ -2854,10 +3105,18 @@ class Detail:
             for i in range(3):
                 ph = (t * 0.6 + i / 3) % 1
                 c.create_text(22 + i * 40 + 8 * math.sin(t * 3 + i), 40 - ph * 34, text="?", fill=self.ACCENT,
-                              font=("Segoe UI", int(9 + 7 * (1 - ph)), "bold"))
+                              font=(UI_FONT, int(9 + 7 * (1 - ph)), "bold"))
 
     def update(self, item):
+        self._state = item.get("state", "needs_input")
         req = item.get("request") or {}
+        if self.sent and self._state == "needs_input" and req.get("id") and req.get("id") != getattr(self, "_sent_id", None):
+            self.sent = None  # that prompt is settled and the next queued one is showing: answer it too
+        if self._state != "needs_input" and not self.sent:
+            return self._update_status(item)
+        pending = item.get("pending", 0)
+        self.status.config(text="needs your permission" + (f"  ·  {pending} prompts waiting" if pending > 1 else ""),
+                           fg=self.ACCENT)
         self.head.config(text=item.get("title", "session"))
         self.where.config(text=" \u00b7 ".join(x for x in (item.get("where"), item.get("detail")) if x))
         for widget in (self.ask, self.desc, self.code):
@@ -2924,14 +3183,34 @@ class Detail:
             self.go_row.pack(fill="x", after=self.note)
         self._place()
 
+    def _update_status(self, item):
+        """A session that isn't asking anything: show what it's doing, with no answer buttons."""
+        state = item.get("state")
+        self.status.config(text=LABELS.get(state, state or ""), fg=COLORS.get(state, self.ACCENT))
+        self.head.config(text=item.get("title", "session"))
+        self.where.config(text=" · ".join(x for x in (item.get("where"), item.get("detail")) if x))
+        for widget in (self.ask, self.desc, self.code):
+            widget.pack_forget()
+        if item.get("message"):
+            self.ask.config(text=item["message"])
+            self.ask.pack(fill="x")
+        self.wait.config(text=f"since {ago(item['changed'])}" if item.get("changed") else "")
+        self.note.config(text="Press Go to window to jump to the session.")
+        self.answer_row.pack_forget()
+        self.golink.pack_forget()
+        self.go_row.pack(fill="x", after=self.note)
+        self._place()
+
     def go(self):
         """Bring the session's window to the front and dismiss this popup."""
         self.app.focus_key(self.key)
         self.close()
 
     def answer(self, behavior):
+        item = next((i for i in self.app._last_items if i["key"] == self.key), {})
         if self.app.send_answer(self.key, behavior):
             self.sent = "Allow once" if behavior == "allow" else "Deny"
+            self._sent_id = (item.get("request") or {}).get("id")
             self.update(next((i for i in self.app._last_items if i["key"] == self.key), {"request": {}}))
 
     def close(self):
@@ -3001,6 +3280,7 @@ class PetApp:
         HEALTH["v"] = clamp_health(self.cfg.get("health_check_seconds", 15))
         write_answer_wait(ANSWER_WAIT["v"])
         root = self.root = MacPetWindow() if IS_MAC else tk.Tk()
+        use_console_font(root)
         root.title("AIPet")
         root.overrideredirect(True)
         root.attributes("-topmost", True)
@@ -3019,6 +3299,7 @@ class PetApp:
         self.frame.pack(side="top", anchor="e", padx=(0, self._usage_frame_pad))
 
         self.pets, self.order, self.prev_states = {}, [], {}
+        self.prev_agents, self.done_flash = {}, {}  # subagent counts; session key -> time its brief "done" check ends
         self.details = {}
         self._slots, self._slot_n = {}, 0
         self._last_items, self._last_size = [], None
@@ -3157,8 +3438,18 @@ class PetApp:
                     self.prev_states.pop(k, None)
                     self.ack.pop(k, None)
                     self.reminded.pop(k, None)
+                    self.prev_agents.pop(k, None)
+                    self.done_flash.pop(k, None)
+            finished = False
             for it in real:
                 k, old = it["key"], self.prev_states.get(it["key"])
+                agents = int(it.get("subagents") or 0)
+                if (not self.first_refresh and it["state"] == "working" and old == "working"
+                        and agents < self.prev_agents.get(k, 0)):
+                    self.done_flash[k] = now + DONE_FLASH_SECONDS  # one of its subagents just finished
+                self.prev_agents[k] = agents
+                if old != it["state"] and it["state"] == "done" and old in ("working", "needs_input"):
+                    finished = finished or not self.first_refresh
                 if old != it["state"]:
                     self.ack[k] = False
                     self.reminded[k] = now
@@ -3169,6 +3460,10 @@ class PetApp:
                       and now - self.reminded.get(k, 0) > self.cfg["remind_seconds"]):
                     self.alert("needs_input", old, it)
                     self.reminded[k] = now
+            if finished:  # another session just finished: every working pet briefly shows the done check too
+                for it in real:
+                    if it["state"] == "working":
+                        self.done_flash[it["key"]] = now + DONE_FLASH_SECONDS
 
             spawned = 0
             for it in items:
@@ -3221,7 +3516,8 @@ class PetApp:
         needing = {i["key"] for i in items if i["state"] == "needs_input" and i["key"] != "_none"}
         by_key = {i["key"]: i for i in items}
         for k in list(self.details):
-            if k in needing:
+            # A card opened for a session that wasn't asking anything stays until closed or the session goes away
+            if k in needing or (getattr(self.details[k], "pinned", False) and k in by_key):
                 self.details[k].update(by_key[k])
             else:
                 self.details[k].destroy()
@@ -3311,7 +3607,7 @@ class PetApp:
         w.attributes("-topmost", True)
         w.resizable(False, False)
         var = tk.DoubleVar(value=SCALE["v"] / SCALE_UNIT)
-        pct = tk.Label(w, width=6, font=("Segoe UI", 12, "bold"))
+        pct = tk.Label(w, width=6, font=(UI_FONT, 12, "bold"))
 
         def apply(_v=None):
             self.set_scale(var.get() * SCALE_UNIT)
@@ -3334,7 +3630,7 @@ class PetApp:
             self.size_win = None
             w.destroy()
 
-        tk.Label(w, text="Pet size", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
+        tk.Label(w, text="Pet size", font=(UI_FONT, 10, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
         scale = ttk.Scale(w, from_=0.3, to=3.0, orient="horizontal", length=260, variable=var, command=apply)
         scale.grid(row=1, column=0, padx=(14, 6), pady=8)
         scale.bind("<ButtonRelease-1>", commit)
@@ -3363,7 +3659,7 @@ class PetApp:
         w.attributes("-topmost", True)
         w.resizable(False, False)
         var = tk.DoubleVar(value=ANSWER_WAIT["v"])
-        val = tk.Label(w, width=10, font=("Segoe UI", 12, "bold"))
+        val = tk.Label(w, width=10, font=(UI_FONT, 12, "bold"))
 
         def apply(_v=None):
             ANSWER_WAIT["v"] = clamp_wait(round(var.get() / 15) * 15)  # steps of 15 s
@@ -3384,13 +3680,13 @@ class PetApp:
             self.answer_win = None
             w.destroy()
 
-        tk.Label(w, text="Answer permission prompts from the pet for up to:", font=("Segoe UI", 10, "bold")
+        tk.Label(w, text="Answer permission prompts from the pet for up to:", font=(UI_FONT, 10, "bold")
                  ).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
         scale = ttk.Scale(w, from_=0, to=MAX_WAIT, orient="horizontal", length=260, variable=var, command=apply)
         scale.grid(row=1, column=0, padx=(14, 6), pady=8)
         scale.bind("<ButtonRelease-1>", commit)
         val.grid(row=1, column=1, padx=(0, 14))
-        tk.Label(w, justify="left", wraplength=360, fg="#6b7280", font=("Segoe UI", 8),
+        tk.Label(w, justify="left", wraplength=360, fg="#6b7280", font=(UI_FONT, 8),
                  text="0 means no limit: the pet waits until you answer (or until it is closed). "
                       "While the pet waits, Claude Code's own prompt is still shown and the first answer wins, "
                       "except for background subagents, where Claude Code may hold its prompt until this time is up "
@@ -3420,7 +3716,7 @@ class PetApp:
         w.attributes("-topmost", True)
         w.resizable(False, False)
         var = tk.DoubleVar(value=DONE_TIMEOUT["v"])
-        val = tk.Label(w, width=10, font=("Segoe UI", 12, "bold"))
+        val = tk.Label(w, width=10, font=(UI_FONT, 12, "bold"))
 
         def apply(_v=None):
             DONE_TIMEOUT["v"] = clamp_done(var.get())  # whole minutes
@@ -3440,13 +3736,13 @@ class PetApp:
             self.done_win = None
             w.destroy()
 
-        tk.Label(w, text="Clear a finished session's pet after:", font=("Segoe UI", 10, "bold")
+        tk.Label(w, text="Clear a finished session's pet after:", font=(UI_FONT, 10, "bold")
                  ).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
         scale = ttk.Scale(w, from_=0, to=MAX_WAIT // 60, orient="horizontal", length=260, variable=var, command=apply)
         scale.grid(row=1, column=0, padx=(14, 6), pady=8)
         scale.bind("<ButtonRelease-1>", commit)
         val.grid(row=1, column=1, padx=(0, 14))
-        tk.Label(w, justify="left", wraplength=360, fg="#6b7280", font=("Segoe UI", 8),
+        tk.Label(w, justify="left", wraplength=360, fg="#6b7280", font=(UI_FONT, 8),
                  text="Counted from when the session finished. 0 keeps finished pets until you dismiss them "
                       "(right-click > Dismiss / Clear finished). A new message brings a cleared session back."
                  ).grid(row=2, column=0, columnspan=2, sticky="w", padx=14)
@@ -3479,7 +3775,10 @@ class PetApp:
         if d.get("ide") == "vscode":
             self.open_in_vscode(pet)  # `code <folder>` raises the right VS Code window, then the conversation tab
         elif os.name == "nt":
-            if not focus_hwnd(d.get("hwnd")) and (d.get("env") == "wsl" or d.get("agent") == "codex"):
+            if focus_hwnd(d.get("hwnd")):
+                return
+            if d.get("env") == "wsl" or d.get("agent") == "codex" or d.get("app") == "cowork" or \
+                    "desktop" in (d.get("entry") or "").lower():
                 own = d.get("focus") or pet.key
                 others = [i for i in self._last_items if i.get("key") != own]
                 focus_wsl_terminal(d, others)  # no recorded window: match by distro / project, never another's
@@ -3523,7 +3822,7 @@ class PetApp:
         w.attributes("-topmost", True)
         w.resizable(False, False)
         var = tk.DoubleVar(value=HEALTH["v"])
-        val = tk.Label(w, width=10, font=("Segoe UI", 12, "bold"))
+        val = tk.Label(w, width=10, font=(UI_FONT, 12, "bold"))
 
         def apply(_v=None):
             HEALTH["v"] = clamp_health(round(var.get() / 5) * 5)  # steps of 5 s
@@ -3543,13 +3842,13 @@ class PetApp:
             self.health_win = None
             w.destroy()
 
-        tk.Label(w, text="Check that working sessions are still running every:", font=("Segoe UI", 10, "bold")
+        tk.Label(w, text="Check that working sessions are still running every:", font=(UI_FONT, 10, "bold")
                  ).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
         scale = ttk.Scale(w, from_=0, to=MAX_HEALTH, orient="horizontal", length=260, variable=var, command=apply)
         scale.grid(row=1, column=0, padx=(14, 6), pady=8)
         scale.bind("<ButtonRelease-1>", commit)
         val.grid(row=1, column=1, padx=(0, 14))
-        tk.Label(w, justify="left", wraplength=360, fg="#6b7280", font=("Segoe UI", 8),
+        tk.Label(w, justify="left", wraplength=360, fg="#6b7280", font=(UI_FONT, 8),
                  text="A working or waiting session whose Claude Code / Codex process has ended (the app was closed, or "
                       "the conversation moved to a new session) is shown as finished. 0 turns the check off. Sessions in "
                       "WSL can't be checked; use right-click > Mark as finished for those."
@@ -3575,28 +3874,45 @@ class PetApp:
             except Exception:
                 pass
         if state in ("needs_input", "error"):
-            self.beep(True)
+            self.beep(True, kind="error" if state == "error" else None)
             self.root.lift()
             self.root.attributes("-topmost", True)
         elif state == "done" and old in ("working", "needs_input") and self.cfg["sound_on_done"]:
             self.beep(False)
 
-    def beep(self, urgent):
-        if self.muted.get():
+    def beep(self, urgent, force=False, kind=None):
+        """kind: "error" for its own sound; otherwise urgent = needs you, not urgent = done."""
+        if self.muted.get() and not force:
             return
+        error = kind == "error"
         if winsound:
+            if self.cfg.get("sound_style", "chimes") == "chimes":
+                try:
+                    winsound.PlaySound(chime_path("thud" if error else "knock" if urgent else "ting"),
+                                       winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+                    return
+                except (RuntimeError, OSError):
+                    pass  # fall back to the system sound
             try:
-                winsound.MessageBeep(winsound.MB_ICONEXCLAMATION if urgent else winsound.MB_ICONASTERISK)
+                winsound.MessageBeep(winsound.MB_ICONHAND if error else
+                                     winsound.MB_ICONEXCLAMATION if urgent else winsound.MB_ICONASTERISK)
             except RuntimeError:
                 pass
         elif IS_MAC:
             try:
-                sound = "Funk" if urgent else "Glass"
+                sound = "Basso" if error else "Funk" if urgent else "Glass"
                 subprocess.Popen(["afplay", f"/System/Library/Sounds/{sound}.aiff"])
             except OSError:
                 self.root.bell()
         else:
             self.root.bell()
+
+    def set_sound_style(self, style):
+        if style not in ("chimes", "system"):
+            return
+        self.cfg["sound_style"] = style
+        save_setting("sound_style", style)
+        self.beep(False, force=True)  # let the user hear the choice
 
     def dismiss(self, pet):
         self.dismiss_item(pet.data)
@@ -3954,21 +4270,34 @@ class PetApp:
         if self.context_menu_spec:
             # Keep mouse handling enabled for the entire menu tracking session.
             self._menu_open = True
+            chosen = None
             try:
                 if self.clickthru:
                     self.clickthru.set(False)
                     self._pass = False
                 entries = self.context_menu_spec(pet)
-                fill_menu(self.menu, entries)
-                self._context_menu_shown = True
-                try:
-                    # Tk posts an AppKit menu on macOS and safely manages its
-                    # nested event loop; no focus/Space switch is needed.
-                    popup_menu(self.menu, e.x_root, e.y_root)
-                finally:
-                    self.menu.grab_release()
+                native = False
+                if NATIVE_WIN_MENU:
+                    try:
+                        widget = e.widget if isinstance(getattr(e, "widget", None), tk.Misc) else self.root
+                        self._context_menu_shown = True
+                        chosen = popup_native_menu(widget, entries, e.x_root, e.y_root)
+                        native = True
+                    except Exception:
+                        globals()["NATIVE_WIN_MENU"] = False  # Win32 menu unavailable: use the Tk menu from now on
+                if not native:
+                    fill_menu(self.menu, entries)
+                    self._context_menu_shown = True
+                    try:
+                        # Tk posts an AppKit menu on macOS and safely manages its
+                        # nested event loop; no focus/Space switch is needed.
+                        popup_menu(self.menu, e.x_root, e.y_root)
+                    finally:
+                        self.menu.grab_release()
             finally:
                 self._menu_open = False
+            if chosen:
+                chosen()  # run after the menu has closed, like a Tk menu command
             return "break"
         self.menu.entryconfigure(self.size_menu_index, label=f"Size...  ({int(round(SCALE['v'] / SCALE_UNIT * 100))}%)")
         ok = bool(pet and pet.data.get("source") == "CC" and pet.data.get("cwd"))

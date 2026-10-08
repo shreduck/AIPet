@@ -53,6 +53,10 @@ Both menus share these sections; right-clicking a pet adds **This session** for 
 marking it finished, and dismissing it. On macOS, right-click and Control-click open a native context menu without
 activating the pet or switching away from a full-screen app.
 
+**Settings...** is the first item of every menu. It opens a settings window with the same options grouped by section
+(General, Appearance, Behavior, Integrations, Permissions, Help), each with an icon and a short explanation, plus a search
+box. Every switch and button runs exactly the menu's action, and the window stays in step with changes made from the menus.
+
 - **Appearance**: pet style, size, compact mode, theme, session titles and tooltips.
 - **Behavior**: desktop visibility, position, click behavior, sounds and notifications, session timing, and startup.
 - **Integrations**: Claude Code and Codex hooks, usage collection, setup and connection status.
