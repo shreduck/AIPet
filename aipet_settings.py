@@ -320,14 +320,16 @@ class SettingsWindow:
         self.header.pack(fill="x", padx=28, pady=(20, 6))
         holder = tk.Frame(main, bg=self.bg)
         holder.pack(fill="both", expand=True)
-        self.canvas = tk.Canvas(holder, bg=self.bg, highlightthickness=0, bd=0)
+        self.canvas = tk.Canvas(holder, bg=self.bg, highlightthickness=0, bd=0,
+                                yscrollincrement=max(1, int(12 * self.scale)))
+        self._scrollregion = None
         bar = tk.Scrollbar(holder, orient="vertical", command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=bar.set)
         bar.pack(side="right", fill="y")
         self.canvas.pack(side="left", fill="both", expand=True)
         self.body = tk.Frame(self.canvas, bg=self.bg)
         self._body_id = self.canvas.create_window(0, 0, window=self.body, anchor="nw")
-        self.body.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.body.bind("<Configure>", self._sync_scrollregion)
         self.canvas.bind("<Configure>", self._on_resize)
         # The wheel scrolls the page wherever the pointer is over it: a private bind tag on the canvas and every row
         self.win.bind_class(WHEEL_TAG, "<MouseWheel>", self._wheel)
@@ -356,13 +358,27 @@ class SettingsWindow:
         pass  # the bind tag goes away with the widgets
 
     def _wheel(self, e):
+        if not e.delta:
+            return "break"
         if e.state & (0x8 if IS_MAC else 0x4):  # Ctrl (Command on a Mac) + wheel: zoom
             return self.zoom_by(1 if e.delta > 0 else -1)
-        self._scroll(-e.delta if IS_MAC else -int(e.delta / 120) * 3)
+        return self._scroll(-e.delta if IS_MAC else -int(e.delta / 120) * 3)
 
     def _scroll(self, step):
-        if self.canvas.yview() != (0.0, 1.0):
+        first, last = self.canvas.yview()
+        if (step < 0 and first > 0) or (step > 0 and last < 1):
             self.canvas.yview_scroll(step, "units")
+        # Consume even at the edge: widget class bindings must not also scroll
+        # or change an embedded slider under the pointer.
+        return "break"
+
+    def _sync_scrollregion(self, _event=None):
+        # Scrolling moves the embedded frame, which also emits Configure.
+        # Only update the region when its content dimensions actually change.
+        bounds = self.canvas.bbox(self._body_id)
+        if bounds is not None and bounds != self._scrollregion:
+            self._scrollregion = bounds
+            self.canvas.configure(scrollregion=bounds)
 
     # ---- rendering
     def _render(self, keep_scroll=True):
@@ -392,7 +408,7 @@ class SettingsWindow:
         self._tag_wheel(self.body)
         self._tag_wheel(self.nav)
         self.body.update_idletasks()
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        self._sync_scrollregion()
         self.canvas.yview_moveto(top)
         self._on_resize(type("E", (), {"width": self.canvas.winfo_width()})())
 
@@ -605,7 +621,7 @@ class SettingsWindow:
         line.pack(fill="x", pady=(8, 0))
         var = tk.DoubleVar(master=self.win, value=spec["value"])
         shown = tk.Label(line, text=fmt(spec["value"]), bg=self.bg, fg=T["win_fg"], font=self.font(10, "bold"),
-                         width=6, anchor="e")
+                         width=12, anchor="e")
         scale = tk.Scale(line, from_=spec["min"], to=spec["max"], resolution=spec.get("step", 0.1), orient="horizontal",
                          variable=var, showvalue=False, length=int(260 * self.scale), sliderlength=int(18 * self.scale),
                          width=int(10 * self.scale), bg=T["primary"], troughcolor=T["entry_bg"],

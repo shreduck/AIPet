@@ -9,6 +9,50 @@ import aipet
 
 
 class ChimeTests(unittest.TestCase):
+    def test_mac_plays_custom_by_default_and_honors_system_choice(self):
+        app = object.__new__(aipet.PetApp)
+        app.muted = MagicMock(get=MagicMock(return_value=False))
+        app.root = MagicMock()
+        with patch.object(aipet, 'IS_MAC', True), patch.object(aipet, 'winsound', None), \
+                patch.object(aipet, 'chime_path', side_effect=lambda k: k + '.wav'), \
+                patch.object(aipet.subprocess, 'Popen') as play:
+            for config in ({}, {"sound_style": "chimes"}, {"sound_style": "system"}):
+                app.cfg = config
+                for urgent, kind, chime, system in ((False, None, 'ting', 'Glass'),
+                                                   (True, None, 'knock', 'Funk'),
+                                                   (True, 'error', 'thud', 'Basso')):
+                    app.beep(urgent, kind=kind)
+                    expected = (f'/System/Library/Sounds/{system}.aiff' if config.get('sound_style') == 'system'
+                                else chime + '.wav')
+                    play.assert_called_with(['afplay', expected])
+            play.reset_mock()
+            app.muted.get.return_value = True
+            app.beep(True)
+            play.assert_not_called()
+            app.beep(True, force=True)
+            play.assert_called_once()
+
+    def test_mac_falls_back_to_system_when_chime_is_unavailable(self):
+        app = object.__new__(aipet.PetApp)
+        app.cfg, app.root = {}, MagicMock()
+        app.muted = MagicMock(get=MagicMock(return_value=False))
+        with patch.object(aipet, 'IS_MAC', True), patch.object(aipet, 'winsound', None), \
+                patch.object(aipet, 'chime_path', side_effect=OSError('read-only sound directory')), \
+                patch.object(aipet.subprocess, 'Popen') as play:
+            app.beep(False)
+            play.assert_called_once_with(['afplay', '/System/Library/Sounds/Glass.aiff'])
+
+    def test_sound_choice_is_saved_and_previewed(self):
+        app = object.__new__(aipet.PetApp)
+        app.cfg, app.beep = {}, MagicMock()
+        self.assertEqual(aipet.DEFAULT_CONFIG['sound_style'], 'chimes')
+        with patch.object(aipet, 'save_setting') as save:
+            for style in ('system', 'chimes'):
+                app.set_sound_style(style)
+                self.assertEqual(app.cfg['sound_style'], style)
+                save.assert_called_with('sound_style', style)
+                app.beep.assert_called_with(False, force=True)
+
     def test_chimes_are_written_once_as_clean_wav_files(self):
         with tempfile.TemporaryDirectory() as home, patch.object(aipet, 'HOME_DIR', home):
             for kind, seconds in (("ting", 0.26 + 0.22 + 0.22 * 6), ("knock", 0.26 + 0.24 + 0.17 * 6)):

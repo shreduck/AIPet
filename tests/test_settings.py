@@ -1,4 +1,8 @@
+import json
+import tempfile
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import aipet
@@ -27,6 +31,56 @@ def spec():
 
 
 class SettingsSpecTests(unittest.TestCase):
+    def test_wheel_stops_at_edges_and_consumes_events(self):
+        window = object.__new__(settings.SettingsWindow)
+        window.canvas = MagicMock()
+        with patch.object(settings, 'IS_MAC', True):
+            for view, delta in (((0.0, 0.5), 1), ((0.5, 1.0), -1), ((0.0, 1.0), -10)):
+                window.canvas.yview.return_value = view
+                self.assertEqual(window._wheel(SimpleNamespace(delta=delta, state=0)), 'break')
+            window.canvas.yview_scroll.assert_not_called()
+            window.canvas.yview.return_value = (0.2, 0.7)
+            self.assertEqual(window._wheel(SimpleNamespace(delta=-2, state=0)), 'break')
+            window.canvas.yview_scroll.assert_called_once_with(2, 'units')
+
+    def test_scrolling_does_not_reconfigure_unchanged_content(self):
+        window = object.__new__(settings.SettingsWindow)
+        window.canvas, window._body_id, window._scrollregion = MagicMock(), 1, None
+        window.canvas.bbox.return_value = (0, 0, 800, 1400)
+        for _ in range(10):
+            window._sync_scrollregion()
+        window.canvas.configure.assert_called_once_with(scrollregion=(0, 0, 800, 1400))
+        window.canvas.bbox.return_value = (0, 0, 800, 900)
+        window._sync_scrollregion()
+        window.canvas.configure.assert_called_with(scrollregion=(0, 0, 800, 900))
+
+    def test_inline_slider_changes_update_and_persist_settings(self):
+        pet = object.__new__(aipet.PetApp)
+        pet.cfg, pet.pets = {}, {}
+        pet.reposition, pet._sync_usage_padding = MagicMock(), MagicMock()
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(aipet, 'HOME_DIR', directory), \
+                patch.object(aipet, 'CONFIG_PATH', str(Path(directory) / 'config.json')), \
+                patch.dict(aipet.SCALE), patch.dict(aipet.ANSWER_WAIT), \
+                patch.dict(aipet.DONE_TIMEOUT), patch.dict(aipet.HEALTH):
+            pet.set_size(1.35)
+            pet.set_answer_wait(75)
+            pet.set_done_timeout(8)
+            pet.set_health_interval(25)
+            expected = {'size': 1.35, 'answer_wait_seconds': 75,
+                        'done_timeout_minutes': 8, 'health_check_seconds': 25}
+            self.assertEqual(pet.cfg, expected)
+            self.assertEqual(json.loads(Path(aipet.CONFIG_PATH).read_text()), expected)
+            self.assertEqual((Path(directory) / 'answer-wait').read_text(), '75')
+            self.assertEqual(aipet.SCALE['v'], 1.35 * aipet.SCALE_UNIT)
+            self.assertEqual([aipet.ANSWER_WAIT['v'], aipet.DONE_TIMEOUT['v'], aipet.HEALTH['v']], [75, 8, 25])
+            pet.reposition.assert_called_once()
+            pet.set_answer_wait(0)
+            pet.set_done_timeout(0)
+            pet.set_health_interval(0)
+            self.assertEqual((Path(directory) / 'answer-wait').read_text(), '0')
+            self.assertEqual([aipet.ANSWER_WAIT['v'], aipet.DONE_TIMEOUT['v'], aipet.HEALTH['v']], [0, 0, 0])
+
     def test_pages_follow_the_menu(self):
         pages = settings.pages_from_spec(spec())
         self.assertEqual([p[0] for p in pages], ["General", "Appearance", "Permissions"])
@@ -76,6 +130,12 @@ class SettingsSpecTests(unittest.TestCase):
         dark = next(e for e in toggles if e["label"] == "Dark theme")
         self.assertTrue(dark["help"])
         self.assertIs(dark["action"].__func__, aipet_app.TrayApp.toggle_theme)  # the very same action as the menu
+        rows = {e['label']: e for _, e in settings.flatten(app._mac_menu_spec())}
+        for label, setter in (("Pet size...", app.pet.set_size), ("Answer timeout...", app.pet.set_answer_wait),
+                              ("Clear finished after...", app.pet.set_done_timeout),
+                              ("Health check every...", app.pet.set_health_interval)):
+            self.assertIs(rows[label]['slider']['set'], setter)
+            self.assertIsNot(rows[label]['slider']['set'], rows[label]['action'])
 
 
 if __name__ == "__main__":

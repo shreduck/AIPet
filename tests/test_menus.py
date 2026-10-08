@@ -7,6 +7,23 @@ import aipet_app
 
 
 class MenuTests(unittest.TestCase):
+    @patch.object(aipet_app.hi, 'list_backups', return_value=[])
+    @patch.object(aipet, 'auto_approve_rules', return_value={})
+    def test_sound_choices_on_mac_and_windows(self, *_):
+        app = self.make_app()
+        for mac, name, system_label in ((True, 'posix', 'macOS sounds'), (False, 'nt', 'Windows sounds')):
+            with patch.object(aipet_app, 'IS_MAC', mac), patch.object(aipet_app.os, 'name', name):
+                for selected in ('chimes', 'system'):
+                    app.pet.cfg['sound_style'] = selected
+                    behavior = next(e for e in app._mac_menu_spec() if e and e['label'] == 'Behavior')
+                    sounds = next(e for e in behavior['submenu'] if e and e['label'] == 'Sounds and notifications')
+                    choices = next(e for e in sounds['submenu'] if e and e['label'] == 'Sound style')['submenu']
+                    self.assertEqual([e['label'] for e in choices], ['AIPet chimes (default)', system_label])
+                    self.assertEqual([e['checked'] for e in choices], [selected == 'chimes', selected == 'system'])
+                    for entry, value in zip(choices, ('chimes', 'system')):
+                        entry['action']()
+                        app.pet.set_sound_style.assert_called_with(value)
+
     def make_app(self):
         app = object.__new__(aipet_app.TrayApp)
         app.pet = MagicMock(cfg=dict(aipet.DEFAULT_CONFIG))

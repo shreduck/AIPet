@@ -53,7 +53,7 @@ DEFAULT_CONFIG = {
     "max_pets": 10,
     "sounds": True,
     "sound_on_done": True,
-    "sound_style": "chimes",  # Windows: "chimes" (AIPet's own, close to the macOS sounds) or "system" (Windows beeps)
+    "sound_style": "chimes",  # AIPet's own sounds by default; "system" uses the host OS sounds
     "notifications": False,  # Windows toast notifications; off by default (toggle in the tray menu)
     "theme": "light",  # "light" (default) or "dark"; toggle in the tray / right-click menu
     "answer_wait_seconds": 180,  # how long a permission prompt can be answered from the pet: 0 (no limit) - 1800
@@ -391,10 +391,10 @@ def popup_native_menu(widget, entries, x, y, api=None):
     return actions[chosen - 1] if 0 < chosen <= len(actions) else None
 
 
-# --------------------------------------------------------------------------- chimes (Windows)
-# macOS plays its system sounds (Glass when a session is done, Funk when one needs you). Those files are Apple's and only
-# exist on a Mac, so on Windows AIPet plays two sounds of its own, synthesized here as two xylophone notes each: "ting"
-# rises when a session is done, "knock" falls when one needs you. They are written once to ~/.aipet/sounds as WAV files.
+# --------------------------------------------------------------------------- chimes (macOS and Windows)
+# AIPet's own sounds are synthesized as two xylophone notes each: "ting" rises when a session is done, "knock" falls
+# when one needs you, and "thud" signals an error. Written once to ~/.aipet/sounds as WAV files, they are the default
+# on both platforms; users can choose their host OS sounds instead.
 CHIME_VERSION = 4  # bump when the sounds change, so the new WAV files get written
 CHIME_RATE = 44100
 
@@ -3739,6 +3739,28 @@ class PetApp:
         native_menu_theme()
 
     # ---- resizing (the Size... slider in the right-click menu)
+    def set_size(self, size):
+        self.set_scale(float(size) * SCALE_UNIT)
+        self.reposition()
+        self.cfg["size"] = round(SCALE["v"] / SCALE_UNIT, 2)
+        save_setting("size", self.cfg["size"])
+
+    def set_answer_wait(self, seconds):
+        ANSWER_WAIT["v"] = clamp_wait(round(float(seconds) / 15) * 15)
+        self.cfg["answer_wait_seconds"] = ANSWER_WAIT["v"]
+        save_setting("answer_wait_seconds", ANSWER_WAIT["v"])
+        write_answer_wait(ANSWER_WAIT["v"])
+
+    def set_done_timeout(self, minutes):
+        DONE_TIMEOUT["v"] = clamp_done(minutes)
+        self.cfg["done_timeout_minutes"] = DONE_TIMEOUT["v"]
+        save_setting("done_timeout_minutes", DONE_TIMEOUT["v"])
+
+    def set_health_interval(self, seconds):
+        HEALTH["v"] = clamp_health(round(float(seconds) / 5) * 5)
+        self.cfg["health_check_seconds"] = HEALTH["v"]
+        save_setting("health_check_seconds", HEALTH["v"])
+
     def set_scale(self, v):
         v = clamp_scale(v)
         if abs(v - SCALE["v"]) < 0.005:
@@ -3783,8 +3805,7 @@ class PetApp:
             pct.config(text=f"{int(round(SCALE['v'] / SCALE_UNIT * 100))}%")
 
         def commit(_e=None):
-            self.cfg["size"] = round(SCALE["v"] / SCALE_UNIT, 2)
-            save_setting("size", self.cfg["size"])
+            self.set_size(var.get())
             if self.size_win is not None:
                 self._place_above_pet(w)  # the pet grew/shrank: stay directly above it
 
@@ -3835,9 +3856,7 @@ class PetApp:
 
         def commit(_e=None):
             apply()
-            self.cfg["answer_wait_seconds"] = ANSWER_WAIT["v"]
-            save_setting("answer_wait_seconds", ANSWER_WAIT["v"])
-            write_answer_wait(ANSWER_WAIT["v"])
+            self.set_answer_wait(ANSWER_WAIT["v"])
 
         def reset():
             var.set(180)
@@ -3892,8 +3911,7 @@ class PetApp:
 
         def commit(_e=None):
             apply()
-            self.cfg["done_timeout_minutes"] = DONE_TIMEOUT["v"]
-            save_setting("done_timeout_minutes", DONE_TIMEOUT["v"])
+            self.set_done_timeout(DONE_TIMEOUT["v"])
 
         def reset():
             var.set(3)
@@ -3925,10 +3943,7 @@ class PetApp:
         self._place_above_pet(w)
 
     def reset_scale(self):
-        self.set_scale(SCALE_UNIT)
-        self.reposition()
-        self.cfg["size"] = 1.0
-        save_setting("size", 1.0)
+        self.set_size(1.0)
 
     def focus_key(self, key):
         pet = self.pets.get(key)
@@ -3998,8 +4013,7 @@ class PetApp:
 
         def commit(_e=None):
             apply()
-            self.cfg["health_check_seconds"] = HEALTH["v"]
-            save_setting("health_check_seconds", HEALTH["v"])
+            self.set_health_interval(HEALTH["v"])
 
         def reset():
             var.set(15)
@@ -4067,6 +4081,12 @@ class PetApp:
             except RuntimeError:
                 pass
         elif IS_MAC:
+            if self.cfg.get("sound_style", "chimes") == "chimes":
+                try:
+                    subprocess.Popen(["afplay", chime_path("thud" if error else "knock" if urgent else "ting")])
+                    return
+                except OSError:
+                    pass  # fall back to the system sound if the chime cannot be created or played
             try:
                 sound = "Basso" if error else "Funk" if urgent else "Glass"
                 subprocess.Popen(["afplay", f"/System/Library/Sounds/{sound}.aiff"])
