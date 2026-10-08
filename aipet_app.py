@@ -39,6 +39,18 @@ except ImportError:  # still runs, just without a tray icon
 APP_NAME = "AIPet"
 PET_STYLES = [("robot", "Robot"), ("mole", "Mole"), ("cat", "Cat")]
 # Remnants of earlier versions, kept under Appearance > Alpha
+CONFIG_WATCH_MS = 1500  # how often config.json is checked for hand edits
+RESTART_KEYS = {"workbench", "claude_code", "click_through", "max_pets"}  # read once at start
+
+
+def config_stamp():
+    try:
+        st = os.stat(core.CONFIG_PATH)
+        return st.st_mtime_ns, st.st_size
+    except OSError:
+        return None
+
+
 BETA_STYLES = {"mole": "The very first pet, rising from a dirt mound.", "cat": "An early experiment: a round cat."}
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 LAUNCH_AGENT = os.path.expanduser("~/Library/LaunchAgents/com.aipet.app.plist")
@@ -310,6 +322,8 @@ class TrayApp:
                 core.log_error(f"menu bar icon: {e!r}")
 
         threading.Thread(target=self._startup_jobs, daemon=True).start()
+        self._config_stamp = config_stamp()
+        self.root.after(CONFIG_WATCH_MS, self.watch_config)
         self.pump()
 
     # ---- threading
@@ -958,6 +972,72 @@ class TrayApp:
         """The update entries live in the tray / menu-bar menu only (rebuilt when they open)."""
         self.refresh_menu()
 
+    # ---- config.json edited by hand: apply it live
+    def watch_config(self):
+        try:
+            stamp = config_stamp()
+            if stamp != self._config_stamp:
+                self._config_stamp = stamp
+                self.apply_config_file()
+        except Exception as e:
+            core.log_error(f"config watch: {e!r}")
+        self.root.after(CONFIG_WATCH_MS, self.watch_config)
+
+    def apply_config_file(self):
+        """Apply what changed in config.json since the app last saw it. A file that isn't valid JSON (an editor
+        mid-save, a typo) is skipped until it is. Returns the keys that only apply after a restart."""
+        try:
+            with open(core.CONFIG_PATH, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            return []
+        if not isinstance(data, dict):
+            return []
+        cfg, pet = self.pet.cfg, self.pet
+        merged = core.deep_merge(core.DEFAULT_CONFIG, data)  # nested sections (workbench...) as the app holds them
+        changed = {k: merged[k] for k in data if cfg.get(k) != merged[k]}
+        if not changed:
+            return []
+        handlers = {
+            "theme": lambda v: (pet.apply_theme(v), hasattr(self, "theme_var") and self.theme_var.set(v == "dark")),
+            "size": lambda v: pet.set_size(float(v)),
+            "answer_wait_seconds": pet.set_answer_wait,
+            "done_timeout_minutes": pet.set_done_timeout,
+            "health_check_seconds": pet.set_health_interval,
+            "sounds": lambda v: (pet.muted.set(not v), setattr(self, "c_muted", not v)),
+            "notifications": self._set_notify,
+            "pet_style": self.set_style,
+            "compact": lambda v: pet.toggle_compact(bool(v)),
+            "session_titles": pet.set_session_titles,
+            "click_to_focus": pet.set_click_to_focus,
+            "all_spaces": pet.set_all_spaces,
+            "claude_answers": pet.set_claude_answers,
+            "codex_answers": pet.set_codex_answers,
+            "session_tooltips": lambda v: pet.set_tooltip("session", v),
+            "usage_tooltips": lambda v: pet.set_tooltip("usage", v),
+            "card_scale": pet.set_card_scale,
+        }
+        restart = []
+        core.SAVE_PAUSED["v"] = True  # the setters save; the file already says so
+        try:
+            for key, value in changed.items():
+                if key in RESTART_KEYS:
+                    restart.append(key)
+                    continue
+                try:
+                    if key in handlers:
+                        handlers[key](value)
+                    cfg[key] = value  # everything else is read where it's used (sound_style, update_check...)
+                except Exception as e:
+                    core.log_error(f"config.json {key}={value!r}: {e!r}")
+        finally:
+            core.SAVE_PAUSED["v"] = False
+        self.refresh_menu()  # menus and the settings window show the new values
+        if restart:
+            self.info("config.json changed. Applied what could be applied now; these take effect after AIPet "
+                      "restarts: " + ", ".join(sorted(restart)))
+        return restart
+
     def toggle_update_check(self):
         on = not self.pet.cfg.get("update_check", True)
         self.pet.cfg["update_check"] = on
@@ -1227,6 +1307,8 @@ class TrayApp:
                  help="Hides the pet from the screen. AIPet keeps watching your sessions in the background."),
             item("Clear finished sessions", self.pet.clear_finished,
                  help="Removes the pets of sessions that are done."),
+            item("Open config and data folder", self.open_config, icon="home",
+                 help=f"{core.HOME_DIR}: settings (config.json, auto-approve.json), sessions, logs and backups."),
             None,
             item("Appearance", icon="palette", help="How the pet and its windows look.", submenu=[
                 item("Pet style", choice=True, help="Which creature sits on your screen.",

@@ -944,8 +944,13 @@ def load_config():
         return copy.deepcopy(DEFAULT_CONFIG)
 
 
+SAVE_PAUSED = {"v": False}  # True while changes read FROM config.json are applied: don't write them straight back
+
+
 def save_setting(key, value):
     """Persist one top-level key in config.json, leaving everything else as the user wrote it."""
+    if SAVE_PAUSED["v"]:
+        return True
     try:
         try:
             with open(CONFIG_PATH, encoding="utf-8") as f:
