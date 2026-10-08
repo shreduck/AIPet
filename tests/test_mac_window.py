@@ -60,6 +60,7 @@ class MacWindowTests(unittest.TestCase):
 
         root = aipet.MacPetWindow()
         root.title("AIPet hover regression")
+        root.geometry("100x100+400+600")
         canvas = tk.Canvas(root, width=100, height=100)
         canvas.pack()
         root.update()
@@ -70,11 +71,15 @@ class MacWindowTests(unittest.TestCase):
         native_app = mac.send(mac.cls("NSApplication"), "sharedApplication")
         key_before = mac.send(native_app, "keyWindow")
         try:
-            for detail in (None, {"agent": "codex"}, None):
+            for detail in (None, {"agent": "codex"}, {"agent": "claude"}, None):
                 app._show_tooltip(pet, "Hover details\nTest content", usage_detail=detail)
                 root.update()
+                self.assertLessEqual(app.tip.winfo_rooty() + app.tip.winfo_height(), canvas.winfo_rooty() - 6)
                 window = mac.window_titled(app.tip.title())
                 self.assertTrue(window)
+                parent = mac.window_titled(root.title())
+                self.assertGreater(mac.send(window, "level", restype=mac.c_long),
+                                   mac.send(parent, "level", restype=mac.c_long))
                 self.assertTrue(mac.send(window, "isKindOfClass:", mac.cls("NSPanel"),
                                          restype=mac.c_bool, argtypes=[mac.c_void_p]))
                 self.assertTrue(mac.send(window, "styleMask", restype=mac.c_ulong) & (1 << 7))

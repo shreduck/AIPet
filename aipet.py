@@ -4064,12 +4064,10 @@ class PetApp:
         c.tag_lower(border)
         c.config(width=w, height=h)
         tip.update_idletasks()
-        x = pet.canvas.winfo_rootx()
+        # Both session and usage details belong above the pet, clear of its body
+        # and badges. Centre on the pet itself, excluding the usage badge gutter.
+        x = pet.canvas.winfo_rootx() + px(BADGE_GUTTER + getattr(pet, "gutter", 0) + PET_W / 2) - tip.winfo_reqwidth() // 2
         y = pet.canvas.winfo_rooty() - tip.winfo_reqheight() - 6
-        if usage_detail is not None:
-            # Cover the upper body if needed, but leave the hovered badge clear.
-            x += px(getattr(pet, "gutter", 0) + PET_W - 26) - tip.winfo_reqwidth() - 8
-            y = pet.canvas.winfo_rooty() + px(25)
         tip.geometry(geo(*fit_on_screen(x, y, tip.winfo_reqwidth(), tip.winfo_reqheight(),
                                         (pet.canvas.winfo_rootx() + 10, pet.canvas.winfo_rooty() + 10), tip)))
         tip.deiconify()
@@ -4081,6 +4079,10 @@ class PetApp:
             mac.set_all_spaces(tip.title(), self.cfg.get("all_spaces", True))
             window = mac.window_titled(tip.title())
             if window:
+                parent = mac.window_titled(self.root.title())
+                if parent:
+                    level = mac.send(parent, "level", restype=mac.c_long)
+                    mac.send(window, "setLevel:", level + 1, restype=None, argtypes=[mac.c_long])
                 # Hover text must never intercept clicks or become the key window.
                 mac.send(window, "setIgnoresMouseEvents:", True, restype=None, argtypes=[mac.c_bool])
             tip.attributes("-alpha", 1.0)
