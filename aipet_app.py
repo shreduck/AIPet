@@ -1246,7 +1246,7 @@ class TrayApp:
                              "set": self.set_settings_zoom, "format": lambda v: f"{int(round(v * 100))}%"},
                      submenu=[item(f"{int(v * 100)}%", lambda v=v: self.set_settings_zoom(v),
                                    checked=abs(self.settings_zoom() - v) < 0.01)
-                              for v in (0.8, 1.0, 1.25, 1.5, 1.75, 2.0)]),
+                              for v in (0.5, 0.75, 1.0, 1.25, 1.5)]),
                 item("Session titles", choice=True, help="What the name tag under each pet shows.",
                      submenu=[item(text, lambda v=value: self.pet.set_session_titles(v),
                                    checked=cfg.get("session_titles", "name") == value)

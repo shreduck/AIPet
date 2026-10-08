@@ -143,7 +143,7 @@ def draw_icon(canvas, name, color=None, x=0, y=0, px=2, tile=True, bright=False)
                 dot(c + off, r + off, color)
 
 
-ZOOM_MIN, ZOOM_MAX, ZOOM_STEP = 0.8, 2.0, 0.1
+ZOOM_MIN, ZOOM_MAX, ZOOM_STEP = 0.5, 1.5, 0.1
 BASE_SCALE = 1.5  # "100%" is drawn half again as big as the pet's other windows: easier to read
 
 
@@ -608,7 +608,8 @@ class SettingsWindow:
                          width=6, anchor="e")
         scale = tk.Scale(line, from_=spec["min"], to=spec["max"], resolution=spec.get("step", 0.1), orient="horizontal",
                          variable=var, showvalue=False, length=int(260 * self.scale), sliderlength=int(18 * self.scale),
-                         width=int(10 * self.scale), bg=self.bg, troughcolor=T["entry_bg"], activebackground=T["primary"],
+                         width=int(10 * self.scale), bg=T["primary"], troughcolor=T["entry_bg"],
+                         activebackground=T["primary_active"], sliderrelief="flat",
                          highlightthickness=0, bd=0, relief="flat", command=lambda v: shown.configure(text=fmt(float(v))))
         scale.pack(side="left")
         shown.pack(side="left", padx=(10, 0))
