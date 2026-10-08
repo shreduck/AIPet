@@ -22,6 +22,7 @@ import glob
 import json
 import math
 import random
+import re
 import os
 import shutil
 import subprocess
@@ -804,6 +805,25 @@ def write_answer_wait(sec):
 AUTO_APPROVE_PATH = os.path.join(HOME_DIR, "auto-approve.json")  # read by every hook (WSL ones through /mnt/c)
 DEFAULT_BLACKLIST = [".*"]  # by default every request still needs you
 AUTO_FLASH_SECONDS = 10  # how long a pet celebrates a whitelist auto-approval
+
+
+def auto_approve_key_for(item):
+    """The hook config a session runs under, named like the hooks' auto_approve_key()."""
+    item = item or {}
+    if item.get("app") == "cowork" and item.get("agent") != "codex":
+        return "cowork"
+    if item.get("env") == "wsl":
+        base = "wsl:" + (item.get("distro") or "")
+    else:
+        base = "windows" if os.name == "nt" else ("mac" if IS_MAC else sys.platform)
+    return ("codex:" + base) if item.get("agent") == "codex" else base
+
+
+def _search(pattern, text):
+    try:
+        return bool(re.search(pattern, text))
+    except re.error:
+        return True
 
 
 def default_auto_rules():
@@ -2942,11 +2962,42 @@ def focus_wsl_terminal(d, others=()):
 
 
 # --------------------------------------------------------------------------- app
+CARD_SCALE = {"v": 1.0}  # the permission / question card's size (its slider, Ctrl + plus / minus / 0, Ctrl + wheel)
+CARD_SCALE_MIN, CARD_SCALE_MAX, CARD_SCALE_STEP = 0.5, 1.5, 0.1
+_CARD_FONTS = {}  # (family, size, style) -> tkfont.Font, resized in place when the scale changes
+
+
+def clamp_card_scale(value):
+    try:
+        return round(min(CARD_SCALE_MAX, max(CARD_SCALE_MIN, float(value))), 2)
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def card_font(size, *style, family=None):
+    from tkinter import font as tkfont
+    key = (family or UI_FONT, size, style)
+    f = _CARD_FONTS.get(key)
+    if f is None:
+        f = _CARD_FONTS[key] = tkfont.Font(family=key[0], size=max(6, int(round(size * CARD_SCALE["v"]))),
+                                            weight="bold" if "bold" in style else "normal",
+                                            underline="underline" in style)
+    return f
+
+
+def rescale_card_fonts():
+    for (family, size, style), f in _CARD_FONTS.items():
+        f.configure(size=max(6, int(round(size * CARD_SCALE["v"]))))
+
+
 class Detail:
     """A styled card, centred on the screen, with the full context of a session that needs the user. The robot
     beside it asks with a "?" and reacts when you answer."""
 
     ACCENT = COLORS["needs_input"]
+
+    def f(self, size, *style, family=None):
+        return card_font(size, *style, family=family)
 
     def __init__(self, app, key, item):
         self.app, self.key, self._shown, self.sent = app, key, None, None
@@ -2970,23 +3021,49 @@ class Detail:
 
         spr = load_sprites()
         self.robot = None
-        if spr:  # left column: the robot
-            self.robot = tk.Canvas(cols, width=124, height=176, bg=bg, highlightthickness=0, bd=0)
-            self.robot.pack(side="left", anchor="n", padx=(0, 16))
+        left = tk.Frame(cols, bg=bg)
+        left.pack(side="left", anchor="n", fill="y", padx=(0, 16))
+        if spr:  # left column: the robot (room below it for its whole shadow)
+            sc = CARD_SCALE["v"]
+            self.robot = tk.Canvas(left, width=int(140 * sc), height=int(212 * sc), bg=bg, highlightthickness=0, bd=0)
+            self.robot.pack(side="top", anchor="n", pady=(int(12 * sc), 0))
+        # size of this card: slider under the robot; also Ctrl + plus / minus / 0 and Ctrl + mouse wheel on the card
+        size_row = tk.Frame(left, bg=bg)
+        size_row.pack(side="bottom", fill="x", pady=(8, 0))
+        self.size_var = tk.DoubleVar(master=w, value=CARD_SCALE["v"])
+        self.size_label = tk.Label(size_row, text=f"{int(round(CARD_SCALE['v'] * 100))}%", bg=bg, fg=muted,
+                                   font=self.f(8), width=5, anchor="e")
+        self.size_scale = tk.Scale(size_row, from_=CARD_SCALE_MIN, to=CARD_SCALE_MAX, resolution=CARD_SCALE_STEP,
+                                   orient="horizontal", variable=self.size_var, showvalue=False, length=90,
+                                   sliderlength=14, width=8, bg=T["primary"], troughcolor=T["entry_bg"],
+                                   activebackground=T["primary_active"], sliderrelief="flat", highlightthickness=0,
+                                   bd=0, relief="flat",
+                                   command=lambda v: self.size_label.configure(text=f"{int(round(float(v) * 100))}%"))
+        self.size_scale.pack(side="left")
+        self.size_label.pack(side="left")
+        self.size_scale.bind("<ButtonRelease-1>", lambda e: self.app.set_card_scale(self.size_var.get()))
+        mod = "Command" if IS_MAC else "Control"
+        for seq, step in (("plus", 1), ("equal", 1), ("KP_Add", 1), ("minus", -1), ("KP_Subtract", -1),
+                          ("0", 0), ("KP_0", 0)):
+            w.bind(f"<{mod}-{seq}>", lambda e, s=step: self.zoom_by(s))
+        w.bind("<MouseWheel>", lambda e: self.zoom_by(1 if e.delta > 0 else -1)
+               if e.state & (0x8 if IS_MAC else 0x4) else None)
+        w.bind("<Control-Button-4>", lambda e: self.zoom_by(1))
+        w.bind("<Control-Button-5>", lambda e: self.zoom_by(-1))
         right = tk.Frame(cols, bg=bg, width=430)
         right.pack(side="left", fill="both", expand=True, anchor="n")
 
         top = tk.Frame(right, bg=bg)
         top.pack(fill="x")
-        self.head = tk.Label(top, bg=bg, fg=fg, anchor="w", font=(UI_FONT, 15, "bold"))
+        self.head = tk.Label(top, bg=bg, fg=fg, anchor="w", font=self.f(15, "bold"))
         self.head.pack(side="left", fill="x", expand=True)
-        close = tk.Label(top, text="\u2715", bg=bg, fg=muted, cursor="hand2", font=(UI_FONT, 12), padx=4)
+        close = tk.Label(top, text="\u2715", bg=bg, fg=muted, cursor="hand2", font=self.f(12), padx=4)
         close.pack(side="right")
         close.bind("<Button-1>", lambda e: self.close())
         self.status = tk.Label(right, text="needs your permission", bg=bg, fg=self.ACCENT, anchor="w",
-                               font=(UI_FONT, 9, "bold"))
+                               font=self.f(9, "bold"))
         self.status.pack(fill="x")
-        self.where = tk.Label(right, bg=bg, fg=muted, anchor="w", justify="left", wraplength=430, font=(UI_FONT, 8))
+        self.where = tk.Label(right, bg=bg, fg=muted, anchor="w", justify="left", wraplength=430, font=self.f(8))
         self.where.pack(fill="x", pady=(2, 0))
         tk.Frame(right, bg=T["border"], height=1).pack(fill="x", pady=8)
         for widget in (top, self.head):  # drag the card by its header
@@ -2995,53 +3072,65 @@ class Detail:
 
         self.body = tk.Frame(right, bg=bg)
         self.body.pack(fill="x")
-        self.ask = tk.Label(self.body, bg=bg, fg=fg, anchor="w", justify="left", wraplength=430, font=(UI_FONT, 11, "bold"))
-        self.desc = tk.Label(self.body, bg=bg, fg=msg_fg, anchor="w", justify="left", wraplength=430, font=(UI_FONT, 10))
+        self.ask = tk.Label(self.body, bg=bg, fg=fg, anchor="w", justify="left", wraplength=430, font=self.f(11, "bold"))
+        self.desc = tk.Label(self.body, bg=bg, fg=msg_fg, anchor="w", justify="left", wraplength=430, font=self.f(10))
         self.code = tk.Text(self.body, height=1, width=60, wrap="word", bg="#0b1220", fg="#d1fae5", relief="flat",
-                            borderwidth=0, highlightthickness=0, padx=10, pady=8, font=("Consolas", 9), state="disabled",
+                            borderwidth=0, highlightthickness=0, padx=10, pady=8, font=self.f(9, family=MONO_FAMILY), state="disabled",
                             insertbackground="#d1fae5")
         wait_row = tk.Frame(right, bg=bg)
         wait_row.pack(fill="x", pady=(8, 0))
-        self.wait = tk.Label(wait_row, bg=bg, fg=muted, anchor="w", font=(UI_FONT, 9))
+        self.wait = tk.Label(wait_row, bg=bg, fg=muted, anchor="w", font=self.f(9))
         self.wait.pack(side="left")
-        self.golink = tk.Label(wait_row, text="Go to window ›", bg=bg, fg=self.ACCENT, cursor="hand2",
-                               font=(UI_FONT, 9, "underline"))
+        self.golink = tk.Label(wait_row, text="Go to window ›", bg=bg, fg=self.ACCENT, cursor="hand2", padx=8, pady=1,
+                               highlightthickness=1, highlightbackground=self.ACCENT, highlightcolor=self.ACCENT,
+                               font=self.f(9, "bold"))
         self.golink.bind("<Button-1>", lambda e: self.go())
-        self.note = tk.Label(right, bg=bg, fg=muted, anchor="w", justify="left", wraplength=430, font=(UI_FONT, 8))
+        self.golink.bind("<Enter>", lambda e: self.golink.configure(bg=T["btn_active"]))
+        self.golink.bind("<Leave>", lambda e: self.golink.configure(bg=T["bubble_bg"]))
+        self.note = tk.Label(right, bg=bg, fg=muted, anchor="w", justify="left", wraplength=430, font=self.f(8))
         self.note.pack(fill="x", pady=(2, 8))
         # Escape hatch for a prompt that is gone (its agent died, it was settled elsewhere) but still shows here
         self.clearlink = tk.Label(right, text="Not asking anymore? Clear this prompt", bg=bg, fg=muted, cursor="hand2",
-                                  anchor="w", font=(UI_FONT, 8, "underline"))
+                                  anchor="w", font=self.f(8, "underline"))
         self.clearlink.bind("<Button-1>", lambda e: self.clear_prompt())
         # Questions (Claude's AskUserQuestion): one block per question, options as toggles, plus an own-answer field
         self.qframe = tk.Frame(self.body, bg=bg)
         self._qid, self._qvars = None, []
         self.q_row = tk.Frame(right, bg=bg)
-        self.btn_send = tk.Button(self.q_row, text="Send answer", command=self.send_answers, **button_style("primary"))
+        self.btn_send = tk.Button(self.q_row, text="Send answer", command=self.send_answers,
+                                  **dict(button_style("primary"), font=self.f(10, "bold")))
         self.btn_send.pack(side="right", ipady=2)
         self.answer_row = tk.Frame(right, bg=bg)
         self.btn_deny = tk.Button(self.answer_row, text="Deny", width=12, bg=bg, fg=themed_color("#dc2626"),
                                   activebackground=T["btn_active"], activeforeground=themed_color("#b91c1c"),
                                   relief="flat", bd=0, highlightthickness=1, highlightbackground=themed_color("#dc2626"),
                                   cursor="hand2",
-                                  font=(UI_FONT, 10, "bold"), command=lambda: self.answer("deny"))
+                                  font=self.f(10, "bold"), command=lambda: self.answer("deny"))
         dark = T.get("name") == "dark"  # dark theme: black text on a brighter green
         allow_fg, allow_bg, allow_active = ("#111827", "#22c55e", "#16a34a") if dark else ("white", "#16a34a", "#15803d")
         self.btn_allow = tk.Button(self.answer_row, text="Allow once", width=14, bg=allow_bg, fg=allow_fg,
                                    activebackground=allow_active, activeforeground=allow_fg, relief="flat", cursor="hand2",
-                                   font=(UI_FONT, 10, "bold"), command=lambda: self.answer("allow"))
+                                   font=self.f(10, "bold"), command=lambda: self.answer("allow"))
         if IS_MAC:
             self.btn_allow.configure(**button_style("primary"))
             self.btn_deny.configure(**button_style("danger"))
+        # Allow + whitelist: allows this one and adds it to the hook config's auto-approve whitelist (lighter green)
+        wl_bg, wl_fg, wl_active = ("#14532d", "#bbf7d0", "#166534") if dark else ("#dcfce7", "#166534", "#bbf7d0")
+        self.btn_whitelist = tk.Button(self.answer_row, text="Allow + whitelist", bg=wl_bg, fg=wl_fg,
+                                       activebackground=wl_active, activeforeground=wl_fg, relief="flat", bd=0,
+                                       highlightthickness=1, highlightbackground="#16a34a", cursor="hand2",
+                                       font=self.f(10, "bold"), command=self.allow_and_whitelist)
         self.btn_deny.pack(side="left", ipady=3)
         self.btn_allow.pack(side="right", ipady=4)
+        self.btn_whitelist.pack(side="right", ipady=3, padx=(0, 8))
         self.answer_row.pack(fill="x")
         self.go_row = tk.Frame(right, bg=bg)
         self.btn_go = tk.Button(self.go_row, text="Go to window", bg=self.ACCENT, fg="#111827", activebackground="#d97706",
-                                activeforeground="#111827", relief="flat", cursor="hand2", font=(UI_FONT, 10, "bold"),
+                                activeforeground="#111827", relief="flat", cursor="hand2", font=self.f(10, "bold"),
                                 command=self.go)
         self.btn_go.pack(side="left", ipady=4, ipadx=14)
         self.update(item)
+        self.apply_scale()
         self._place(first=True)
         w.deiconify()
         if IS_MAC:
@@ -3126,19 +3215,21 @@ class Detail:
         else:
             face, state, dy = "ask", "needs_input", -abs(math.sin(t * 4)) * 10
         rw, rh = spr["meta"]["robot"]["size"]
-        z = 3
-        base = 166
+        sc = CARD_SCALE["v"]
+        z, cx, base, dy = 3 * sc, 70 * sc, 186 * sc, dy * sc
         shadow = spr["img"]["shadow"]
-        sw = int(rw * z * 1.1 * (1 - min(0.35, abs(dy) / 40)))
-        c.create_image(62, base + 4, image=sprite_photo("popup-shadow", shadow, sw, max(2, sw // 4)), anchor="center")
+        sw = int(rw * z * 1.1 * (1 - min(0.35, abs(dy) / (40 * sc))))
+        c.create_image(cx, base + 4 * sc, image=sprite_photo("popup-shadow", shadow, sw, max(2, sw // 4)),
+                       anchor="center")
         lights = light_cycle(state, t)
         im = robot_image(face, lights, spr)
-        c.create_image(62, base + dy, image=sprite_photo(("popup", face, lights), im, rw * z, rh * z), anchor="s")
+        c.create_image(cx, base + dy, image=sprite_photo(("popup", face, lights), im, int(rw * z), int(rh * z)),
+                       anchor="s")
         if state == "needs_input":  # floating question marks
             for i in range(3):
                 ph = (t * 0.6 + i / 3) % 1
-                c.create_text(22 + i * 40 + 8 * math.sin(t * 3 + i), 40 - ph * 34, text="?", fill=self.ACCENT,
-                              font=(UI_FONT, int(9 + 7 * (1 - ph)), "bold"))
+                c.create_text((26 + i * 44 + 8 * math.sin(t * 3 + i)) * sc, (60 - ph * 34) * sc, text="?", fill=self.ACCENT,
+                              font=self.f(int(9 + 7 * (1 - ph)), "bold"))
 
     def update(self, item):
         self._item = item
@@ -3250,9 +3341,9 @@ class Detail:
             block.pack(fill="x", pady=(0 if i == 0 else 12, 0))
             if q.get("header"):
                 tk.Label(block, text=q["header"].upper(), bg=bg, fg=self.ACCENT, anchor="w",
-                         font=(UI_FONT, 8, "bold")).pack(fill="x")
+                         font=self.f(8, "bold")).pack(fill="x")
             tk.Label(block, text=q["question"], bg=bg, fg=fg, anchor="w", justify="left", wraplength=430,
-                     font=(UI_FONT, 11, "bold")).pack(fill="x", pady=(2, 4))
+                     font=self.f(11, "bold")).pack(fill="x", pady=(2, 4))
             multi = bool(q.get("multiSelect"))
             picks = {}
             choice = tk.StringVar(master=self.win, value="")
@@ -3261,10 +3352,10 @@ class Detail:
                 row.pack(fill="x", pady=1)
                 if readonly:  # answered in the session's own window (Codex, or answering from the pet is off)
                     tk.Label(row, text="\u2022 " + opt["label"], bg=bg, fg=fg, anchor="w", justify="left",
-                             wraplength=420, font=(UI_FONT, 10, "bold")).pack(fill="x")
+                             wraplength=420, font=self.f(10, "bold")).pack(fill="x")
                     if opt.get("description"):
                         tk.Label(row, text=opt["description"], bg=bg, fg=muted, anchor="w", justify="left",
-                                 wraplength=400, font=(UI_FONT, 8)).pack(fill="x", padx=(14, 0))
+                                 wraplength=400, font=self.f(8)).pack(fill="x", padx=(14, 0))
                     continue
                 if multi:
                     var = picks[opt["label"]] = tk.BooleanVar(master=self.win, value=False)
@@ -3272,25 +3363,25 @@ class Detail:
                 else:
                     box = tk.Radiobutton(row, text=opt["label"], variable=choice, value=opt["label"], anchor="w")
                 box.configure(bg=bg, fg=fg, activebackground=bg, activeforeground=fg, selectcolor=T["entry_bg"],
-                              highlightthickness=0, font=(UI_FONT, 10, "bold"), cursor="hand2")
+                              highlightthickness=0, font=self.f(10, "bold"), cursor="hand2")
                 box.pack(fill="x")
                 if opt.get("description"):
                     tk.Label(row, text=opt["description"], bg=bg, fg=muted, anchor="w", justify="left",
-                             wraplength=400, font=(UI_FONT, 8)).pack(fill="x", padx=(24, 0))
+                             wraplength=400, font=self.f(8)).pack(fill="x", padx=(24, 0))
             if readonly:
                 continue
             own = tk.StringVar(master=self.win, value="")
             other = tk.Frame(block, bg=bg)
             other.pack(fill="x", pady=(4, 0))
-            tk.Label(other, text="Or your own answer:", bg=bg, fg=muted, font=(UI_FONT, 8)).pack(side="left")
+            tk.Label(other, text="Or your own answer:", bg=bg, fg=muted, font=self.f(8)).pack(side="left")
             entry = tk.Entry(other, textvariable=own, bg=T["entry_bg"], fg=T["entry_fg"], relief="flat",
                              insertbackground=T["entry_fg"], highlightthickness=1, highlightbackground=T["border"],
-                             highlightcolor=T["primary"], font=(UI_FONT, 9))
+                             highlightcolor=T["primary"], font=self.f(9))
             entry.pack(side="left", fill="x", expand=True, padx=(6, 0))
             if not multi:  # typing replaces the picked option
                 own.trace_add("write", lambda *_, c=choice, o=own: c.set("") if o.get().strip() else None)
             self._qvars.append((q, multi, choice, picks, own))
-        self.win.after(60, self._place)
+        self.win.after(60, self.apply_scale)
 
     def question_answers(self):
         """{question text: label} (single choice) or {question text: [labels]} (multi-select); typed answers count
@@ -3337,6 +3428,48 @@ class Detail:
         self.golink.pack_forget()
         self.go_row.pack(fill="x", after=self.note)
         self._place()
+
+    # ---- size
+    def zoom_by(self, step):
+        """Ctrl + plus / minus (step 1 / -1) and Ctrl + 0 (back to 100%) on the card."""
+        value = 1.0 if step == 0 else clamp_card_scale(CARD_SCALE["v"] + step * CARD_SCALE_STEP)
+        if value != CARD_SCALE["v"]:
+            self.app.set_card_scale(value)
+        return "break"
+
+    def apply_scale(self):
+        """Follow CARD_SCALE: fonts resize by themselves (shared named fonts); wrap widths, the robot and the
+        slider are set here."""
+        sc = CARD_SCALE["v"]
+        try:
+            self.size_var.set(sc)
+            self.size_label.configure(text=f"{int(round(sc * 100))}%")
+            if self.robot is not None:
+                self.robot.configure(width=int(140 * sc), height=int(212 * sc))
+                self.robot.pack_configure(pady=(int(12 * sc), 0))
+            stack = [self.win]
+            while stack:
+                w = stack.pop()
+                stack.extend(w.winfo_children())
+                if w.winfo_class() == "Label":
+                    base = getattr(w, "_base_wrap", None)
+                    if base is None:
+                        base = w._base_wrap = int(str(w.cget("wraplength")) or 0)
+                    if base:
+                        w.configure(wraplength=int(base * sc))
+            self._size = None
+            self._place()
+        except tk.TclError:
+            pass
+
+    def allow_and_whitelist(self):
+        """Allow this prompt and add it to the auto-approve whitelist of the session's hook config, so the same
+        request is approved by itself next time."""
+        item = next((i for i in self.app._last_items if i["key"] == self.key), {})
+        added = self.app.whitelist_request(item)
+        self.answer("allow")
+        if added:
+            self.note.config(text=added)
 
     def go(self):
         """Bring the session's window to the front and dismiss this popup."""
@@ -3410,6 +3543,7 @@ class PetApp:
                 size = None
         SCALE["v"] = clamp_scale((size if size is not None else 1.0) * SCALE_UNIT)
         ANSWER_WAIT["v"] = clamp_wait(self.cfg.get("answer_wait_seconds", 180))
+        CARD_SCALE["v"] = clamp_card_scale(self.cfg.get("card_scale", 1.0))
         legacy = self.cfg.get("hide_done_after_minutes")  # the old config key (30 min default, no slider)
         if legacy is not None:
             if legacy != 30 and self.cfg.get("done_timeout_minutes") == 3:  # a value the user chose: keep it
@@ -4572,6 +4706,43 @@ class PetApp:
         if not self.cfg.get("usage_tooltips", True):
             return
         self._show_tooltip(pet, usage.tooltip(detail), usage_detail=detail)
+
+    def set_card_scale(self, value):
+        """Size of the permission / question cards (all open ones follow at once); saved as card_scale."""
+        CARD_SCALE["v"] = clamp_card_scale(value)
+        self.cfg["card_scale"] = CARD_SCALE["v"]
+        save_setting("card_scale", CARD_SCALE["v"])
+        rescale_card_fonts()
+        for d in list(self.details.values()):
+            d.apply_scale()
+
+    def whitelist_request(self, item):
+        """Add the prompt on this session's card to its hook config's auto-approve whitelist, as an exact match:
+        the whole command (or path, URL...), or the tool itself when it has no such argument (MCP tools). Returns a
+        line for the card, or None if nothing was saved."""
+        req = (item or {}).get("request") or {}
+        tool = req.get("tool") or ""
+        if not tool:
+            return None
+        subject = req.get("subject") if req.get("primary") else ""
+        pattern = re.escape(subject) if subject else re.escape(tool)
+        key = auto_approve_key_for(item)
+        rules = auto_approve_rules().get(key) or default_auto_rules()
+        white = [x for x in rules.get("whitelist") or [] if str(x).strip()]
+        if pattern not in white:
+            white.append(pattern)
+        black = rules.get("blacklist")
+        if black == DEFAULT_BLACKLIST and len(white) == 1:
+            # the default "ask for everything" would keep the whitelist from ever applying; with a fresh list of exact
+            # matches only, nothing broader gets through
+            black = []
+        rules = dict(rules, enabled=True, whitelist=white, blacklist=black)
+        if not save_auto_approve(key, rules):
+            return None
+        blocked = any(_search(p, subject or tool) for p in (black or []))
+        what = "this exact command" if subject else f"every {tool} request"
+        return (f"Allowed, and {what} is now on the auto-approve whitelist ({key})."
+                + (" Your blacklist still asks for it, though." if blocked else ""))
 
     def set_tooltip(self, kind, on):
         if kind not in ("session", "usage"):

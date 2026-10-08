@@ -392,7 +392,11 @@ def build_request(data):
     if not detail and inp:
         detail = "\n".join(f"{k}: {str(v)[:200]}" for k, v in list(inp.items())[:6])
     req = {"tool": str(data.get("tool_name") or ""), "description": str(inp.get("description") or "")[:300],
-           "detail": detail[:1500], "id": request_id(data), "t": time.time()}
+           "detail": detail[:1500], "id": request_id(data), "t": time.time(),
+           # what auto-approve matches, untruncated (the pet's "Allow + whitelist" saves it as an exact pattern), and
+           # whether it is a real argument (command, path, URL...) rather than the whole input as JSON
+           "subject": request_subjects(data)[0][:4000] if request_subjects(data) else "",
+           "primary": any(inp.get(k) for k in ("command", "file_path", "path", "url", "pattern", "query", "prompt"))}
     questions = question_list(data)
     if questions:  # Claude's AskUserQuestion: the pet shows the questions and can send the answers back
         req.update(kind="question", questions=questions, detail="", description="")
