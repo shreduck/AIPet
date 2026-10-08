@@ -692,25 +692,46 @@ class TrayApp:
                 wins.pop(key, None)
         old = core.auto_approve_rules().get(key) or core.default_auto_rules()
         win = wins[key] = tk.Toplevel(self.root)
-        win.title(f"{APP_NAME} - auto approve - {label}")
+        agent_label = "Codex" if hi.is_codex(key) else "Claude Code"
+        win.title(f"{APP_NAME} - auto approve - {agent_label} - {label}")
         win.attributes("-topmost", True)
         win.resizable(False, False)
+        accent = "#5b8def" if hi.is_codex(key) else "#d98960"
+        frame = tk.Canvas(win, highlightthickness=0, bd=0)
+        frame.pack()
+        body = tk.Frame(frame)
+        frame.create_window(14, 14, window=body, anchor="nw")
+
+        def fit_card(_event=None):
+            w, h = body.winfo_reqwidth() + 28, body.winfo_reqheight() + 28
+            frame.configure(width=w, height=h)
+            frame.delete("outline")
+            frame.create_polygon(8, 2, w - 8, 2, w - 8, 5, w - 3, 5, w - 3, 8, w - 2, 8,
+                                 w - 2, h - 8, w - 5, h - 8, w - 5, h - 3, w - 8, h - 3, w - 8, h - 2,
+                                 8, h - 2, 8, h - 5, 3, h - 5, 3, h - 8, 2, h - 8, 2, 8, 5, 8, 5, 3, 8, 3,
+                                 fill="", outline=accent, width=2, tags="outline")
+        body.bind("<Configure>", fit_card)
         grey = "#6b7280"
         enabled = tk.BooleanVar(value=bool(old.get("enabled")))
         allow_all = tk.BooleanVar(value=bool(old.get("allow_all")))
 
-        tk.Label(win, text=f"Auto approve - {label}", font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=16, pady=(14, 2))
-        tk.Label(win, fg=grey, justify="left", wraplength=640, font=("Segoe UI", 9),
-                 text="Permission prompts from this hook config that match the whitelist are approved without asking "
-                      "you. Anything on the blacklist always asks you, even if it is also whitelisted; so does anything "
-                      "on neither list.").pack(anchor="w", padx=16)
-        tk.Checkbutton(win, text="Auto approve for this config", variable=enabled, font=("Segoe UI", 10, "bold")
-                       ).pack(anchor="w", padx=12, pady=(10, 0))
-        tk.Checkbutton(win, text="Allow all - approve every request without asking (ignores both lists)",
-                       variable=allow_all, font=("Segoe UI", 10)).pack(anchor="w", padx=12)
+        tk.Label(body, text="AUTO APPROVAL", fg=accent, font=(core.MONO_FAMILY, 9, "bold")).pack(anchor="w")
+        tk.Label(body, text=label, font=(core.MONO_FAMILY, 17, "bold")).pack(anchor="w", pady=(3, 6))
+        tk.Label(body, fg=grey, justify="left", wraplength=640, font=(core.MONO_FAMILY, 9),
+                 text="Choose which requests can continue without asking.\nRequests outside your rules still need your approval."
+                 ).pack(anchor="w", pady=(0, 14))
+        mode = tk.LabelFrame(body, text=" Approval mode ", font=(core.MONO_FAMILY, 10, "bold"),
+                             relief="solid", bd=1, padx=10, pady=8)
+        mode.pack(fill="x")
+        tk.Checkbutton(mode, text="Auto approve for this config", variable=enabled, font=(core.MONO_FAMILY, 10, "bold")
+                       ).pack(anchor="w")
+        tk.Checkbutton(mode, text="Allow all - approve every request (ignores both lists)",
+                       variable=allow_all, font=(core.MONO_FAMILY, 9)).pack(anchor="w", pady=(4, 0))
+        mode_hint = tk.Label(mode, fg=grey, justify="left", wraplength=620, font=(core.MONO_FAMILY, 8))
+        mode_hint.pack(anchor="w", padx=4, pady=(6, 0))
 
-        cols = tk.Frame(win)
-        cols.pack(fill="x", padx=16, pady=(8, 0))
+        cols = tk.Frame(body)
+        cols.pack(fill="x", pady=(16, 0))
         boxes = {}
         for col, (name, title, hint, lines) in enumerate((
                 ("whitelist", "Whitelist - approve automatically",
@@ -723,30 +744,56 @@ class TrayApp:
                  if old.get("blacklist") is not None else core.DEFAULT_BLACKLIST))):
             box = tk.Frame(cols)
             box.grid(row=0, column=col, sticky="nw", padx=(0 if col == 0 else 12, 0))
-            tk.Label(box, text=title, font=("Segoe UI", 10, "bold")).pack(anchor="w")
-            tk.Label(box, text=hint, fg=grey, justify="left", wraplength=300, font=("Segoe UI", 8)).pack(anchor="w")
-            text = tk.Text(box, width=40, height=12, wrap="none", font=("Consolas", 10), undo=True, padx=6, pady=4)
+            tk.Label(box, text=title, font=(core.MONO_FAMILY, 9, "bold")).pack(anchor="w", pady=(0, 5))
+            tk.Label(box, text=hint, fg=grey, justify="left", anchor="nw", height=6,
+                     wraplength=300, font=(core.MONO_FAMILY, 8)).pack(anchor="w")
+            text = tk.Text(box, width=40, height=9, wrap="none", font=(core.MONO_FAMILY, 9), undo=True, padx=8, pady=8)
             text.insert("1.0", "\n".join(lines))
-            text.pack(anchor="w", pady=(4, 0))
+            text.pack(anchor="w", fill="x", pady=(4, 0))
             boxes[name] = text
-        tk.Label(win, fg=grey, justify="left", wraplength=640, font=("Segoe UI", 8),
+        tk.Label(body, fg=grey, justify="left", wraplength=640, font=(core.MONO_FAMILY, 8),
                  text="Empty lines and lines starting with # are ignored. Only works while AIPet is running and its "
                       "hooks are installed for this config; the VS Code extension sends no permission events."
-                 ).pack(anchor="w", padx=16, pady=(6, 0))
-        error = tk.Label(win, fg="#b91c1c", justify="left", wraplength=640, font=("Segoe UI", 9))
+                 ).pack(anchor="w", pady=(10, 0))
+        error = tk.Label(body, fg="#b91c1c", justify="left", wraplength=640, font=(core.MONO_FAMILY, 9))
         error.pack(anchor="w", padx=16)
 
         def sync(*_):  # Allow all switches the lists off
             state = "disabled" if allow_all.get() else "normal"
             for t in boxes.values():
                 t.configure(state=state, fg=core.T["muted"] if allow_all.get() else core.T["entry_fg"])
+            mode_hint.configure(text="Auto approval is off. Requests still need your approval." if not enabled.get()
+                                else "All requests will be approved. The lists below are ignored." if allow_all.get()
+                                else "Whitelist matches may proceed. Blacklist matches always ask you.")
         allow_all.trace_add("write", sync)
+        enabled.trace_add("write", sync)
 
         def close():
             wins.pop(key, None)
             win.destroy()
 
+        pending = {"value": False}
+
+        def finish_save(rules, accepted):
+            if not win.winfo_exists():
+                return
+            try:
+                if not accepted:
+                    return
+                if not core.save_auto_approve(key, rules):
+                    error.configure(text="Couldn't save these rules. Check that ~/.aipet is writable, then try again.")
+                    return
+                close()
+                self._auto_changed()
+            finally:
+                pending["value"] = False
+                if win.winfo_exists():
+                    save_button.configure(state="normal")
+
         def save():
+            if pending["value"]:
+                return
+            error.configure(text="")
             lists = {}
             for name, t in boxes.items():
                 lists[name] = [ln.rstrip() for ln in t.get("1.0", "end-1c").splitlines() if ln.strip()]
@@ -758,17 +805,20 @@ class TrayApp:
             rules = {"enabled": enabled.get(), "allow_all": allow_all.get(), **lists}
             newly_on = rules["enabled"] and not old.get("enabled")
             all_on = rules["enabled"] and rules["allow_all"] and not (old.get("enabled") and old.get("allow_all"))
-            if (all_on or newly_on) and not self.warn_auto(label, rules, parent=win):
+            pending["value"] = True
+            save_button.configure(state="disabled")
+            if all_on or newly_on:
+                # Return from Aqua's button callback before opening the warning;
+                # continue saving asynchronously after the warning is destroyed.
+                win.after_idle(lambda: self.warn_auto(label, rules, parent=win,
+                               on_result=lambda accepted: finish_save(rules, accepted)))
                 return
-            if not core.save_auto_approve(key, rules):
-                self.info("Couldn't save the auto approve setting (is ~/.aipet writable?).", error=True)
-                return
-            close()
-            self._auto_changed()
+            finish_save(rules, True)
 
-        buttons = tk.Frame(win)
-        buttons.pack(fill="x", padx=16, pady=(8, 14))
-        tk.Button(buttons, text="Save", width=12, command=save, default="active").pack(side="right")
+        buttons = tk.Frame(body)
+        buttons.pack(fill="x", pady=(12, 0))
+        save_button = tk.Button(buttons, text="Save", width=12, command=save, default="active")
+        save_button.pack(side="right")
         tk.Button(buttons, text="Cancel", width=10, command=close).pack(side="right", padx=(0, 8))
         win.protocol("WM_DELETE_WINDOW", close)
         win.bind("<Escape>", lambda e: close())
@@ -777,10 +827,14 @@ class TrayApp:
         win.update_idletasks()
         win.geometry(f"+{max(0, (win.winfo_screenwidth() - win.winfo_reqwidth()) // 2)}"
                      f"+{max(0, (win.winfo_screenheight() - win.winfo_reqheight()) // 3)}")
+        if IS_MAC:
+            import mac_statusbar
+            win._mouse_bridge = mac_statusbar.PanelMouseBridge(win)
+            win.bind("<Destroy>", lambda event: win._mouse_bridge.close() if event.widget is win else None, add="+")
 
     toggle_auto = open_auto_rules  # the menus' entry point
 
-    def warn_auto(self, label, rules, parent=None):
+    def warn_auto(self, label, rules, parent=None, on_result=None):
         if rules.get("allow_all"):
             heading = f"Auto approve everything from {label}?"
             what = (f"Every permission request that reaches AIPet's hook from {label} will be approved at once, "
@@ -797,7 +851,7 @@ class TrayApp:
             text=(what + "\n\nIt takes effect immediately for running sessions and only while AIPet is running.\n\n"
                   "Turn it off any time: pet or menu-bar / tray menu > Permissions > Auto approve."),
             buttons=(("Cancel", False, "secondary"), ("Auto approve", True, "danger")),
-            cancel=False, enter_confirms=False)
+            cancel=False, enter_confirms=False, on_result=on_result)
 
     def auto_all_off(self):
         core.save_auto_approve(None, None)

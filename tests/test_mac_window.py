@@ -10,6 +10,159 @@ import unittest
 @unittest.skipUnless(sys.platform == "darwin" and os.environ.get("AIPET_NATIVE_WINDOW_TEST") == "1",
                      "requires an opt-in macOS GUI session")
 class MacWindowTests(unittest.TestCase):
+    def test_auto_rules_persist_and_reopen_after_confirmation(self):
+        import json
+        import tempfile
+        import tkinter as tk
+        from pathlib import Path
+        from unittest.mock import MagicMock, patch
+        import aipet
+        import aipet_app
+
+        root = aipet.MacPetWindow()
+        root.title("AIPet isolated persistence regression")
+        key = "codex:test-persistence"
+
+        def descendants(widget):
+            for child in widget.winfo_children():
+                yield child
+                yield from descendants(child)
+
+        def click(window, label):
+            button = next(w for w in descendants(window) if isinstance(w, tk.Button) and w.cget("text") == label)
+            x = button.winfo_rootx() + button.winfo_width() // 2
+            y = button.winfo_rooty() + button.winfo_height() // 2
+            window._mouse_bridge._dispatch(1, 1, x, y, 0)
+            window._mouse_bridge._dispatch(2, 1, x, y, 0)
+
+        def open_settings():
+            app = object.__new__(aipet_app.TrayApp)
+            app.root, app._auto_changed = root, MagicMock()
+            app.open_auto_rules(key, "Isolated persistence test")
+            root.update()
+            return app, app.auto_wins[key]
+
+        failures = []
+        try:
+            with tempfile.TemporaryDirectory(prefix="aipet-rules-test-") as directory:
+                path = Path(directory) / "auto-approve.json"
+                # Exercise real reads and atomic writes, without touching user rules.
+                with patch.object(aipet, "HOME_DIR", directory), patch.object(aipet, "AUTO_APPROVE_PATH", str(path)):
+                    app, settings = open_settings()
+                    checks = [w for w in descendants(settings) if isinstance(w, tk.Checkbutton)]
+                    checks[0].invoke()
+                    expected = {"enabled": True, "allow_all": False,
+                                "whitelist": ["git (status|diff)", "# retained comment", "Read"],
+                                "blacklist": ["rm", "sudo"]}
+                    editors = [w for w in descendants(settings) if isinstance(w, tk.Text)]
+                    for editor, name in zip(editors, ("whitelist", "blacklist")):
+                        editor.delete("1.0", "end")
+                        editor.insert("1.0", "\n".join(expected[name]))
+
+                    def confirm_test_warning():
+                        try:
+                            warning = next(w for w in settings.winfo_children() if isinstance(w, tk.Toplevel))
+                            click(warning, "Auto approve")
+                        except Exception as error:
+                            failures.append(error)
+
+                    settings.after(100, confirm_test_warning)
+                    settled = tk.BooleanVar(master=root, value=False)
+                    root.after(350, lambda: settled.set(True))
+                    click(settings, "Save")
+                    root.wait_variable(settled)
+                    if failures:
+                        raise failures[0]
+                    self.assertFalse(settings.winfo_exists())
+                    app._auto_changed.assert_called_once()
+                    self.assertEqual(json.loads(path.read_text()), {"targets": {key: expected}})
+                    self.assertEqual(aipet.auto_approve_rules()[key], expected)
+                    self.assertFalse(Path(str(path) + ".tmp").exists())
+
+                    # A fresh controller must populate the form from the saved file.
+                    _, reopened = open_settings()
+                    checks = [w for w in descendants(reopened) if isinstance(w, tk.Checkbutton)]
+                    self.assertEqual([bool(root.getboolean(root.getvar(w.cget("variable")))) for w in checks],
+                                     [True, False])
+                    editors = [w for w in descendants(reopened) if isinstance(w, tk.Text)]
+                    for editor, name in zip(editors, ("whitelist", "blacklist")):
+                        self.assertEqual(editor.get("1.0", "end-1c"), "\n".join(expected[name]))
+                    editors[0].insert("end", "\nnot saved")
+                    checks[0].invoke()
+                    click(reopened, "Cancel")
+                    root.update()
+                    self.assertFalse(reopened.winfo_exists())
+                    self.assertEqual(json.loads(path.read_text()), {"targets": {key: expected}})
+        finally:
+            root.destroy()
+
+    def test_auto_rules_save_and_cancel_after_warning(self):
+        import tkinter as tk
+        from unittest.mock import MagicMock, patch
+        import aipet
+        import aipet_app
+
+        root = aipet.MacPetWindow()
+        root.title("AIPet modal regression")
+        root.update()
+        app = object.__new__(aipet_app.TrayApp)
+        app.root, app._auto_changed = root, MagicMock()
+
+        def descendants(widget):
+            for child in widget.winfo_children():
+                yield child
+                yield from descendants(child)
+
+        def button(window, label):
+            return next(w for w in descendants(window) if isinstance(w, tk.Button) and w.cget("text") == label)
+
+        def click(widget):
+            bridge = widget.winfo_toplevel()._mouse_bridge
+            x = widget.winfo_rootx() + widget.winfo_width() // 2
+            y = widget.winfo_rooty() + widget.winfo_height() // 2
+            bridge._dispatch(1, 1, x, y, 0)
+            bridge._dispatch(2, 1, x, y, 0)
+
+        try:
+            with patch.object(aipet, "auto_approve_rules", return_value={}), \
+                    patch.object(aipet, "save_auto_approve", return_value=True) as save:
+                for accept, saved in ((False, True), (None, True), (True, False), (True, True)):
+                    save.reset_mock()
+                    save.return_value = saved
+                    app.open_auto_rules("test-only", "Test only (nothing is saved)")
+                    settings = app.auto_wins["test-only"]
+                    root.update()
+                    next(w for w in descendants(settings) if isinstance(w, tk.Checkbutton)).invoke()
+                    def dismiss_warning():
+                        warning = next(w for w in settings.winfo_children() if isinstance(w, tk.Toplevel))
+                        click(button(settings, "Cancel"))
+                        self.assertTrue(settings.winfo_exists())  # modal grab blocks its parent
+                        if accept is None:
+                            warning.destroy()
+                        else:
+                            click(button(warning, "Auto approve" if accept else "Cancel"))
+                    settings.after(100, dismiss_warning)
+                    settled = tk.BooleanVar(master=root, value=False)
+                    root.after(300, lambda: settled.set(True))
+                    with patch.object(settings, "wait_window", side_effect=AssertionError("nested modal wait")):
+                        click(button(settings, "Save"))
+                        root.wait_variable(settled)
+                    self.assertIsNone(root.grab_current())
+                    if accept:
+                        save.assert_called_once()
+                    else:
+                        save.assert_not_called()
+                    if accept and saved:
+                        self.assertFalse(settings.winfo_exists())
+                    else:
+                        self.assertEqual(str(button(settings, "Save").cget("state")), "normal")
+                        click(button(settings, "Cancel"))
+                        root.update()
+                        self.assertFalse(settings.winfo_exists())
+                    self.assertTrue(settings._mouse_bridge._closed)
+        finally:
+            root.destroy()
+
     def test_permission_panel_preserves_focus_and_delivers_button_clicks(self):
         from types import SimpleNamespace
         from unittest.mock import MagicMock, patch

@@ -423,11 +423,14 @@ DIALOG_ACCENTS = {"info": "#5b8def", "question": "#5b8def", "warning": "#f59e0b"
 
 
 def themed_dialog(root, title, text, buttons=(("OK", True, "primary"),), kind="info", heading=None, cancel=None,
-                  enter_confirms=True):
+                  enter_confirms=True, on_result=None):
     """A modal message card in the pet's style (accent border, bold heading, flat buttons), in place of the native
     message boxes. buttons: (label, value, 'primary' | 'danger' | 'secondary'), left to right; the first primary or
     danger one is the default (Enter, unless enter_confirms is False: then Enter cancels, for risky choices).
-    Escape or closing returns `cancel`."""
+    Escape or closing returns `cancel`. With on_result, deliver the result after
+    closing without nesting a wait loop inside a native button callback."""
+    previous_focus, previous_grab = root.focus_get(), root.grab_current()
+    previous_grab_status = previous_grab.grab_status() if previous_grab is not None else None
     accent = DIALOG_ACCENTS.get(kind, DIALOG_ACCENTS["info"])
     bg, fg = T["win_bg"], T["win_fg"]
     w = tk.Toplevel(root)
@@ -439,7 +442,7 @@ def themed_dialog(root, title, text, buttons=(("OK", True, "primary"),), kind="i
     w.attributes("-topmost", True)
     w.configure(bg=accent)
     w.title(title)
-    result = {"v": cancel}
+    result = {"v": cancel, "closing": False, "restored": False}
     card = tk.Frame(w, bg=bg)
     card.pack(padx=2, pady=2)
     tk.Frame(card, bg=accent, height=5).pack(fill="x")
@@ -460,13 +463,44 @@ def themed_dialog(root, title, text, buttons=(("OK", True, "primary"),), kind="i
     row = tk.Frame(body, bg=bg)
     row.pack(fill="x", pady=(14, 0))
 
-    def done(value):
-        result["v"] = value
+    def restore_input():
+        if result["restored"]:
+            return
+        result["restored"] = True
         try:
             w.grab_release()
         except tk.TclError:
             pass
+        try:
+            if previous_grab is not None and previous_grab.winfo_exists():
+                previous_grab.grab_set_global() if previous_grab_status == "global" else previous_grab.grab_set()
+            if previous_focus is not None and previous_focus.winfo_exists():
+                previous_focus.focus_set()
+        except tk.TclError:
+            pass
+
+    def finish():
+        restore_input()
         w.destroy()
+        if on_result is not None and root.winfo_exists():
+            root.after_idle(lambda: on_result(result["v"]))
+
+    def done(value):
+        if result["closing"]:
+            return
+        result.update(v=value, closing=True)
+        # Let Aqua finish tracking the clicked button before destroying it.
+        w.after_idle(finish)
+
+    def destroyed(event):
+        if event.widget is w and not result["closing"]:
+            result["closing"] = True
+            restore_input()
+            if on_result is not None and root.winfo_exists():
+                root.after_idle(lambda: on_result(cancel))
+
+    w.bind("<Destroy>", destroyed, add="+")
+    w.protocol("WM_DELETE_WINDOW", lambda: done(cancel))
 
     default = None
     for label, value, style in reversed(list(buttons)):  # packed from the right, so the last one ends up rightmost
@@ -498,11 +532,18 @@ def themed_dialog(root, title, text, buttons=(("OK", True, "primary"),), kind="i
     if IS_MAC:
         import mac_statusbar
         mac_statusbar.raise_modal(w.title(), root.winfo_toplevel().title())
+        w._mouse_bridge = mac_statusbar.PanelMouseBridge(w)
+        w.bind("<Destroy>", lambda event: w._mouse_bridge.close() if event.widget is w else None, add="+")
     try:
         w.grab_set()
     except tk.TclError:
         pass
-    root.wait_window(w)
+    if on_result is not None:
+        return w
+    try:
+        root.wait_window(w)
+    finally:
+        restore_input()
     return result["v"]
 
 

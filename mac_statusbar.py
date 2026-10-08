@@ -167,10 +167,11 @@ class _EventBlock(ctypes.Structure):
 
 
 class PanelMouseBridge:
-    """Forward only this panel's local Cocoa mouse events to Tk 8.6.
+    """Forward only this window's local Cocoa mouse events to Tk 8.6.
 
     tkProcessMouseEvent accepts TKWindow but skips TKPanel. A local monitor
     needs no Accessibility/Input Monitoring access and never observes other apps.
+    Dialogs use the same path to avoid stale native button tracking after warnings.
     Keep its Objective-C block and callback alive until removeMonitor: completes.
     """
     def __init__(self, root):
@@ -231,6 +232,10 @@ class PanelMouseBridge:
             return
         import tkinter as tk
         try:
+            grab = self.root.grab_current()
+            if grab is not None and grab.winfo_toplevel() is not self.root:
+                self._capture = self._hover = None
+                return  # a modal warning owns input; never dispatch behind it
             # Tk's native window lookup also excludes TKPanel. Resolve the
             # widget from this panel's own Tk geometry instead.
             def widget_at(widget):
