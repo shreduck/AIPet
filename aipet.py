@@ -1002,6 +1002,62 @@ def place_name(rec):
 _PID_CACHE = {}
 
 
+COWORK_QUIET_SECONDS = 8  # a working Cowork session this quiet gets its process checked (see collect)
+INTERRUPT_MARKERS = ("[Request interrupted by user",)  # Claude Code's transcript line for a stopped turn
+_TRANSCRIPT_TAILS = {}  # path -> ((mtime, size), interrupted): read each transcript only when it changes
+
+
+def transcript_file(rec):
+    """The session's transcript as this machine can open it (WSL paths through \\\\wsl.localhost\\<distro>)."""
+    path = str(rec.get("transcript_path") or "")
+    if not path:
+        return ""
+    if rec.get("env") == "wsl" and os.name == "nt" and path.startswith("/") and rec.get("distro"):
+        return "\\\\wsl.localhost\\" + rec["distro"] + path.replace("/", "\\")
+    return path
+
+
+def turn_interrupted(rec, max_bytes=65536):
+    """True when the newest message in the session's transcript is Claude Code's "[Request interrupted by user]":
+    the turn was stopped and nothing has happened since. Only the tail is read, and only when the file changed."""
+    path = transcript_file(rec)
+    if not path or time.time() - rec.get("updated", 0) < 1.5:
+        return False
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False
+    stamp = (st.st_mtime_ns, st.st_size)
+    cached = _TRANSCRIPT_TAILS.get(path)
+    if cached and cached[0] == stamp:
+        return cached[1]
+    interrupted = False
+    try:
+        with open(path, "rb") as f:
+            f.seek(max(0, st.st_size - max_bytes))
+            lines = f.read().decode("utf-8", "replace").splitlines()
+        for line in reversed(lines):
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            message = entry.get("message") if isinstance(entry, dict) else None
+            if entry.get("type") not in ("user", "assistant") or not isinstance(message, dict):
+                continue  # bookkeeping lines (attachments, modes, summaries...)
+            content = message.get("content")
+            texts = [content] if isinstance(content, str) else [
+                c.get("text", "") for c in content or [] if isinstance(c, dict) and c.get("type") == "text"]
+            interrupted = entry.get("type") == "user" and any(
+                str(t).strip().startswith(INTERRUPT_MARKERS) for t in texts)
+            break  # only the newest message counts
+    except OSError:
+        return False
+    if len(_TRANSCRIPT_TAILS) > 64:
+        _TRANSCRIPT_TAILS.clear()
+    _TRANSCRIPT_TAILS[path] = (stamp, interrupted)
+    return interrupted
+
+
 def pid_alive(pid, max_age=5.0):
     """Is the process running (cached for a few seconds)? None when it can't be told. Only for processes on this
     machine (not WSL ones)."""
@@ -1120,11 +1176,17 @@ def read_claude_code_sessions(cfg):
         sid = str(rec.get("id"))
         local = rec.get("env") == ("windows" if os.name == "nt" else sys.platform)
         quiet = time.time() - rec.get("updated", 0) > max(60, HEALTH["v"])  # an active session isn't judged by its pid
+        if rec.get("app") == "cowork" and time.time() - rec.get("updated", 0) > COWORK_QUIET_SECONDS:
+            quiet = True  # Cowork runs one Claude Code process per turn: stopping the turn ends it, so its pid tells
         if (local and HEALTH["v"] > 0 and quiet and rec.get("state") in ("working", "needs_input") and rec.get("pid")
                 and pid_alive(rec["pid"], HEALTH["v"]) is False):
             # its Claude Code / Codex process is gone without a Stop or SessionEnd (the app was closed, or Cowork moved
             # the conversation to a new session): show it as done, so the done timeout clears it
             rec = dict(rec, state="done", message="", request={}, changed=rec.get("updated", 0))
+        if rec.get("state") == "working" and turn_interrupted(rec):
+            # You stopped the turn (Esc / the stop button). Claude Code sends no hook event for that, only a line in
+            # its transcript, so the session would look busy until your next message.
+            rec = dict(rec, state="idle", message="Stopped", changed=rec.get("updated", 0))
         if unconfirmed_prompts(rec):
             # Claude Code announces every prompt it really shows (a Notification ~6 s in). These never were: settled
             # without the user (auto mode, a rule...), so the session is working, not waiting for you.
