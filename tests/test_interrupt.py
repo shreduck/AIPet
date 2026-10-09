@@ -26,6 +26,15 @@ class InterruptTests(unittest.TestCase):
                                    json.dumps({"type": "attachment"})))  # bookkeeping after it is ignored
         self.assertTrue(self.check(line("user", "[Request interrupted by user for tool use]")))
 
+    def test_prompt_cancelled_before_any_reply_is_detected(self):
+        bookkeeping = [json.dumps({"type": t}) for t in ("attachment", "last-prompt", "mode", "permission-mode")]
+        self.assertTrue(self.check(line("assistant", "earlier answer"), line("user", "do the thing"), *bookkeeping))
+        # the same prompt while the agent is still starting: no end-of-turn line yet
+        self.assertFalse(self.check(line("assistant", "earlier answer"), line("user", "do the thing"),
+                                    json.dumps({"type": "attachment"})))
+        # a finished normal turn ends with the reply, then last-prompt: not a stop
+        self.assertFalse(self.check(line("user", "do the thing"), line("assistant", "done"), *bookkeeping))
+
     def test_ongoing_or_resumed_turns_are_not(self):
         self.assertFalse(self.check(line("user", "fix it"), line("assistant", "On it")))
         self.assertFalse(self.check(line("user", "[Request interrupted by user]"), line("user", "try again")))
