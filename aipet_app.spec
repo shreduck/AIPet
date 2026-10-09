@@ -132,5 +132,6 @@ else:
         strip=False,
         upx=False,
         console=False,  # no console window flashes when Claude Code / Codex run it
+        icon=[os.path.join("assets", "aipet.ico")],  # the robot, in Explorer and Task Manager too
     )
     coll = COLLECT(exe, hook_exe, a.binaries, a.datas, h.binaries, h.datas, strip=False, upx=False, name="AIPet")
