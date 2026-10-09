@@ -1,6 +1,32 @@
 # AIPet
 
-A floating companion with one creature per Claude Code session. It lives in the system tray and installs its own hooks.
+<table align="center">
+  <tr>
+    <td align="center"><a href="https://github.com/shreduck"><img src="assets/readme/shreduck.png" width="96" height="96" alt="shreduck"></a></td>
+    <td align="center"><img src="https://github.com/anthropics.png?size=96" width="96" height="96" alt="Claude (Anthropic)"></td>
+    <td align="center"><img src="https://github.com/openai.png?size=96" width="96" height="96" alt="Codex (OpenAI)"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>shreduck</b></td>
+    <td align="center"><b>Claude</b></td>
+    <td align="center"><b>Codex</b></td>
+  </tr>
+</table>
+
+<p align="center"><i>AIPet is a collaboration between <a href="https://github.com/shreduck">shreduck</a>, Claude (Anthropic) and Codex (OpenAI): ideas, testing and direction by shreduck, code written together with both AIs.</i></p>
+
+AIPet helps you keep track of your AI threads (Claude Code, Claude Cowork and Codex) while you focus on your work, and
+calls for your attention when one needs you. One little robot per session sits at the edge of your screen; it lives in
+the system tray (Windows) or the menu bar (macOS) and installs its own hooks.
+
+- **Settings window** with search and an explanation for every option; settings live in one `config.json` that applies
+  as soon as you save it
+- **States at a glance**: working, needs you, a question, done, error / usage limit, idle
+- **Sounds**: soft two-note chimes for done, needs you and error (or your system's sounds)
+- **Answer from the pet**: permission prompts (Allow once, Allow + whitelist, Deny) and Claude's questions
+- **Auto approve** with whitelists and blacklists per install
+- **Click a pet** to jump to its session; **compact mode** for one pet that stands in for all sessions
+- **Local**: no account, no telemetry; the only automatic connection is a daily update check on GitHub
 
 > **Renamed from Claude Pet.** On its first start AIPet explains the changes and moves you over: it closes the old
 > app (or asks you to quit it), copies settings, backups and sessions from `~/.claude-pet` to `~/.aipet` (the old
@@ -15,10 +41,12 @@ A floating companion with one creature per Claude Code session. It lives in the 
 
 | Pet | Meaning |
 |---|---|
-| Blue, bobbing | working |
-| Orange, jumping, "!" + beep + Windows notification | needs your input (re-reminds every 90 s until you click it) |
-| Green, sleeping | done |
-| Red, shaking | error (Workbench) |
+| Bobbing and humming (wavy mouth, slow blink) under a scrolling terminal bubble | working |
+| Jumping, "?" face, ✓ ✗ ? bubble, needs-you chime | a permission prompt needs you (re-reminds every 90 s until you click it) |
+| Jumping, single "?" bubble | the AI is asking you a question |
+| Green check seal, happy face | done (working pets also flash the check briefly when a subagent or another session finishes) |
+| Worried face, shaking, ✗ bubble, error chime | error: an API error such as a usage limit (with the reason), or a Workbench error |
+| Asleep, floating z's | idle |
 
 Pets keep their position: a session stays where it first appeared (new ones join on the left) even when its state changes; only if there are more than `max_pets` are the least urgent dropped.
 
@@ -56,6 +84,13 @@ activating the pet or switching away from a full-screen app.
 **Settings...** is the first item of every menu. It opens a settings window with the same options grouped by section
 (General, Appearance, Behavior, Integrations, Permissions, Help), each with an icon and a short explanation, plus a search
 box. Every switch and button runs exactly the menu's action, and the window stays in step with changes made from the menus.
+Its size is adjustable (Appearance → Window scale, or Ctrl + plus / minus / 0 and Ctrl + mouse wheel; Command on a Mac).
+
+**Settings files.** Everything lives in `~/.aipet` (`%USERPROFILE%\.aipet` on Windows); *Open config and data folder*
+(General) opens it. Hand edits of `config.json` apply within about two seconds (a few keys such as `workbench` need a
+restart, and the app says so). *Copy settings guide for AI* (Settings → General) puts a Markdown guide on the clipboard:
+the folder, which files may be edited, every `config.json` key with its current value and allowed values, and the
+`auto-approve.json` format. Paste it into Claude, Codex or another assistant and ask it to change AIPet for you.
 
 **Questions from Claude** (its AskUserQuestion tool) open in the pet's popup like permission prompts: each question with
 its options (check boxes when several may be picked) and a field for your own answer. *Send answer* hands the answers to
@@ -67,12 +102,17 @@ which a hook can't type, so the card shows the question and its options and *Go 
 with the reason, until you send Claude a new message. Permission prompts that Claude Code settles by itself (auto mode,
 an allow rule) or that belonged to a subagent that stopped no longer leave a pet stuck on "needs you".
 
-- **Appearance**: pet style, size, compact mode, theme, session titles and tooltips.
-- **Behavior**: desktop visibility, position, click behavior, sounds and notifications, session timing, and startup.
-- **Integrations**: Claude Code and Codex hooks, usage collection, setup and connection status.
+- **Appearance**: pet size, compact mode, theme, window scale, session titles, tooltips, and *Alpha* (the old Mole and
+  Cat styles, no longer maintained).
+- **Behavior**: desktop visibility, position, click behavior, sounds and notifications (sound style, *Test sounds*),
+  session timing, and startup.
+- **Integrations**: Claude Code and Codex hooks; *Extra* holds usage collection, *Run setup again*, re-detection and
+  the Workbench status.
 - **Permissions**: auto-approve rules grouped by agent, and separate Claude Code and Codex toggles for answering prompts from the pet.
 - **Help**: About, updates and diagnostics.
-- **Show / Hide pet**, **Clear finished sessions**, and **Quit AIPet** stay at the top level. Left-clicking the Windows tray icon toggles visibility.
+- **Settings...**, **Show / Hide pet**, **Clear finished sessions**, **Open config and data folder** and **Quit AIPet**
+  stay at the top level. Left-clicking the Windows tray icon toggles visibility. On Windows the pet's right-click menu is
+  a native menu, like the tray's.
 
 **Integrations → Claude Code hooks**
 
@@ -117,7 +157,7 @@ so no extra packages are needed.
 AIPet also shows **Codex** (OpenAI's coding agent) sessions, with a green `CX` badge. Codex has the same kind of hooks as
 Claude Code, kept in `~/.codex/hooks.json` (or `$CODEX_HOME/hooks.json`):
 
-- The setup window and *Claude Code hooks > Codex* list every place Codex is found: this PC and each running WSL distro
+- The setup window and *Integrations > Codex hooks* list every place Codex is found: this PC and each running WSL distro
   with `~/.codex` or `codex` on the PATH. Install / update / remove / backups work like the Claude Code targets.
 - **Trust step:** Codex only runs hooks you have trusted. After installing, start Codex, type `/hooks` and trust the AIPet
   hooks (Codex asks again only if they change).
@@ -126,6 +166,8 @@ Claude Code, kept in `~/.codex/hooks.json` (or `$CODEX_HOME/hooks.json`):
   don't answer in the pet's window within the answer timeout. To have Codex show its prompt straight away instead,
   switch off **Answer Codex prompts from the pet** (menu or tray). Updating from an older AIPet needs the Codex hooks
   updated once (they get a longer permission timeout) and trusted again in `/hooks`.
+- **Codex questions** (its `request_user_input` tool) show on the pet with their options, read-only: Codex takes the
+  answer as your next message, which a hook can't type, so answer in Codex (*Go to window*).
 - Events: start, prompt, tool use, permission, stop, **Interrupt** (shows as done), session end and subagents. Codex has no
   `Notification` event.
 
@@ -200,12 +242,13 @@ click belong to the session in front:
 
 ## The pet, subagents, resizing
 - The default pet is a little **robot** (a PC) from the pixel art in `assets/reference/duck-robot.webp`; the sprites are in
-  `assets/sprites` and regenerate with `python tools/make_sprites.py`. **Working:** happy face, blinking, cycling lights and a
-  bubble of scrolling hacker text. **Needs you:** a "?" on its screen, flashing amber lights, a small hop and a
-  check / cross / "?" bubble. **Done:** check bubble. **Error:** worried face and a cross. **Idle:** asleep (eyes closed,
-  lights off, floating z's). The state colour shows on the name tag.
-- **Pet style** in the tray menu (or the pet's right-click menu on macOS) switches between *Robot*, the older *Mole* and the
-  original *Cat*. Without Pillow or the sprite files the app falls back to the mole.
+  `assets/sprites` and regenerate with `python tools/make_sprites.py`. **Working:** a wavy mouth that travels as it
+  hums, a slow blink, cycling lights and a bubble of scrolling hacker text; it briefly shows the done check when one of
+  its subagents or another session finishes. **Needs you:** a "?" on its screen, flashing amber lights, a hop and a
+  check / cross / "?" bubble (a single "?" for a question). **Done:** a green check seal. **Error:** worried face, a
+  shake and a cross. **Idle:** asleep (eyes closed, lights off, floating z's). The state colour shows on the name tag.
+- **Appearance → Alpha** keeps the older *Mole* and the original *Cat* styles (switch one off to go back to the robot);
+  they're no longer maintained. Without Pillow or the sprite files the app falls back to the mole.
 - A session that runs **subagents** shows extra robots next to the main one (up to four), and the state line shows `+N`.
   This relies on the hook payloads carrying an `agent_id` (finished agents drop off after `SubagentStop` or 90 s without
   activity). A subagent's tool call no longer hides a permission prompt that belongs to a different agent.
@@ -217,8 +260,15 @@ click belong to the session in front:
   menu or the macOS menu-bar menu puts it back in the main screen's bottom-right corner.
 
 ## Answering permission prompts from the pet
-When Claude Code asks for permission, the popup (click the bubble's title) shows **Deny** and **Allow once**. Your click is
-handed to the `PermissionRequest` hook, which prints the decision to Claude Code.
+When Claude Code or Codex asks for permission, the popup (click the bubble) shows **Deny**, **Allow + whitelist** and
+**Allow once**. Your click is handed to the `PermissionRequest` hook, which prints the decision to the agent.
+- **Allow + whitelist** also adds the request to that install's auto-approve whitelist as an exact match: the whole
+  command (or file path, URL...), or the tool itself for MCP tools. If the install still had only the default
+  ask-everything blacklist and no rules, that blacklist is cleared so the exact match can apply.
+- **Several prompts at once** (parallel tool calls, subagents) queue up: the card shows the oldest, "N prompts waiting",
+  and moves on to the next one after you answer. *Not asking anymore? Clear this prompt* removes one that's gone.
+- **Card size:** a slider under the robot (50% - 150%), or Ctrl + plus / minus / 0 and Ctrl + mouse wheel on the card;
+  saved as `card_scale`.
 - Under **Permissions**, **Answer Claude Code prompts from the pet** and **Answer Codex prompts from the pet**
   independently control manual answering for each assistant. Turning one off hides its answer buttons and stops its
   hooks waiting for the pet, including requests already waiting. Answer those requests in the assistant instead.
@@ -269,8 +319,8 @@ finished* ends any stuck session by hand (in compact mode, the one in front).
 ## Clearing finished sessions
 A finished session's pet is cleared after the **done timeout**: right-click > *Behavior > Session timing > Clear finished after...* (or the tray menu),
 0 - 30 minutes, default 3 minutes; 0 keeps finished pets until you dismiss them. Saved as `done_timeout_minutes`.
-- There is no "always allow" button: that needs a permission-rule format I haven't verified. The VS Code extension does
-  not send `PermissionRequest` events, so its prompts keep the read-only bubble.
+
+The VS Code extension does not send `PermissionRequest` events, so its prompts keep the read-only bubble.
 
 ## New versions
 Once a day (and from *Check for updates...* in the tray or menu-bar icon's menu) AIPet asks GitHub for the newest
@@ -287,7 +337,7 @@ vX.Y.Z...* until you install it. Nothing is downloaded or installed automaticall
 ## Theme, diagnostics
 - **Testing on macOS without a Mac:** run the **macOS self-test** workflow by hand (Actions tab). It starts the app on an Apple Silicon runner with fake sessions (`tools/seed_sessions.py`) and uploads screenshots plus the diagnostics report, for the packaged app and for the source.
 - **Save diagnostics...** (pet right-click) writes `~/.aipet/diagnostics.txt` and opens it: versions, sprite loading, image tests, window state and recent errors. No prompts or session contents. Send it along with bug reports from machines that can't be tested here.
-- **Light theme is the default.** Tray menu (or the pet's right-click menu on macOS) > *Dark theme* switches live and is
+- **Light theme is the default.** *Appearance > Dark theme* (any menu or the settings window) switches live and is
   saved as `theme` in `config.json`. It covers the name tags, bubbles, tooltips and the permission popup, and also the
   setup, Cowork, slider and reminder windows, the confirmation / message dialogs (now cards in the pet's style), the
   pet's right-click menu and, on Windows 10 1903+ / 11, the tray menu and window title bars. macOS keeps its native
@@ -299,21 +349,26 @@ vX.Y.Z...* until you install it. Nothing is downloaded or installed automaticall
 ## First-run setup, notifications
 - On first run a **setup window** lists the Claude Code installs it found (this PC, running WSL distros with Claude Code)
   and shows for each whether the hooks are missing, installed and up to date, or out of date. Nothing is written until you
-  press *Install selected*. Reopen it any time: tray > Claude Code hooks > Run setup again.
-- **Windows notifications are off by default** (the Claude app already notifies). Tray menu > Windows notifications turns
-  them on; the choice is saved in `config.json` as `notifications`. Sounds are a separate toggle.
+  press *Install selected*. Reopen it any time: *Integrations > Extra > Run setup again*.
+- **Notifications are off by default** (the Claude app already notifies). *Behavior > Sounds and notifications >
+  Notifications* turns them on; the choice is saved in `config.json` as `notifications`. Sounds are a separate toggle.
+- **Sounds:** AIPet's own soft two-note chimes by default (a rising one when a session is done, a falling one when it
+  needs you, a low one for errors), written once to `~/.aipet/sounds`. *Sound style* switches to your system's sounds
+  (Windows message beeps, or macOS Glass / Funk / Basso); *Test sounds* plays each one. Some USB DACs and headsets sleep
+  between sounds and swallow the start of a short chime; if the first note sounds cut or crackly, disable USB selective
+  suspend / the device's power saving.
 
-## macOS (experimental, not yet tested on a Mac)
-The code has macOS support but has only been verified by unit tests on Windows. Build with `bash build_mac.sh` on a Mac, or
-use the *macos* job of the GitHub Actions workflow (artifact `AIPet-mac`). The app is unsigned: first launch needs
-right-click > Open.
+## macOS
+Apple Silicon builds come from the *macos* job of the GitHub Actions workflow (`AIPet-mac-arm64.zip` on the Releases
+page), or build with `bash build_mac.sh` on a Mac. The app is unsigned: first launch needs right-click > Open. macOS
+support is newer than Windows, and the **macOS self-test** workflow (see above) checks it on every change.
 - **Hook runtime.** The setup window offers *your Python 3* (faster) or the *built-in hook* (nothing to install, slower per
   tool call). If Python 3 isn't found it selects the built-in hook, warns that Python is faster, and offers help installing
   Python (python.org page, or Apple's Command Line Tools installer) - nothing is installed without your confirmation.
   `/usr/bin/python3` is never executed unless the Command Line Tools are present, because without them it is a stub that
   pops up Apple's installer dialog.
-- **No tray icon yet.** pystray needs the main thread, which Tk already owns, so on macOS the essentials (hooks/setup,
-  notifications, start at login, config folder, quit) are in the pet's right-click menu (ctrl-click works too).
+- **Menu bar instead of a tray icon:** pystray needs the main thread, which Tk already owns, so macOS gets its own
+  menu-bar icon (see above) with the same menu as the pet's right-click (Control-click works too).
 - Notifications use `osascript`, sounds use `afplay`, start at login is a LaunchAgent, backups and hooks live in `~/.aipet`.
 
 ## mcp-workbench Agents chats (optional)
@@ -323,19 +378,27 @@ To check what Workbench returns and how the pet reads each chat's state, run `AI
 
 ## Run from source
 ```
-pip install pystray pillow
+pip install -r requirements.txt
 pythonw aipet_app.py
 ```
+Tests: `python -m unittest discover -s tests`.
 From source, the Windows hook runs via `pythonw` and the script, so no exe is needed.
 
 ## Files
 | File | Purpose |
 |---|---|
-| `aipet_app.py` | Entry point: tray, hook menu, autostart |
-| `aipet.py` | The pet window, session reading, Workbench poller |
-| `hooks_installer.py` | settings.json merge/remove, backups and restore for Windows and WSL |
-| `aipet_hook.py` | The hook Claude Code runs on each event |
-| `build.bat`, `.github/workflows/build.yml` | Build `AIPet.exe` |
+| `aipet_app.py` | Entry point: tray, the shared menu, autostart, config watcher |
+| `aipet.py` | The pet window, permission / question cards, sounds, session reading, Workbench poller |
+| `aipet_settings.py` | The settings window (built from the same menu definition) |
+| `aipet_guide.py` | The settings guide for AI assistants (Copy settings guide for AI) |
+| `aipet_hook.py` | The hook Claude Code and Codex run on each event |
+| `hooks_installer.py` | settings.json / hooks.json merge and remove, backups and restore, the Cowork plugin |
+| `aipet_usage.py`, `aipet_claude_usage.py` | Usage-limit readings |
+| `aipet_update.py` | The daily update check |
+| `mac_statusbar.py` | The macOS menu-bar icon and native panels |
+| `legacy.py` | Moving over from Claude Pet (removable later) |
+| `build.bat`, `build_mac.sh`, `.github/workflows/` | Builds and the macOS self-test |
+| `tools/` | Sprite, icon and demo GIF generators, test helpers |
 
 ## License
 Free for everyone to use, modify and share, including at work. Forks and modified versions must keep the license and credit "AIPet by Duck Code". Selling AIPet, or a product that mainly provides it, needs a written agreement first. See [LICENSE](LICENSE).
