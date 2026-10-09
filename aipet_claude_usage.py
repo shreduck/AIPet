@@ -7,12 +7,9 @@ from datetime import datetime
 import hashlib
 import json
 import os
-import ssl
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 
 import aipet_usage as usage
 
@@ -83,16 +80,9 @@ def convert(data):
 
 
 def fetch(token):
-    context = ssl.create_default_context()
-    try:
-        import certifi
-        context.load_verify_locations(cafile=certifi.where())
-    except ImportError:  # source hook running with the harness's system Python
-        pass
-    request = urllib.request.Request(URL, headers={"Authorization": "Bearer " + token,
-        "anthropic-beta": "oauth-2025-04-20", "Accept": "application/json", "User-Agent": "AIPet"})
-    with urllib.request.urlopen(request, timeout=5, context=context) as response:
-        return convert(json.loads(response.read().decode("utf-8")))
+    # Python's TLS, or the system's curl in app builds (the token goes to curl through stdin, not its command line)
+    return convert(usage.https_get_json(URL, {"Authorization": "Bearer " + token,
+        "anthropic-beta": "oauth-2025-04-20", "Accept": "application/json", "User-Agent": "AIPet"}, timeout=5))
 
 
 def publish(target, sid, cache):
@@ -150,7 +140,7 @@ def worker(target, sid):
                 cache.update(limits=limits, updated=now, error="")
             else:
                 cache["error"] = "Account limits not reported"
-    except urllib.error.HTTPError as e:
+    except usage.HTTPStatusError as e:
         cache["error"] = "Claude usage HTTP " + str(e.code)
         if e.code == 429:
             cache["retry_at"] = now + 900

@@ -2,7 +2,79 @@
 import json
 import math
 import os
+import shutil
+import subprocess
+import sys
 import time
+
+
+class HTTPStatusError(Exception):
+    """The server answered with an HTTP error status (code)."""
+
+    def __init__(self, code, headers=None):
+        super().__init__(f"HTTP {code}")
+        self.code, self.headers = code, headers
+
+
+def https_get_json(url, headers, timeout=10):
+    """GET an HTTPS URL and parse its JSON. Python's own TLS when this runtime has it (running from source, the WSL /
+    macOS script hooks); the AIPet app builds leave OpenSSL out to stay small and use the system's curl instead
+    (Windows 10/11 and macOS ship it), which also trusts the OS certificate store, proxies' corporate CAs included.
+    Raises HTTPStatusError for an HTTP error status, OSError / ValueError for anything else."""
+    try:
+        import ssl
+    except ImportError:
+        ssl = None
+    if ssl is None:
+        return _curl_get_json(url, headers, timeout)
+    import urllib.error
+    import urllib.request
+    context = ssl.create_default_context()
+    try:  # a frozen Python may lack a system CA path: add the bundle when it's there
+        import certifi
+        context.load_verify_locations(cafile=certifi.where())
+    except ImportError:
+        pass
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout,
+                                    context=context) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        raise HTTPStatusError(e.code, e.headers)
+
+
+def find_curl():
+    if os.name == "nt":
+        system = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "curl.exe")
+        if os.path.isfile(system):
+            return system  # Windows' own, never one earlier on the PATH
+    return shutil.which("curl") or ("/usr/bin/curl" if os.path.isfile("/usr/bin/curl") else None)
+
+
+def _curl_quote(value):
+    return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _curl_get_json(url, headers, timeout):
+    curl = find_curl()
+    if not curl:
+        raise OSError("curl not found")
+    # URL and headers go in through stdin (-K -), never on the command line, where other programs could read a token
+    config = "url = " + _curl_quote(url) + "\n" + "".join(
+        "header = " + _curl_quote(f"{k}: {v}") + "\n" for k, v in headers.items())
+    cmd = [curl, "--silent", "--show-error", "--location", "--proto", "=https", "--max-time", str(int(timeout)),
+           "--write-out", "\n%{http_code}", "--config", "-"]
+    if os.name == "nt":
+        cmd.insert(1, "--ssl-revoke-best-effort")  # corporate proxies often block certificate revocation lookups
+    done = subprocess.run(cmd, input=config.encode("utf-8"), capture_output=True, timeout=timeout + 5,
+                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    body, _, status = done.stdout.decode("utf-8", "replace").rpartition("\n")
+    if done.returncode != 0 or not status.strip().isdigit():
+        raise OSError(f"curl failed ({done.returncode}): {done.stderr.decode('utf-8', 'replace').strip()[:200]}")
+    code = int(status)
+    if code >= 400:
+        raise HTTPStatusError(code)
+    return json.loads(body)
 
 
 def normalize(limits):

@@ -197,7 +197,7 @@ class UsageTests(unittest.TestCase):
             (Path(folder) / "config.json").write_text('{"claude_oauth_usage": true}')
             stamp = time.time() - 100
             Path(path).write_text(json.dumps({"limits": {"five_hour": {"used_percentage": 40}}, "updated": stamp}))
-            error = aipet_update.urllib.error.HTTPError(claude_usage.URL, 429, "too many requests", {}, None)
+            error = usage.HTTPStatusError(429)
             with patch.object(claude_usage, "access_token", return_value="placeholder"), patch.object(claude_usage, "fetch", side_effect=error):
                 claude_usage.worker(target, "test")
             cache = json.loads(Path(path).read_text())
@@ -358,7 +358,8 @@ class UsageTests(unittest.TestCase):
         response.__enter__.return_value.read.return_value = b'{"tag_name":"v1.0.0"}'
         certifi = MagicMock()
         certifi.where.return_value = "trusted-ca.pem"
-        with patch.dict(sys.modules, {"certifi": certifi}), patch.object(aipet_update.ssl, "create_default_context", return_value=context), patch.object(aipet_update.urllib.request, "urlopen", return_value=response) as urlopen:
+        with patch.dict(sys.modules, {"certifi": certifi}), patch("ssl.create_default_context", return_value=context), \
+                patch("urllib.request.urlopen", return_value=response) as urlopen:
             self.assertEqual(aipet_update.latest_release()["tag"], "v1.0.0")
             context.load_verify_locations.assert_called_once_with(cafile="trusted-ca.pem")
             self.assertIs(urlopen.call_args.kwargs["context"], context)
@@ -366,13 +367,30 @@ class UsageTests(unittest.TestCase):
     def test_source_update_check_without_certifi(self):
         response = MagicMock()
         response.__enter__.return_value.read.return_value = b'{"tag_name":"v1.0.0"}'
-        with patch.dict(sys.modules, {"certifi": None}), patch.object(aipet_update.ssl, "create_default_context") as context, patch.object(aipet_update.urllib.request, "urlopen", return_value=response):
+        with patch.dict(sys.modules, {"certifi": None}), patch("ssl.create_default_context") as context, \
+                patch("urllib.request.urlopen", return_value=response):
             self.assertEqual(aipet_update.latest_release()["tag"], "v1.0.0")
             context.return_value.load_verify_locations.assert_not_called()
 
+    def test_app_builds_without_openssl_use_the_system_curl(self):
+        done = MagicMock(returncode=0, stdout=b'{"tag_name":"v2.0.0"}\n200', stderr=b"")
+        with patch.dict(sys.modules, {"ssl": None}), patch.object(usage, "find_curl", return_value="curl"), \
+                patch.object(usage.subprocess, "run", return_value=done) as run:
+            self.assertEqual(aipet_update.latest_release(token="secret-token")["tag"], "v2.0.0")
+        argv, config = run.call_args.args[0], run.call_args.kwargs["input"].decode()
+        self.assertNotIn("secret-token", " ".join(argv))  # never on the command line
+        self.assertIn('header = "Authorization: Bearer secret-token"', config)
+        self.assertIn(f'url = "{aipet_update.API_URL}"', config)
+        self.assertIn("=https", argv)
+        done.stdout = b'{"message":"no"}\n429'
+        with patch.dict(sys.modules, {"ssl": None}), patch.object(usage, "find_curl", return_value="curl"), \
+                patch.object(usage.subprocess, "run", return_value=done):
+            with self.assertRaises(usage.HTTPStatusError) as raised:
+                usage.https_get_json("https://example.invalid/x", {})
+        self.assertEqual(raised.exception.code, 429)
+
     def test_ci_rate_limit_response_confirms_tls(self):
-        error = aipet_update.urllib.error.HTTPError(aipet_update.API_URL, 403, "rate limit exceeded",
-                                                   {"X-RateLimit-Remaining": "0"}, None)
+        error = usage.HTTPStatusError(403, {"X-RateLimit-Remaining": "0"})
         with patch.object(aipet_update, "latest_release", side_effect=error):
             result = aipet_selftest.check_update()
         self.assertTrue(result["tls_verified"])
@@ -381,7 +399,7 @@ class UsageTests(unittest.TestCase):
         self.assertNotIn("release", result)
 
     def test_ci_certificate_failure_remains_failure(self):
-        with patch.object(aipet_update, "latest_release", side_effect=aipet_update.ssl.SSLCertVerificationError("bad certificate")):
+        with patch.object(aipet_update, "latest_release", side_effect=OSError("bad certificate")):
             result = aipet_selftest.check_update()
         self.assertFalse(result["tls_verified"])
         self.assertNotIn("http_status", result)
@@ -389,7 +407,8 @@ class UsageTests(unittest.TestCase):
     def test_ci_token_used_only_when_explicitly_supplied(self):
         response = MagicMock()
         response.__enter__.return_value.read.return_value = b'{"tag_name":"v1.0.0"}'
-        with patch.dict(sys.modules, {"certifi": MagicMock()}), patch.object(aipet_update.ssl, "create_default_context"), patch.object(aipet_update.urllib.request, "urlopen", return_value=response) as urlopen:
+        with patch.dict(sys.modules, {"certifi": MagicMock()}), patch("ssl.create_default_context"), \
+                patch("urllib.request.urlopen", return_value=response) as urlopen:
             aipet_update.latest_release(token="ci-test-placeholder")
             self.assertEqual(urlopen.call_args.args[0].get_header("Authorization"), "Bearer ci-test-placeholder")
             aipet_update.latest_release()

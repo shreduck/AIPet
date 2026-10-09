@@ -10,7 +10,9 @@ $PY -m pip install --upgrade -r requirements.txt
 $PY tools/write_version.py
 
 echo "[2/4] Building the built-in hook (console build: no window appears for a non-terminal child)..."
-$PY -m PyInstaller --noconfirm --clean --onedir --collect-data certifi \
+$PY -m PyInstaller --noconfirm --clean --onedir \
+  --exclude-module ssl --exclude-module _ssl --exclude-module _hashlib --exclude-module certifi \
+  --hidden-import _md5 --hidden-import _sha1 --hidden-import _sha2 --hidden-import _sha3 --hidden-import _blake2 \
   --exclude-module tkinter --exclude-module PIL --exclude-module unittest --exclude-module pydoc --exclude-module doctest --exclude-module pdb --exclude-module sqlite3 --exclude-module lzma \
   --exclude-module bz2 --exclude-module decimal \
   --name aipet-hook aipet_hook.py

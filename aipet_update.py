@@ -11,11 +11,10 @@ This build's version comes from _build_version.py, written at build time by tool
 import json
 import os
 import re
-import ssl
 import subprocess
 import time
-import urllib.error
-import urllib.request
+
+import aipet_usage
 
 REPO = "shreduck/AIPet"
 RELEASES_URL = f"https://github.com/{REPO}/releases"
@@ -62,17 +61,7 @@ def latest_release(timeout=10, token=None):
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "AIPet"}
     if token:  # supplied only by the opt-in CI probe; never persisted or bundled
         headers["Authorization"] = "Bearer " + token
-    req = urllib.request.Request(API_URL, headers=headers)
-    context = ssl.create_default_context()
-    # Frozen macOS Python often has no system CA path. Keep platform trust and
-    # supplement it with the CA bundle shipped with the app.
-    try:
-        import certifi
-        context.load_verify_locations(cafile=certifi.where())
-    except ImportError:  # source installs may rely on the platform's CA store
-        pass
-    with urllib.request.urlopen(req, timeout=timeout, context=context) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
+    data = aipet_usage.https_get_json(API_URL, headers, timeout)  # Python's TLS, or the system's curl in app builds
     tag = str(data.get("tag_name") or "")
     if not parse(tag):
         raise ValueError(f"unexpected release tag {tag!r}")

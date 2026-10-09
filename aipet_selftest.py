@@ -4,14 +4,14 @@ import os
 import threading
 import time
 from pathlib import Path
-import urllib.error
 
 
 def check_update(token=None):
     import aipet_update as updates
+    import aipet_usage
     try:
         return {"release": updates.latest_release(token=token), "tls_verified": True}
-    except urllib.error.HTTPError as e:
+    except aipet_usage.HTTPStatusError as e:
         # An HTTP response means certificate verification already succeeded.
         return {"error": repr(e), "tls_verified": True, "http_status": e.code,
                 "rate_limit_remaining": e.headers.get("X-RateLimit-Remaining") if e.headers else None,

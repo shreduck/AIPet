@@ -29,7 +29,12 @@ EXCLUDES = [
     "distutils", "setuptools", "pip", "sqlite3",
     # compression formats nothing reads (zipfile / shutil fall back without them)
     "lzma", "_lzma", "bz2", "_bz2",
+    # OpenSSL: the two HTTPS requests (update check, opt-in Claude usage) go through the system's curl instead
+    # (aipet_usage.https_get_json), and hashlib falls back to Python's built-in hashes
+    "ssl", "_ssl", "_hashlib", "certifi",
 ]
+# hashlib's built-in hashes (without OpenSSL it imports these lazily, by name)
+HASH_IMPORTS = ["_md5", "_sha1", "_sha2", "_sha3", "_blake2"]
 
 # The hook needs none of the window toolkit or images
 HOOK_EXCLUDES = ["tkinter", "_tkinter", "PIL", "pystray", "pyvda", "comtypes", "decimal"]
@@ -65,8 +70,7 @@ def without_ucrt(toc):
 
 datas = ([(HOOK, "hook")] if IS_MAC else []) + [("aipet_hook.py", "."), ("aipet_usage.py", "."), ("aipet_claude_usage.py", "."),
          (os.path.join("assets", "sprites"), os.path.join("assets", "sprites"))]
-datas += collect_data_files("certifi")
-hiddenimports = [] if IS_MAC else ["pystray._win32"] + collect_submodules("pyvda")
+hiddenimports = HASH_IMPORTS + ([] if IS_MAC else ["pystray._win32"] + collect_submodules("pyvda"))
 
 a = Analysis(
     ["aipet_app.py"],
@@ -107,8 +111,8 @@ else:
         ["aipet_hook.py"],
         pathex=[],
         binaries=[],
-        datas=collect_data_files("certifi"),
-        hiddenimports=[],
+        datas=[],
+        hiddenimports=HASH_IMPORTS,
         hookspath=[],
         hooksconfig={},
         runtime_hooks=[],
