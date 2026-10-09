@@ -1018,10 +1018,8 @@ def transcript_file(rec):
 
 
 def turn_interrupted(rec, max_bytes=65536):
-    """True when the session's transcript shows a turn that was stopped and nothing has happened since: the newest
-    message is Claude Code's "[Request interrupted by user]" (stopped mid-turn), or it is your prompt with no reply
-    yet but Claude Code has already written its end-of-turn "last-prompt" line after it (cancelled before the agent
-    wrote anything). Only the tail is read, and only when the file changed."""
+    """True when the newest message in the session's transcript is Claude Code's "[Request interrupted by user]":
+    the turn was stopped and nothing has happened since. Only the tail is read, and only when the file changed."""
     path = transcript_file(rec)
     if not path or time.time() - rec.get("updated", 0) < 1.5:
         return False
@@ -1038,28 +1036,19 @@ def turn_interrupted(rec, max_bytes=65536):
         with open(path, "rb") as f:
             f.seek(max(0, st.st_size - max_bytes))
             lines = f.read().decode("utf-8", "replace").splitlines()
-        turn_ended = False  # an end-of-turn line came after the newest message
         for line in reversed(lines):
             try:
                 entry = json.loads(line)
             except ValueError:
                 continue
-            if not isinstance(entry, dict):
-                continue
-            if entry.get("type") == "last-prompt":
-                turn_ended = True
-            message = entry.get("message")
+            message = entry.get("message") if isinstance(entry, dict) else None
             if entry.get("type") not in ("user", "assistant") or not isinstance(message, dict):
                 continue  # bookkeeping lines (attachments, modes, summaries...)
             content = message.get("content")
-            parts = content if isinstance(content, list) else []
             texts = [content] if isinstance(content, str) else [
-                c.get("text", "") for c in parts if isinstance(c, dict) and c.get("type") == "text"]
-            if entry.get("type") == "user":
-                if any(str(t).strip().startswith(INTERRUPT_MARKERS) for t in texts):
-                    interrupted = True  # stopped mid-turn
-                elif turn_ended and not any(isinstance(c, dict) and c.get("type") == "tool_result" for c in parts):
-                    interrupted = True  # your prompt, no reply, and the turn is already over: cancelled at once
+                c.get("text", "") for c in content or [] if isinstance(c, dict) and c.get("type") == "text"]
+            interrupted = entry.get("type") == "user" and any(
+                str(t).strip().startswith(INTERRUPT_MARKERS) for t in texts)
             break  # only the newest message counts
     except OSError:
         return False
