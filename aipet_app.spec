@@ -38,14 +38,28 @@ TCL_TK_ROOTS = {"_tcl_data", "_tk_data", "tcl", "tk"}
 TCL_TK_SKIP = {"tzdata", "msgs", "images", "demos"}
 
 
+# Tcl modules (tcl8/8.x/*.tm) nothing loads: Tcl's test framework and its HTTP client
+TCL_MODULE_SKIP = ("tcltest-", "http-")
+
+
 def slim(toc):
     kept = []
     for entry in toc:
         parts = entry[0].replace("\\", "/").split("/")
         if parts[0] in TCL_TK_ROOTS and TCL_TK_SKIP.intersection(parts[1:-1]):
             continue
+        if parts[0] == "tcl8" and parts[-1].startswith(TCL_MODULE_SKIP):
+            continue
         kept.append(entry)
     return kept
+
+
+def without_ucrt(toc):
+    """Windows' Universal C Runtime (ucrtbase.dll and the api-ms-win-* forwarders) is part of Windows 10 and 11, and
+    the Python inside AIPet doesn't run on anything older, so the bundled copies are never used."""
+    return [entry for entry in toc
+            if not (os.path.basename(entry[0]).lower() == "ucrtbase.dll"
+                    or os.path.basename(entry[0]).lower().startswith("api-ms-win-"))]
 
 
 datas = ([(HOOK, "hook")] if IS_MAC else []) + [("aipet_hook.py", "."), ("aipet_usage.py", "."), ("aipet_claude_usage.py", "."),
@@ -102,6 +116,8 @@ else:
         optimize=0,
     )
     hook_pyz = PYZ(h.pure)
+    a.binaries = without_ucrt(a.binaries)
+    h.binaries = without_ucrt(h.binaries)
     # What the hook needs from _internal, for the copy in ~/.aipet/bin/hook
     needed = sorted({entry[0].replace("\\", "/") for entry in h.binaries + h.datas} | {"base_library.zip"})
     manifest = os.path.join(SPECPATH, "build", "hook_files.txt")
