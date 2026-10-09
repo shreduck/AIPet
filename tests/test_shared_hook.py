@@ -44,6 +44,28 @@ class SharedHookDeployTests(unittest.TestCase):
             hi._deploy_shared_hook()  # not frozen
             self.assertEqual(os.listdir(tmp), [])
 
+    def test_busy_file_is_moved_aside_and_replaced(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src, dst = os.path.join(tmp, "new.exe"), os.path.join(tmp, "hook", "aipet-hook.exe")
+            os.makedirs(os.path.dirname(dst))
+            with open(src, "wb") as f:
+                f.write(b"new")
+            with open(dst, "wb") as f:
+                f.write(b"old")
+            real_replace, calls = os.replace, []
+
+            def busy_once(a, b):  # the first overwrite fails like a running exe on Windows; renames work
+                calls.append((a, b))
+                if len(calls) == 1:
+                    raise PermissionError("in use")
+                return real_replace(a, b)
+            with patch.object(hi.os, "replace", side_effect=busy_once):
+                hi._sync_file(src, dst)
+            with open(dst, "rb") as f:
+                self.assertEqual(f.read(), b"new")
+            aside = [n for n in os.listdir(os.path.dirname(dst)) if n.startswith("aipet-hook.exe.old-")]
+            self.assertEqual(len(aside), 1)  # the running copy, removed on a later sync
+
 
 if __name__ == "__main__":
     unittest.main()

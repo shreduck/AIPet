@@ -306,7 +306,21 @@ def _sync_file(src, dst):
     shutil.copymode(src, tmp)  # keep the executable bit (macOS hook binary)
     try:
         os.replace(tmp, dst)
-    except OSError:  # target busy (hook running): keep the working copy, retry on next start
+        return
+    except OSError:
+        pass
+    # Windows: a running hook's exe / DLLs can't be overwritten, but they can be renamed. Move the busy copy aside
+    # (the running hook keeps using it) and put the new one in its place; the aside copy is deleted on a later sync.
+    aside = f"{dst}.old-{os.getpid()}-{int(time.time())}"
+    try:
+        os.replace(dst, aside)
+        os.replace(tmp, dst)
+    except OSError:  # still busy: keep the working copy, retry on next start
+        if not os.path.exists(dst) and os.path.exists(aside):
+            try:
+                os.replace(aside, dst)  # never leave the hook missing
+            except OSError:
+                pass
         try:
             os.remove(tmp)
         except OSError:
@@ -335,6 +349,12 @@ def _deploy_shared_hook():
         except OSError:
             pass  # leave the existing copy in place (a running hook holds it)
     # Leftovers of earlier builds (another Python version, modules the hook no longer uses) only take space
+    for fname in os.listdir(target):
+        if fname.startswith("aipet-hook.exe.old-"):  # moved aside while a hook was running (see _sync_file)
+            try:
+                os.remove(os.path.join(target, fname))
+            except OSError:
+                pass
     keep = {os.path.normcase(os.path.normpath(n)) for n in names}
     internal = os.path.join(target, "_internal")
     for root, _dirs, files in os.walk(internal, topdown=False):
