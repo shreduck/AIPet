@@ -2,6 +2,7 @@
 dist/
 build/
 *.spec
+!aipet_app.spec
 _build_version.py
 # python
 __pycache__/

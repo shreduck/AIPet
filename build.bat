@@ -11,20 +11,14 @@ echo Version...
 %PY% tools\write_version.py || goto :err
 
 echo [2/3] Building the hook (no console, fast start)...
-%PY% -m PyInstaller --noconfirm --clean --windowed --onedir --collect-data certifi --name aipet-hook aipet_hook.py || goto :err
+%PY% -m PyInstaller --noconfirm --clean --windowed --onedir --collect-data certifi ^
+  --exclude-module tkinter --exclude-module PIL --exclude-module unittest --exclude-module pydoc --exclude-module doctest --exclude-module pdb --exclude-module sqlite3 --exclude-module lzma ^
+  --exclude-module bz2 --exclude-module decimal ^
+  --name aipet-hook aipet_hook.py || goto :err
 
 echo [3/3] Building AIPet.exe...
-%PY% -m PyInstaller --noconfirm --clean --windowed --onefile --name AIPet ^
-  --icon assets\aipet.ico ^
-  --add-data "dist\aipet-hook;hook" ^
-  --add-data "aipet_hook.py;." ^
-  --add-data "aipet_usage.py;." ^
-  --add-data "aipet_claude_usage.py;." ^
-  --add-data "assets\sprites;assets\sprites" ^
-  --hidden-import pystray._win32 ^
-  --collect-data certifi ^
-  --collect-submodules pyvda ^
-  aipet_app.py || goto :err
+rem aipet_app.spec: the files, icon and hidden imports, minus what AIPet never uses (keeps the exe smaller)
+%PY% -m PyInstaller --noconfirm --clean aipet_app.spec || goto :err
 
 echo.
 echo Done: dist\AIPet.exe

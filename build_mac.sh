@@ -10,19 +10,14 @@ $PY -m pip install --upgrade -r requirements.txt
 $PY tools/write_version.py
 
 echo "[2/3] Building the built-in hook (console build: no window appears for a non-terminal child)..."
-$PY -m PyInstaller --noconfirm --clean --onedir --collect-data certifi --name aipet-hook aipet_hook.py
+$PY -m PyInstaller --noconfirm --clean --onedir --collect-data certifi \
+  --exclude-module tkinter --exclude-module PIL --exclude-module unittest --exclude-module pydoc --exclude-module doctest --exclude-module pdb --exclude-module sqlite3 --exclude-module lzma \
+  --exclude-module bz2 --exclude-module decimal \
+  --name aipet-hook aipet_hook.py
 
 echo "[3/3] Building AIPet.app..."
-$PY -m PyInstaller --noconfirm --clean --windowed --name AIPet \
-  --osx-bundle-identifier com.aipet.app \
-  --icon assets/aipet.icns \
-  --add-data "dist/aipet-hook:hook" \
-  --add-data "aipet_hook.py:." \
-  --add-data "aipet_usage.py:." \
-  --add-data "aipet_claude_usage.py:." \
-  --add-data "assets/sprites:assets/sprites" \
-  --collect-data certifi \
-  aipet_app.py
+# aipet_app.spec: the bundle, icon and files, minus what AIPet never uses (keeps the app smaller)
+$PY -m PyInstaller --noconfirm --clean aipet_app.spec
 
 echo
 echo "Done: dist/AIPet.app (unsigned: first launch needs right-click > Open)"
