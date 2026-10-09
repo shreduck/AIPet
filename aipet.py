@@ -4185,15 +4185,18 @@ class PetApp:
 
     def finish_menu_pet(self):
         """Right-click > Mark as finished: for a session that is stuck (its app closed without telling the pet)."""
-        d = self._menu_session(self.menu_pet)
+        self.finish_session(self._menu_session(self.menu_pet))
+
+    def finish_session(self, d):
+        """Mark one session finished by hand (Mark as finished, Fix fast cancel): its pet stops showing it busy."""
         if not d or d.get("source") != "CC" or not d.get("path"):
             return
         try:
             with open(d["path"], encoding="utf-8") as f:
                 rec = json.load(f)
             now = time.time()
-            rec.update(state="done", message="", request={}, wait_agent="", agents={}, main_stopped=False,
-                       updated=now, changed=now)
+            rec.update(state="done", message="", request={}, requests=[], wait_agent="", agents={},
+                       main_stopped=False, updated=now, changed=now)
             tmp = d["path"] + ".pet.tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(rec, f)

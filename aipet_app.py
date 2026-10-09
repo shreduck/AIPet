@@ -1266,7 +1266,22 @@ class TrayApp:
             item("Dismiss this pet", self.pet.dismiss_menu_pet, real_pet),
         ]
         shared = self._mac_menu_spec()  # starts with Settings... and a separator
-        return shared[:1] + [{"label": "This session", "submenu": session_actions}, None] + shared[2:]
+        return shared[:1] + [self._fast_cancel_item(pet, session), {"label": "This session", "submenu": session_actions},
+                             None] + shared[2:]
+
+    def _fast_cancel_item(self, pet, session):
+        """Fix fast cancel: a prompt cancelled the instant it was sent leaves no trace Claude Code reports, so the pet
+        keeps showing that session as working. This marks it finished (like This session > Mark as finished). In
+        compact mode, one pet stands for every session: pick which one."""
+        def busy(d):
+            return bool(d and d.get("source") == "CC" and d.get("state") in ("working", "needs_input"))
+        if pet and pet.data.get("members"):
+            sessions = [d for d in self.pet._last_items if busy(d)]
+            choices = [{"label": d.get("title") + (f" \u00b7 {d['conv']}" if d.get("conv") else ""),
+                        "action": lambda d=d: self.pet.finish_session(d), "enabled": True} for d in sessions]
+            return {"label": "Fix fast cancel", "enabled": True,
+                    "submenu": choices or [{"label": "No session is working", "action": None, "enabled": False}]}
+        return {"label": "Fix fast cancel", "action": lambda: self.pet.finish_session(session), "enabled": busy(session)}
 
     # Shared menu specification; all actions are executed on the Tk thread.
     def _mac_menu_spec(self, settings=False):
