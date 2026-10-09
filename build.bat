@@ -15,8 +15,9 @@ rem aipet_app.spec: the files, icon and hidden imports, minus what AIPet never u
 %PY% -m PyInstaller --noconfirm --clean aipet_app.spec || goto :err
 
 echo [3/3] Zipping the portable app...
-if exist dist\AIPet-windows-x64.zip del dist\AIPet-windows-x64.zip
-powershell -NoProfile -Command "Compress-Archive -Path dist\AIPet -DestinationPath dist\AIPet-windows-x64.zip -Force -ErrorAction Stop" || goto :err
+rem Python's zipfile writes standard "/" paths (PowerShell 5's Compress-Archive writes "\", which some unzip tools
+rem turn into odd file names); a zip that is open elsewhere (7-Zip, Explorer preview) makes this step fail
+%PY% -c "import shutil; shutil.make_archive('dist/AIPet-windows-x64', 'zip', 'dist', 'AIPet')" || goto :err
 
 echo.
 echo Done: dist\AIPet (run AIPet.exe in it) and dist\AIPet-windows-x64.zip
