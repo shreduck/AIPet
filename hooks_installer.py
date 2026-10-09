@@ -1122,15 +1122,19 @@ def _zip_bytes(files):
 
 
 def build_plugin():
-    """Deploy the hook, then write the Cowork zip next to the exe (or to ~/.aipet if that folder is read-only)
-    and a local marketplace for the CLI. Returns {"zip": path, "market": dir, "command": hook command}.
+    """Deploy the hook, then write the Cowork zip to ~/.aipet on macOS, or next to the Windows exe
+    (falling back to ~/.aipet if that folder is read-only), plus a local marketplace for the CLI.
+    Returns {"zip": path, "market": dir, "command": hook command}.
     Files are only rewritten when their content changes."""
     deploy_files()
     command = local_hook_command()
     files = plugin_files(command)
     data = _zip_bytes(files)
     zip_path, err = None, None
-    for d in (app_dir(), PET_DIR):
+    # A writable macOS app bundle is still sealed by its code signature. Adding
+    # generated files beside its executable invalidates that signature.
+    zip_dirs = (PET_DIR,) if IS_MAC else (app_dir(), PET_DIR)
+    for d in zip_dirs:
         try:
             _write_if_changed(os.path.join(d, COWORK_ZIP), data)
             zip_path = os.path.join(d, COWORK_ZIP)

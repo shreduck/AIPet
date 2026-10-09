@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -8,6 +9,32 @@ from tools.share_mac_runtime import share_runtime
 
 
 class MacRuntimeSharingTests(unittest.TestCase):
+    def test_cowork_plugin_generation_keeps_mac_bundle_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_dir = root / 'AIPet.app/Contents/MacOS'
+            app_dir.mkdir(parents=True)
+            executable = app_dir / 'AIPet'
+            executable.write_bytes(b'signed executable')
+            config = root / 'config'
+            with patch.object(hi, 'IS_MAC', True), \
+                    patch.object(hi, 'app_dir', return_value=str(app_dir)), \
+                    patch.object(hi, 'PET_DIR', str(config)), \
+                    patch.object(hi, 'PLUGIN_MARKET_DIR', str(config / 'plugin-marketplace')), \
+                    patch.object(hi, 'deploy_files'), \
+                    patch.object(hi, 'local_hook_command', return_value='test-hook'):
+                result = hi.build_plugin()
+                archive = Path(result['zip'])
+                self.assertEqual(archive, config / hi.COWORK_ZIP)
+                with zipfile.ZipFile(archive) as plugin:
+                    self.assertIsNone(plugin.testzip())
+                    self.assertIn('hooks/hooks.json', plugin.namelist())
+                modified = archive.stat().st_mtime_ns
+                self.assertEqual(hi.build_plugin(), result)
+                self.assertEqual(archive.stat().st_mtime_ns, modified)
+            self.assertEqual(list(app_dir.iterdir()), [executable])
+            self.assertEqual(executable.read_bytes(), b'signed executable')
+
     def test_library_and_framework_layouts_deploy_independently(self):
         for relative in ('libpython3.12.dylib', 'Python.framework/Versions/3.12/Python'):
             with self.subTest(relative=relative), tempfile.TemporaryDirectory() as tmp:
