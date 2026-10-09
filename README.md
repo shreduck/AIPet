@@ -13,7 +13,7 @@
   </tr>
 </table>
 
-<p align="center"><i>AIPet is a collaboration between <a href="https://github.com/shreduck">shreduck</a>, Claude (Anthropic) and Codex (OpenAI): ideas, testing and direction by shreduck, code written together with both AIs in a cooperative environment experiment.<p align="center">No code was typped by humans in this project.</i></p>
+<p align="center"><i>AIPet is a collaboration between <a href="https://github.com/shreduck">shreduck</a>, Claude (Anthropic) and Codex (OpenAI): ideas, testing and direction by shreduck, code written together with both AIs in a cooperative environment experiment.<p align="center">No code was typed by humans in this project.</i></p>
 
 AIPet helps you keep track of your AI threads (Claude Code, Claude Cowork and Codex) while you focus on your work, and
 calls for your attention when one needs you. One little robot per session sits at the edge of your screen; it lives in
