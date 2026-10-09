@@ -38,9 +38,8 @@ EXCLUDES = [
 ]
 if IS_MAC:
     # PyObjC comes along with pystray, which only runs on Windows here (the Mac menu bar talks to macOS through
-    # ctypes, mac_statusbar.py); decimal is only needed by Windows' comtypes
-    EXCLUDES += ["pystray", "objc", "AppKit", "Foundation", "CoreFoundation", "Quartz", "PyObjCTools", "decimal",
-                 "_decimal"]
+    # ctypes, mac_statusbar.py). Keep decimal: Pillow's PNG reader imports fractions, which imports decimal.
+    EXCLUDES += ["pystray", "objc", "AppKit", "Foundation", "CoreFoundation", "Quartz", "PyObjCTools"]
 # hashlib's built-in hashes (without OpenSSL it imports these lazily, by name)
 HASH_IMPORTS = ["_md5", "_sha1", "_sha2", "_sha3", "_blake2"]
 

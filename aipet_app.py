@@ -1768,6 +1768,10 @@ class TrayApp:
 
 
 def main():
+    if "--selftest-assets" in sys.argv:
+        from aipet_selftest import check_assets
+        output = sys.argv[sys.argv.index("--selftest-assets") + 1]
+        sys.exit(0 if check_assets(output) else 1)
     if "--probe-workbench" in sys.argv:
         if sys.stdout is None:  # windowed exe: write the report to a file and open it
             core.ensure_home()

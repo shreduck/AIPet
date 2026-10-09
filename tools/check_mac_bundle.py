@@ -68,6 +68,12 @@ def check_bundle(bundle):
         subprocess.run(['/usr/bin/ditto', '-x', '-k', str(archive), str(relocated)], check=True)
         restored = relocated / bundle.name
         subprocess.run(['/usr/bin/codesign', '--verify', '--deep', '--strict', str(restored)], check=True)
+        assets_report = root / 'assets.json'
+        subprocess.run([str(restored / 'Contents/MacOS/AIPet'), '--selftest-assets', str(assets_report)],
+                       check=True, timeout=30)
+        assets = json.loads(assets_report.read_text())
+        assert assets['ok'], assets
+        print(f"  Robot assets: PNG loading and {assets['faces']} rendered faces passed")
         resources = restored / 'Contents/Resources'
         check_hook(resources / 'hook/aipet-hook', root / 'bundled-check')
         deployed = root / 'standalone-hook'

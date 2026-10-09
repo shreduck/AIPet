@@ -6,6 +6,33 @@ import time
 from pathlib import Path
 
 
+def check_assets(output):
+    """Headless check inside the frozen app: exercise real PNG decoding and robot rendering."""
+    import io
+    result = {"ok": False}
+    try:
+        import aipet as core
+        from PIL import Image, PngImagePlugin  # expose plugin import failures instead of Pillow hiding them
+        sprites = core.load_sprites(core.SPRITE_DIR)
+        if not sprites:
+            raise RuntimeError("Robot sprites could not be loaded")
+        for face in core.FACE_PARTS:
+            robot = core.robot_image(face, ("green", "amber", "red"), sprites)
+            data = io.BytesIO()
+            robot.save(data, format="PNG")
+            data.seek(0)
+            with Image.open(data) as decoded:
+                decoded.load()
+                if decoded.size != sprites["img"]["robot"].size:
+                    raise RuntimeError("Robot PNG round-trip changed dimensions")
+        result.update(ok=True, faces=len(core.FACE_PARTS), robot_size=sprites["img"]["robot"].size,
+                      shadow_size=sprites["img"]["shadow"].size)
+    except Exception as e:
+        result["error"] = repr(e)
+    Path(output).write_text(json.dumps(result, indent=2), encoding="utf-8")
+    return result["ok"]
+
+
 def check_update(token=None):
     import aipet_update as updates
     import aipet_usage

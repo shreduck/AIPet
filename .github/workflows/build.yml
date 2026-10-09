@@ -32,6 +32,8 @@ jobs:
         env:
           PY: python  # the 3.12 above (Tcl/Tk 8.6, smaller than 3.14's Tcl 9), not the newest Python the py launcher finds
         run: build.bat
+      - name: Check packaged robot assets
+        run: python -c "import subprocess; subprocess.run(['dist/AIPet/AIPet.exe', '--selftest-assets', 'build/assets-check.json'], check=True, timeout=30)"
       - uses: actions/upload-artifact@v4
         with:
           name: AIPet-windows
