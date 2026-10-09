@@ -411,6 +411,16 @@ CODEX_QUESTION_TOOLS = {"request_user_input_async", "request_user_input"}
 
 
 def codex_questions(data):
+    # A synchronous question's PostToolUse can already contain the user's
+    # answers. Do not turn a completed tool back into an outstanding question.
+    response = data.get("tool_response")
+    if isinstance(response, str):
+        try:
+            response = json.loads(response)
+        except ValueError:
+            response = None
+    if isinstance(response, dict) and ("answers" in response or response.get("accepted") is False):
+        return []
     inp = data.get("tool_input") if isinstance(data.get("tool_input"), dict) else {}
     out = []
     for q in (inp.get("questions") or [])[:6]:
@@ -1032,6 +1042,7 @@ def _update_session(path, target, event, data, wsl, auto=None):
         # Codex asked a question: needs you until the answer comes in as the next prompt. Read-only on the pet.
         req = {"tool": str(data.get("tool_name")), "description": "", "detail": "", "id": request_id(data),
                "t": time.time(), "kind": "question", "source": "codex-question", "agent": aid,
+               "tool_use_id": use_id,
                "sig": tool_signature(data), "shown": True, "questions": codex_questions(data)}
         requests = [r for r in requests if r.get("source") != "transcript"] + [req]
         state, message = "needs_input", permission_message(requests[0])

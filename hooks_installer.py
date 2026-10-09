@@ -389,7 +389,9 @@ def deploy_files(only_if_deployed=False):
     _deploy_shared_hook()
     src = resource_path("hook")
     if os.path.isdir(src):
-        for root, _dirs, files in os.walk(src):
+        # PyInstaller's Mac bundle uses directory links for frameworks and
+        # data. Dereference them so the deployed hook is independent of the app.
+        for root, _dirs, files in os.walk(src, followlinks=True):
             rel = os.path.relpath(root, src)
             for name in files:
                 try:

@@ -47,6 +47,8 @@ jobs:
           python-version: "3.12"
       - name: Build
         run: bash build_mac.sh
+      - name: Check packaged hooks and relocation
+        run: python tools/check_mac_bundle.py dist/AIPet.app
       - name: Check architecture
         run: file dist/AIPet.app/Contents/MacOS/AIPet | tee /dev/stderr | grep -q arm64
       - name: Zip app

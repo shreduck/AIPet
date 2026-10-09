@@ -126,6 +126,48 @@ class QuestionTests(unittest.TestCase):
         rec = self.record()
         self.assertEqual((rec["state"], rec["requests"]), ("working", []))
 
+    def test_claude_answers_on_both_platforms_preserve_another_pending_prompt(self):
+        for platform in ('nt', 'posix'):
+            with self.subTest(platform=platform), patch.object(hook.os, 'name', platform):
+                if os.path.exists(self.path):
+                    os.remove(self.path)
+                hook._update_session(self.path, self.target, 'PermissionRequest', self.data, False)
+                other = dict(self.data, tool_name='Bash', tool_input={'command': 'test'}, _aipet_request_id='p2')
+                hook._update_session(self.path, self.target, 'PermissionRequest', other, False)
+                done = dict(self.data, tool_input=dict(QUESTIONS, answers={'Which fruit?': 'Apple'}))
+                hook._update_session(self.path, self.target, 'PostToolUse', done, False)
+                rec = self.record()
+                self.assertEqual(rec['state'], 'needs_input')
+                self.assertEqual([r['id'] for r in rec['requests']], ['p2'])
+                hook._update_session(self.path, self.target, 'PostToolUse', other, False)
+                self.assertEqual((self.record()['state'], self.record()['requests']), ('working', []))
+
+    def test_codex_completed_question_does_not_reopen_the_prompt(self):
+        with patch.object(hook, 'AGENT', 'codex'):
+            ask = {'session_id': 's', 'tool_name': 'request_user_input_async', 'tool_use_id': 'q1',
+                   'tool_input': {'questions': [{'title': 'Which?', 'options': ['A', 'B']}]}}
+            hook._update_session(self.path, self.target, 'PostToolUse', ask, False)
+            self.assertEqual(self.record()['state'], 'needs_input')
+            done = dict(ask, tool_response={'answers': {'Which?': 'A'}})
+            hook._update_session(self.path, self.target, 'PostToolUse', done, False)
+            self.assertEqual((self.record()['state'], self.record()['requests']), ('working', []))
+            done.update(tool_name='request_user_input', tool_use_id='q2',
+                        tool_response=json.dumps({'answers': {'Which?': 'B'}}))
+            hook._update_session(self.path, self.target, 'PostToolUse', done, False)
+            self.assertEqual((self.record()['state'], self.record()['requests']), ('working', []))
+
+    def test_codex_question_card_reply_clears_status(self):
+        with patch.object(hook, 'AGENT', 'codex'):
+            ask = {'session_id': 's', 'tool_name': 'request_user_input_async', 'tool_use_id': 'q1',
+                   'tool_input': {'questions': [{'title': 'Which?', 'options': ['A', 'B']}]}}
+            hook._update_session(self.path, self.target, 'PostToolUse', ask, False)
+            reply = '<send_user_message_question_reply>\n' + json.dumps([
+                {'questionItemId': '["request_user_input_async","q1",0]', 'question': 'Which?', 'answer': 'A'}
+            ]) + '\n</send_user_message_question_reply>'
+            hook._update_session(self.path, self.target, 'UserPromptSubmit',
+                                 {'session_id': 's', 'prompt': reply}, False)
+            self.assertEqual((self.record()['state'], self.record()['requests']), ('working', []))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -366,6 +366,9 @@ vX.Y.Z...* until you install it. Nothing is downloaded or installed automaticall
 Apple Silicon builds come from the *macos* job of the GitHub Actions workflow (`AIPet-mac-arm64.zip` on the Releases
 page), or build with `bash build_mac.sh` on a Mac. The app is unsigned: first launch needs right-click > Open. macOS
 support is newer than Windows, and the **macOS self-test** workflow (see above) checks it on every change.
+- **Smaller bundle.** The app and built-in hook share one identical Python library using a relative link inside the
+  bundle. The build re-signs and verifies the app after this step. Installing the hook copies the library to its own
+  runtime, so hooks keep working after the app is moved or replaced. Both Python.framework and libpython builds work.
 - **Hook runtime.** The setup window offers *your Python 3* (faster) or the *built-in hook* (nothing to install, slower per
   tool call). If Python 3 isn't found it selects the built-in hook, warns that Python is faster, and offers help installing
   Python (python.org page, or Apple's Command Line Tools installer) - nothing is installed without your confirmation.

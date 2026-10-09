@@ -4,7 +4,8 @@
 # Windows: one folder, dist/AIPet, with AIPet.exe and aipet-hook.exe sharing one Python runtime (_internal), instead
 # of a single exe that carried a second, private runtime for the hook. hook_files.txt lists the runtime files the hook
 # needs; on Install the app copies aipet-hook.exe plus those files to ~/.aipet/bin/hook (hooks_installer.deploy_files),
-# so the installed hooks keep working wherever the folder is moved. macOS still bundles the separately built hook.
+# so the installed hooks keep working wherever the folder is moved. macOS bundles the separately built hook;
+# build_mac.sh then shares its identical Python library via tools/share_mac_runtime.py and re-signs the bundle.
 # It does what the old command lines did, minus what AIPet never uses, to keep the download small:
 # - Pillow's AVIF, WebP, colour-management, maths and FreeType modules (AIPet only reads and writes PNG / ICO and draws
 #   shapes; Pillow skips image formats whose modules are missing, and ImageFont only fails if text is actually drawn);
