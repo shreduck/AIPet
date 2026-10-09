@@ -49,3 +49,33 @@ class MacRuntimeSharingTests(unittest.TestCase):
                 share_runtime(root)
             self.assertFalse(duplicate.is_symlink())
             self.assertEqual(duplicate.read_bytes(), b'hook')
+
+    def test_identical_hook_files_link_to_the_app_and_deploy_as_copies(self):
+        from tools.share_mac_runtime import share_identical_files
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            contents = root / 'AIPet.app/Contents'
+            for area, rel, app_data, hook_data in (
+                    ('Frameworks', 'lib-dynload/unicodedata.so', b'same', b'same'),
+                    ('Resources', 'base_library.zip', b'zip', b'zip'),
+                    ('Frameworks', 'lib-dynload/_json.so', b'app', b'hook')):  # differs: stays a copy
+                for path, data in ((contents / area / rel, app_data), (contents / area / 'hook/_internal' / rel, hook_data)):
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(data)
+            self.assertEqual(share_identical_files(root / 'AIPet.app'), len(b'same') + len(b'zip'))
+            linked = contents / 'Frameworks/hook/_internal/lib-dynload/unicodedata.so'
+            self.assertTrue(linked.is_symlink())
+            self.assertFalse(linked.readlink().is_absolute())
+            self.assertFalse((contents / 'Frameworks/hook/_internal/lib-dynload/_json.so').is_symlink())
+            self.assertTrue((contents / 'Resources/hook/_internal/base_library.zip').is_symlink())
+            self.assertEqual(share_identical_files(root / 'AIPet.app'), 0)  # safe to repeat
+            frameworks = contents / 'Frameworks'
+            for name in ('aipet_hook.py', 'aipet_usage.py', 'aipet_claude_usage.py'):
+                (frameworks / name).write_text('# test')
+            target = root / 'deployed'
+            with patch.object(hi, 'resource_path', lambda *parts: str(frameworks.joinpath(*parts))), \
+                    patch.object(hi, 'INSTALL_DIR', str(target)), patch.object(hi, 'PET_DIR', str(root / 'config')):
+                hi.deploy_files()
+            installed = target / 'hook/_internal/lib-dynload/unicodedata.so'
+            self.assertFalse(installed.is_symlink())
+            self.assertEqual(installed.read_bytes(), b'same')

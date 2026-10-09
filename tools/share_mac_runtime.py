@@ -60,11 +60,39 @@ def share_runtime(bundle):
     return sum(size for _source, _target, size in replacements)
 
 
+def share_identical_files(bundle):
+    """Every other file the hook's runtime has in common with the app (extension modules, base_library.zip, Tcl /
+    certificate data...) becomes a relative link to the app's copy, like the Python library above. Only byte-identical
+    regular files are linked; deploy_files copies through the links, so the installed hook stays independent."""
+    contents = Path(bundle).resolve() / "Contents"
+    saved = 0
+    for area in ("Frameworks", "Resources"):
+        internal = contents / area / "hook" / "_internal"
+        if not internal.is_dir():
+            continue
+        for file in sorted(internal.rglob("*")):
+            if not file.is_file() or file.is_symlink() or "_CodeSignature" in file.parts:
+                continue
+            folders = [internal / parent for parent in file.relative_to(internal).parents if parent != Path(".")]
+            if any(folder.is_symlink() for folder in folders):
+                continue  # inside a linked folder (already shared)
+            twin = contents / area / file.relative_to(internal)
+            if twin.is_symlink() or not twin.is_file() or not filecmp.cmp(file, twin, shallow=False):
+                continue
+            size = file.stat().st_size
+            link = file.with_name(file.name + ".shared")
+            link.symlink_to(os.path.relpath(twin, file.parent))
+            os.replace(link, file)
+            saved += size
+    return saved
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("bundle", type=Path)
     args = parser.parse_args()
     saved = share_runtime(args.bundle)
+    saved += share_identical_files(args.bundle)
     # PyInstaller's ad-hoc signature covered the old layout. Re-sign after the
     # symlink change; a release signing identity can be applied after this step.
     subprocess.run(["/usr/bin/codesign", "--force", "--deep", "--sign", "-", str(args.bundle)], check=True)

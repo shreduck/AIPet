@@ -29,6 +29,8 @@ jobs:
           python-version: "3.12"
       - name: Build
         shell: cmd
+        env:
+          PY: python  # the 3.12 above (Tcl/Tk 8.6, smaller than 3.14's Tcl 9), not the newest Python the py launcher finds
         run: build.bat
       - uses: actions/upload-artifact@v4
         with:

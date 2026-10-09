@@ -32,7 +32,15 @@ EXCLUDES = [
     # OpenSSL: the two HTTPS requests (update check, opt-in Claude usage) go through the system's curl instead
     # (aipet_usage.https_get_json), and hashlib falls back to Python's built-in hashes
     "ssl", "_ssl", "_hashlib", "certifi",
+    # legacy East Asian text codecs (AIPet reads and writes UTF-8 only) and Python 3.14's zstd
+    "_multibytecodec", "_codecs_cn", "_codecs_hk", "_codecs_iso2022", "_codecs_jp", "_codecs_kr", "_codecs_tw",
+    "_zstd", "compression.zstd",
 ]
+if IS_MAC:
+    # PyObjC comes along with pystray, which only runs on Windows here (the Mac menu bar talks to macOS through
+    # ctypes, mac_statusbar.py); decimal is only needed by Windows' comtypes
+    EXCLUDES += ["pystray", "objc", "AppKit", "Foundation", "CoreFoundation", "Quartz", "PyObjCTools", "decimal",
+                 "_decimal"]
 # hashlib's built-in hashes (without OpenSSL it imports these lazily, by name)
 HASH_IMPORTS = ["_md5", "_sha1", "_sha2", "_sha3", "_blake2"]
 
@@ -43,6 +51,12 @@ HOOK_EXCLUDES = ["tkinter", "_tkinter", "PIL", "pystray", "pyvda", "comtypes", "
 TCL_TK_ROOTS = {"_tcl_data", "_tk_data", "tcl", "tk"}
 TCL_TK_SKIP = {"tzdata", "msgs", "images", "demos"}
 
+
+# Tcl's text encodings: keep the ones Windows and macOS use as system / console code pages (Western, Central and
+# Eastern European, Greek, Turkish, Baltic, Thai, Japanese, Chinese, Korean); UTF-8 and Latin-1 are built into Tcl
+TCL_ENCODINGS_KEEP = {"ascii", "macRoman", "koi8-r", "koi8-u"} | {f"cp{n}" for n in (
+    437, 737, 775, 850, 852, 855, 857, 860, 861, 862, 863, 864, 865, 866, 869, 874, 932, 936, 949, 950,
+    1250, 1251, 1252, 1253, 1254, 1255, 1256, 1257, 1258)} | {f"iso8859-{n}" for n in range(1, 17)}
 
 # Tcl modules (tcl8/8.x/*.tm) nothing loads: Tcl's test framework and its HTTP client
 TCL_MODULE_SKIP = ("tcltest-", "http-")
@@ -55,6 +69,9 @@ def slim(toc):
         if parts[0] in TCL_TK_ROOTS and TCL_TK_SKIP.intersection(parts[1:-1]):
             continue
         if parts[0] == "tcl8" and parts[-1].startswith(TCL_MODULE_SKIP):
+            continue
+        if parts[0] in TCL_TK_ROOTS and "encoding" in parts[1:-1] and parts[-1].endswith(".enc") \
+                and parts[-1][:-4] not in TCL_ENCODINGS_KEEP:
             continue
         kept.append(entry)
     return kept
