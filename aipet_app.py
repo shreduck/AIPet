@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AIPet - tray application (entry point for AIPet.exe).
+AIPet - tray application (entry point for AIPet.exe, in the AIPet folder).
 
 * Floating pet window (aipet.PetApp) that can be hidden to the system tray.
 * Tray icon changes colour with the most urgent session and shows a Windows
@@ -127,6 +127,29 @@ def autostart_enabled():
             return True
     except OSError:
         return False
+
+
+def refresh_autostart_path():
+    """Start with Windows / at login keeps pointing at the AIPet you actually run: a portable folder that was moved,
+    or a new version unzipped somewhere else (or the old single-file exe replaced by the folder), would otherwise start
+    the old copy - or nothing - at the next sign-in. Only touches an entry that is already on."""
+    if not getattr(sys, "frozen", False) or not autostart_enabled():
+        return
+    try:
+        if IS_MAC:
+            import plistlib
+            with open(LAUNCH_AGENT, "rb") as f:
+                current = plistlib.load(f).get("ProgramArguments") or []
+            if current[:1] != [sys.executable]:
+                set_autostart(True)
+        elif os.name == "nt":
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+                current = winreg.QueryValueEx(k, "AIPet")[0]
+            if os.path.normcase(str(current).strip('" ')) != os.path.normcase(sys.executable):
+                set_autostart(True)
+    except Exception as e:
+        core.log_error(f"autostart path: {e!r}")
 
 
 def set_autostart(on):
@@ -353,6 +376,7 @@ class TrayApp:
             self.refresh_menu()
 
     def _startup_jobs(self):
+        refresh_autostart_path()
         self._check_autostart()
         try:
             hi.migrate_legacy_backups()  # pull backups over from the old %LOCALAPPDATA% location
@@ -953,8 +977,9 @@ class TrayApp:
         choice = core.themed_dialog(
             self.root, f"{APP_NAME} - update", kind="info", heading=f"AIPet {latest['tag']} is available",
             text=(f"You have {upd.short(self.version)}. The new version is on the release page: download "
-                  f"{'AIPet-mac-arm64.zip' if IS_MAC else 'AIPet.exe'}, quit AIPet (tray > Quit) and replace your copy "
-                  "with it. Your settings, hooks and backups in ~/.aipet are kept.\n\n"
+                  f"{'AIPet-mac-arm64.zip' if IS_MAC else 'AIPet-windows-x64.zip'}, quit AIPet (tray > Quit) and "
+                  f"{'replace your copy with the app inside' if IS_MAC else 'unzip it over your AIPet folder'}. "
+                  "Your settings, hooks and backups in ~/.aipet are kept.\n\n"
                   "The menus show the update until you install it."),
             buttons=(("Skip this version", "skip", "secondary"), ("Later", "later", "secondary"),
                      ("Open release page", "open", "primary")), cancel="later")

@@ -10,18 +10,16 @@ echo [1/3] Installing build dependencies...
 echo Version...
 %PY% tools\write_version.py || goto :err
 
-echo [2/3] Building the hook (no console, fast start)...
-%PY% -m PyInstaller --noconfirm --clean --windowed --onedir --collect-data certifi ^
-  --exclude-module tkinter --exclude-module PIL --exclude-module unittest --exclude-module pydoc --exclude-module doctest --exclude-module pdb --exclude-module sqlite3 --exclude-module lzma ^
-  --exclude-module bz2 --exclude-module decimal ^
-  --name aipet-hook aipet_hook.py || goto :err
-
-echo [3/3] Building AIPet.exe...
-rem aipet_app.spec: the files, icon and hidden imports, minus what AIPet never uses (keeps the exe smaller)
+echo [2/3] Building the AIPet folder (AIPet.exe and aipet-hook.exe sharing one runtime)...
+rem aipet_app.spec: the files, icon and hidden imports, minus what AIPet never uses (keeps the download small)
 %PY% -m PyInstaller --noconfirm --clean aipet_app.spec || goto :err
 
+echo [3/3] Zipping the portable app...
+if exist dist\AIPet-windows-x64.zip del dist\AIPet-windows-x64.zip
+powershell -NoProfile -Command "Compress-Archive -Path dist\AIPet -DestinationPath dist\AIPet-windows-x64.zip" || goto :err
+
 echo.
-echo Done: dist\AIPet.exe
+echo Done: dist\AIPet (run AIPet.exe in it) and dist\AIPet-windows-x64.zip
 exit /b 0
 
 :err

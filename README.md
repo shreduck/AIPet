@@ -68,13 +68,17 @@ Finished pets show a green checkmark seal; speech bubbles are reserved for activ
 Run **Actions → macOS self-test → Run workflow** after pushing your changes. Each `selftest-app` / `selftest-source` artifact includes a `spaces` folder with screenshots, native window flags, an HTTPS update check and `summary.json`. The probe checks desktop visibility on/off, hide/show, and compact resizing. It also tries to create and switch to a second Space, verifying the switch with a separate window that stays on the original desktop. Accessibility or desktop automation restrictions are reported as **skipped**, rather than a successful desktop test. Full-screen application visibility still needs a check on a real Mac. Share both artifacts to diagnose failures.
 
 ## Build the exe
-On Windows with Python 3.10+, double-click **`build.bat`**. It produces `dist\AIPet.exe` (single file).
-**Prebuilt:** the **Build AIPet** GitHub Actions workflow runs on every push to `master` (or by hand) and publishes `AIPet.exe` and an Apple Silicon `AIPet-mac-arm64.zip` to the rolling **latest** release on the repo's [Releases](../../releases) page; pushing a `v*` tag makes a versioned release. No binaries are committed. The Mac app is unsigned: unzip it, then right-click it and choose *Open* the first time.
+On Windows with Python 3.10+, double-click **`build.bat`**. It produces the portable folder `dist\AIPet` (with
+`AIPet.exe` and `aipet-hook.exe` sharing one Python runtime in `_internal`) and the same folder zipped as
+`dist\AIPet-windows-x64.zip`. The build recipe is `aipet_app.spec`.
+**Prebuilt:** the **Build AIPet** GitHub Actions workflow runs on every push to `master` (or by hand) and publishes `AIPet-windows-x64.zip` and an Apple Silicon `AIPet-mac-arm64.zip` to the rolling **latest** release on the repo's [Releases](../../releases) page; pushing a `v*` tag makes a versioned release. No binaries are committed. The Mac app is unsigned: unzip it, then right-click it and choose *Open* the first time.
 
 The exe is unsigned, so the first time you run it SmartScreen may show "Windows protected your PC". Click *More info → Run anyway*.
 
 ## Use it
-Run `AIPet.exe`. The pet appears bottom-right and a tray icon appears near the clock.
+Unzip `AIPet-windows-x64.zip` anywhere (it's a portable app: nothing is installed) and run `AIPet.exe` inside the
+`AIPet` folder. The pet appears bottom-right and a tray icon appears near the clock. Installing hooks copies the hook
+and the part of the runtime it needs to `~\.aipet\bin`, so the folder can be moved or replaced later.
 
 **Pet and menu-bar / tray menus**
 Both menus share these sections; right-clicking a pet adds **This session** for details, opening its window or folder,
@@ -326,7 +330,7 @@ The VS Code extension does not send `PermissionRequest` events, so its prompts k
 Once a day (and from *Check for updates...* in the tray or menu-bar icon's menu) AIPet asks GitHub for the newest
 published release, i.e. the newest `vX.Y.Z` tag (the rolling *latest* pre-release is ignored). If it is newer than the
 running copy, a popup offers *Open release page*, *Later* or *Skip this version*, and the menus show *Update available:
-vX.Y.Z...* until you install it. Nothing is downloaded or installed automatically: download the new `AIPet.exe` /
+vX.Y.Z...* until you install it. Nothing is downloaded or installed automatically: download the new `AIPet-windows-x64.zip` /
 `AIPet-mac-arm64.zip`, quit AIPet and replace your copy (settings, hooks and backups in `~/.aipet` are kept).
 - On by default; turn the daily check off with *Check for updates automatically* in the tray / menu-bar menu (saved
   as `update_check`). Updates are available under **Help → Updates** in both menus.

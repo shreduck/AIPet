@@ -1,6 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller recipe for AIPet.exe (Windows, one file) and AIPet.app (macOS). Used by build.bat and build_mac.sh:
+# PyInstaller recipe for AIPet (Windows: a portable folder) and AIPet.app (macOS). Used by build.bat and build_mac.sh:
 #     python -m PyInstaller --noconfirm --clean aipet_app.spec
+# Windows: one folder, dist/AIPet, with AIPet.exe and aipet-hook.exe sharing one Python runtime (_internal), instead
+# of a single exe that carried a second, private runtime for the hook. hook_files.txt lists the runtime files the hook
+# needs; on Install the app copies aipet-hook.exe plus those files to ~/.aipet/bin/hook (hooks_installer.deploy_files),
+# so the installed hooks keep working wherever the folder is moved. macOS still bundles the separately built hook.
 # It does what the old command lines did, minus what AIPet never uses, to keep the download small:
 # - Pillow's AVIF, WebP, colour-management, maths and FreeType modules (AIPet only reads and writes PNG / ICO and draws
 #   shapes; Pillow skips image formats whose modules are missing, and ImageFont only fails if text is actually drawn);
@@ -26,6 +30,9 @@ EXCLUDES = [
     "lzma", "_lzma", "bz2", "_bz2",
 ]
 
+# The hook needs none of the window toolkit or images
+HOOK_EXCLUDES = ["tkinter", "_tkinter", "PIL", "pystray", "pyvda", "comtypes", "decimal"]
+
 # Folders inside Tcl's and Tk's own library trees that AIPet doesn't need
 TCL_TK_ROOTS = {"_tcl_data", "_tk_data", "tcl", "tk"}
 TCL_TK_SKIP = {"tzdata", "msgs", "images", "demos"}
@@ -41,7 +48,7 @@ def slim(toc):
     return kept
 
 
-datas = [(HOOK, "hook"), ("aipet_hook.py", "."), ("aipet_usage.py", "."), ("aipet_claude_usage.py", "."),
+datas = ([(HOOK, "hook")] if IS_MAC else []) + [("aipet_hook.py", "."), ("aipet_usage.py", "."), ("aipet_claude_usage.py", "."),
          (os.path.join("assets", "sprites"), os.path.join("assets", "sprites"))]
 datas += collect_data_files("certifi")
 hiddenimports = [] if IS_MAC else ["pystray._win32"] + collect_submodules("pyvda")
@@ -80,17 +87,50 @@ if IS_MAC:
     app = BUNDLE(coll, name="AIPet.app", icon=os.path.join("assets", "aipet.icns"),
                  bundle_identifier="com.aipet.app")
 else:
+    # the hook: a second program in the same folder, sharing the app's runtime
+    h = Analysis(
+        ["aipet_hook.py"],
+        pathex=[],
+        binaries=[],
+        datas=collect_data_files("certifi"),
+        hiddenimports=[],
+        hookspath=[],
+        hooksconfig={},
+        runtime_hooks=[],
+        excludes=EXCLUDES + HOOK_EXCLUDES,
+        noarchive=False,
+        optimize=0,
+    )
+    hook_pyz = PYZ(h.pure)
+    # What the hook needs from _internal, for the copy in ~/.aipet/bin/hook
+    needed = sorted({entry[0].replace("\\", "/") for entry in h.binaries + h.datas} | {"base_library.zip"})
+    manifest = os.path.join(SPECPATH, "build", "hook_files.txt")
+    os.makedirs(os.path.dirname(manifest), exist_ok=True)
+    with open(manifest, "w", encoding="utf-8") as f:
+        f.write("\n".join(needed) + "\n")
+    a.datas += [("hook_files.txt", manifest, "DATA")]
+
     exe = EXE(
         pyz,
         a.scripts,
-        a.binaries,
-        a.datas,
         [],
+        exclude_binaries=True,
         name="AIPet",
         debug=False,
         strip=False,
         upx=False,  # UPX-packed exes trip antivirus false alarms more often
-        runtime_tmpdir=None,
         console=False,
         icon=[os.path.join("assets", "aipet.ico")],
     )
+    hook_exe = EXE(
+        hook_pyz,
+        h.scripts,
+        [],
+        exclude_binaries=True,
+        name="aipet-hook",
+        debug=False,
+        strip=False,
+        upx=False,
+        console=False,  # no console window flashes when Claude Code / Codex run it
+    )
+    coll = COLLECT(exe, hook_exe, a.binaries, a.datas, h.binaries, h.datas, strip=False, upx=False, name="AIPet")

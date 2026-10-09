@@ -1,6 +1,6 @@
 name: Build AIPet
 
-# Builds AIPet.exe (Windows) and AIPet.app (macOS, Apple Silicon) and publishes them as GitHub Release
+# Builds AIPet (Windows, a portable folder zipped as AIPet-windows-x64.zip) and AIPet.app (macOS, Apple Silicon) and publishes them as GitHub Release
 # assets of this repo, so no binaries are committed:
 #   push to master  -> the rolling "latest" release (re-created on every build, marked pre-release)
 #   push a v* tag   -> a release for that version
@@ -33,7 +33,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: AIPet-windows
-          path: dist/AIPet.exe
+          path: dist/AIPet-windows-x64.zip
           if-no-files-found: error
 
   macos-arm64:
@@ -75,7 +75,7 @@ jobs:
       - name: Collect files
         run: |
           mkdir -p out
-          cp artifacts/AIPet-windows/AIPet.exe out/
+          cp artifacts/AIPet-windows/AIPet-windows-x64.zip out/
           cp artifacts/AIPet-mac-arm64/AIPet-mac-arm64.zip out/
           ls -la out
       - name: Version release
@@ -96,5 +96,5 @@ jobs:
             --title "Latest build (${GITHUB_SHA::7})" \
             --notes "Automatic build of ${GITHUB_SHA} on ${GITHUB_REF_NAME}.
 
-          - **Windows:** \`AIPet.exe\` (unsigned: SmartScreen > More info > Run anyway)
+          - **Windows:** \`AIPet-windows-x64.zip\`: unzip anywhere and run \`AIPet.exe\` inside (unsigned: SmartScreen > More info > Run anyway)
           - **macOS, Apple Silicon:** \`AIPet-mac-arm64.zip\` (unsigned: unzip, then right-click the app > Open the first time)"

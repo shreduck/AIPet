@@ -313,6 +313,29 @@ def _sync_file(src, dst):
             pass
 
 
+def _deploy_shared_hook():
+    """Windows folder build: aipet-hook.exe sits next to AIPet.exe and shares its runtime (_internal). Copy it plus
+    the runtime files it needs (listed in hook_files.txt at build time) to ~/.aipet/bin/hook, the same layout the
+    separately built hook had, so installed hooks keep working wherever the AIPet folder is moved or deleted."""
+    manifest = resource_path("hook_files.txt")
+    exe = os.path.join(os.path.dirname(sys.executable), "aipet-hook.exe")
+    if not (getattr(sys, "frozen", False) and os.path.isfile(manifest) and os.path.isfile(exe)):
+        return
+    with open(manifest, encoding="utf-8") as f:
+        names = [ln.strip() for ln in f if ln.strip()]
+    target = os.path.join(INSTALL_DIR, "hook")
+    _sync_file(exe, os.path.join(target, "aipet-hook.exe"))
+    runtime = resource_path()  # the folder build's _internal
+    for name in names:
+        src = os.path.normpath(os.path.join(runtime, name))
+        if not src.startswith(os.path.normpath(runtime) + os.sep) or not os.path.isfile(src):
+            continue  # never outside _internal; a listed file the build didn't keep is skipped
+        try:
+            _sync_file(src, os.path.normpath(os.path.join(target, "_internal", name)))
+        except OSError:
+            pass  # leave the existing copy in place (a running hook holds it)
+
+
 def deploy_files(only_if_deployed=False):
     """Copy the hook (exe + script) to ~/.aipet/bin so settings can point at a stable path.
 
@@ -327,6 +350,7 @@ def deploy_files(only_if_deployed=False):
     _sync_file(resource_path("aipet_hook.py"), os.path.join(INSTALL_DIR, "aipet_hook.py"))
     _sync_file(resource_path("aipet_usage.py"), os.path.join(INSTALL_DIR, "aipet_usage.py"))
     _sync_file(resource_path("aipet_claude_usage.py"), os.path.join(INSTALL_DIR, "aipet_claude_usage.py"))
+    _deploy_shared_hook()
     src = resource_path("hook")
     if os.path.isdir(src):
         for root, _dirs, files in os.walk(src):
