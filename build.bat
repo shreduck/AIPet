@@ -16,7 +16,7 @@ rem aipet_app.spec: the files, icon and hidden imports, minus what AIPet never u
 
 echo [3/3] Zipping the portable app...
 if exist dist\AIPet-windows-x64.zip del dist\AIPet-windows-x64.zip
-powershell -NoProfile -Command "Compress-Archive -Path dist\AIPet -DestinationPath dist\AIPet-windows-x64.zip" || goto :err
+powershell -NoProfile -Command "Compress-Archive -Path dist\AIPet -DestinationPath dist\AIPet-windows-x64.zip -Force -ErrorAction Stop" || goto :err
 
 echo.
 echo Done: dist\AIPet (run AIPet.exe in it) and dist\AIPet-windows-x64.zip
