@@ -118,6 +118,14 @@ class QuestionTests(unittest.TestCase):
         rec = dict(self.record(), notifies=True)
         self.assertFalse(aipet.unconfirmed_prompts(rec, now=rec["request"]["t"] + 600))
 
+    def test_question_answered_in_claude_settles_it(self):
+        hook._update_session(self.path, self.target, "PermissionRequest", self.data, False)
+        done = {"session_id": "s", "hook_event_name": "PostToolUse", "tool_name": "AskUserQuestion",
+                "tool_use_id": "toolu_9", "tool_input": dict(QUESTIONS, answers={"Which fruit?": "Apple"})}
+        hook._update_session(self.path, self.target, "PostToolUse", done, False)
+        rec = self.record()
+        self.assertEqual((rec["state"], rec["requests"]), ("working", []))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -23,6 +23,9 @@ class SharedHookDeployTests(unittest.TestCase):
             with open(os.path.join(internal, "hook_files.txt"), "w") as f:
                 f.write("python313.dll\nbase_library.zip\ncertifi/cacert.pem\n../outside.txt\nmissing.dll\n")
             bin_dir = os.path.join(tmp, "bin")
+            stale = os.path.join(bin_dir, "hook", "_internal", "python314.dll")  # left by an older build
+            os.makedirs(os.path.dirname(stale))
+            open(stale, "wb").close()
             with patch.object(hi.sys, "frozen", True, create=True), \
                     patch.object(hi.sys, "_MEIPASS", internal, create=True), \
                     patch.object(hi.sys, "executable", os.path.join(app, "AIPet.exe")), \
@@ -34,6 +37,7 @@ class SharedHookDeployTests(unittest.TestCase):
                 self.assertTrue(os.path.isfile(os.path.join(hook, "_internal", name)), name)
             self.assertFalse(os.path.exists(os.path.join(hook, "_internal", "tk86t.dll")))  # not the hook's
             self.assertFalse(os.path.exists(os.path.join(hook, "outside.txt")))  # never outside _internal
+            self.assertFalse(os.path.exists(stale))  # leftovers of older builds are cleaned up
 
     def test_source_runs_and_single_file_builds_do_nothing(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(hi, "INSTALL_DIR", tmp):

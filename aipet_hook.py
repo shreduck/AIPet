@@ -466,6 +466,9 @@ def tool_signature(data):
     Claude Code adds or normalises other fields (timeout, description...) between the two events."""
     inp = data.get("tool_input")
     key = ""
+    if data.get("tool_name") == QUESTION_TOOL and isinstance(inp, dict):
+        # The question texts only: once answered, Claude Code's tool_input also carries the answers
+        inp = {"questions": [q.get("question") for q in inp.get("questions") or [] if isinstance(q, dict)]}
     if isinstance(inp, dict):
         key = next((str(inp[k]) for k in ("command", "file_path", "path", "url", "pattern", "query", "prompt")
                     if inp.get(k)), "")
@@ -1013,6 +1016,8 @@ def _update_session(path, target, event, data, wsl, auto=None):
             mine = [None]
         if not mine:  # not linked by id: the same tool with the same input, oldest first
             mine = [r for r in requests if not r.get("tool_use_id") and r.get("sig") == sig][:1]
+        if not mine and data.get("tool_name") == QUESTION_TOOL:  # a question that was answered: the oldest one
+            mine = [r for r in requests if r.get("kind") == "question" and r.get("tool") == QUESTION_TOOL][:1]
         if not mine:  # a record from before prompts were tracked one by one
             mine = [r for r in requests if not r.get("sig") and r.get("source") != "transcript"][:1]
         requests = [r for r in requests if r not in mine]

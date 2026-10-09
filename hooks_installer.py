@@ -334,6 +334,22 @@ def _deploy_shared_hook():
             _sync_file(src, os.path.normpath(os.path.join(target, "_internal", name)))
         except OSError:
             pass  # leave the existing copy in place (a running hook holds it)
+    # Leftovers of earlier builds (another Python version, modules the hook no longer uses) only take space
+    keep = {os.path.normcase(os.path.normpath(n)) for n in names}
+    internal = os.path.join(target, "_internal")
+    for root, _dirs, files in os.walk(internal, topdown=False):
+        for fname in files:
+            rel = os.path.relpath(os.path.join(root, fname), internal)
+            if os.path.normcase(os.path.normpath(rel)) not in keep:
+                try:
+                    os.remove(os.path.join(root, fname))
+                except OSError:
+                    pass  # in use by a hook that's running right now: next time
+        if root != internal:
+            try:
+                os.rmdir(root)  # only succeeds when empty
+            except OSError:
+                pass
 
 
 def deploy_files(only_if_deployed=False):
