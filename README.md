@@ -71,7 +71,8 @@ Run **Actions → macOS self-test → Run workflow** after pushing your changes.
 On Windows with Python 3.10+, double-click **`build.bat`**. It produces the portable folder `dist\AIPet` (with
 `AIPet.exe` and `aipet-hook.exe` sharing one Python runtime in `_internal`) and the same folder zipped as
 `dist\AIPet-windows-x64.zip`. The build recipe is `aipet_app.spec`.
-**Prebuilt:** the **Build AIPet** GitHub Actions workflow runs on every push to `master` (or by hand) and publishes `AIPet-windows-x64.zip` and an Apple Silicon `AIPet-mac-arm64.zip` to the rolling **latest** release on the repo's [Releases](../../releases) page; pushing a `v*` tag makes a versioned release. No binaries are committed. The Mac app is unsigned: unzip it, then right-click it and choose *Open* the first time.
+**Prebuilt:** the **Build AIPet** GitHub Actions workflow runs on every push to `master` (or by hand) and publishes `AIPet-windows-x64.zip`, an Apple Silicon `AIPet-mac-arm64.zip` and the same app as a smaller
+`AIPet-mac-arm64.dmg`, plus `AIPet-all-platforms.zip` (the Windows zip and the Mac disk image in one file), to the rolling **latest** release on the repo's [Releases](../../releases) page; pushing a `v*` tag makes a versioned release. No binaries are committed. The Mac app is unsigned: unzip it, then right-click it and choose *Open* the first time.
 
 The exe is unsigned, so the first time you run it SmartScreen may show "Windows protected your PC". Click *More info → Run anyway*.
 

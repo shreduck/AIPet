@@ -55,10 +55,22 @@ jobs:
         run: file dist/AIPet.app/Contents/MacOS/AIPet | tee /dev/stderr | grep -q arm64
       - name: Zip app
         run: ditto -c -k --keepParent dist/AIPet.app AIPet-mac-arm64.zip  # keeps the bundle's symlinks
+      - name: Disk image
+        # The same app as a .dmg: LZMA-compressed (ULMO, macOS 10.15+), so noticeably smaller than the zip, with an
+        # Applications link to drag it onto. The zip stays the release download the update message points to.
+        run: |
+          mkdir -p dmg
+          ditto dist/AIPet.app dmg/AIPet.app
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname AIPet -srcfolder dmg -fs HFS+ -format ULMO -ov AIPet-mac-arm64.dmg
+          hdiutil verify AIPet-mac-arm64.dmg
+          ls -la AIPet-mac-arm64.zip AIPet-mac-arm64.dmg
       - uses: actions/upload-artifact@v4
         with:
           name: AIPet-mac-arm64
-          path: AIPet-mac-arm64.zip
+          path: |
+            AIPet-mac-arm64.zip
+            AIPet-mac-arm64.dmg
           if-no-files-found: error
 
   release:
@@ -81,6 +93,32 @@ jobs:
           mkdir -p out
           cp artifacts/AIPet-windows/AIPet-windows-x64.zip out/
           cp artifacts/AIPet-mac-arm64/AIPet-mac-arm64.zip out/
+          cp artifacts/AIPet-mac-arm64/AIPet-mac-arm64.dmg out/
+          ls -la out
+      - name: All-platform bundle
+        # One zip with the Windows build and the Mac disk image, for catalogues that take a single file with a size
+        # limit. Both are already compressed, so they are stored as they are.
+        run: |
+          mkdir -p bundle
+          cp out/AIPet-windows-x64.zip out/AIPet-mac-arm64.dmg bundle/
+          cat > bundle/README.txt <<'TXT'
+          AIPet - a desktop pet for your AI sessions (Claude Code, Claude Cowork, Codex)
+          https://github.com/shreduck/AIPet
+
+          Windows 10/11: unzip AIPet-windows-x64.zip anywhere and run AIPet.exe inside the AIPet folder.
+            The app is unsigned: in SmartScreen choose More info > Run anyway.
+          macOS (Apple Silicon): open AIPet-mac-arm64.dmg and drag AIPet to Applications.
+            The app is unsigned: the first time, right-click AIPet > Open.
+
+          On first start AIPet lists the Claude Code and Codex installs it found; tick the ones to hook up.
+          Cowork needs the plugin zip AIPet builds (Integrations > Claude Code hooks > Cowork).
+          TXT
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile("out/AIPet-all-platforms.zip", "w", zipfile.ZIP_STORED) as z:
+              for name in ("AIPet-windows-x64.zip", "AIPet-mac-arm64.dmg", "README.txt"):
+                  z.write("bundle/" + name, name)
+          PY
           ls -la out
       - name: Version release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -101,4 +139,5 @@ jobs:
             --notes "Automatic build of ${GITHUB_SHA} on ${GITHUB_REF_NAME}.
 
           - **Windows:** \`AIPet-windows-x64.zip\`: unzip anywhere and run \`AIPet.exe\` inside (unsigned: SmartScreen > More info > Run anyway)
-          - **macOS, Apple Silicon:** \`AIPet-mac-arm64.zip\` (unsigned: unzip, then right-click the app > Open the first time)"
+          - **macOS, Apple Silicon:** \`AIPet-mac-arm64.zip\` or \`AIPet-mac-arm64.dmg\` (unsigned: right-click the app > Open the first time)
+          - **Both in one file:** \`AIPet-all-platforms.zip\` (the Windows zip and the Mac disk image)"
