@@ -3,7 +3,7 @@
 <table align="center">
   <tr>
     <td align="center"><a href="https://github.com/shreduck"><img src="assets/readme/shreduck.png" width="96" height="96" alt="shreduck"></a></td>
-    <td align="center"><img src="https://github.com/anthropics.png?size=96" width="96" height="96" alt="Claude (Anthropic)"></td>
+    <td align="center"><a href="https://github.com/claude"><img src="https://github.com/claude.png?size=96" width="96" height="96" alt="Claude"></a></td>
     <td align="center"><img src="https://github.com/openai.png?size=96" width="96" height="96" alt="Codex (OpenAI)"></td>
   </tr>
   <tr>
