@@ -51,10 +51,10 @@ class MenuTests(unittest.TestCase):
         self.assertEqual(labels(context[5:]), labels(shared[2:]))
         menu = {e['label']: e for e in app._mac_menu_spec() if e}
         self.assertTrue({'Appearance', 'Behavior', 'Integrations', 'Permissions', 'Help'} <= menu.keys())
-        live = {e['label']: e for e in menu['Live Management']['submenu'] if e}
-        self.assertIn('Reset agent network appearance', live)  # also in the tray / menu bar and the AIPet menu
+        looks = [e['label'] for e in menu['Appearance']['submenu'] if e]
+        self.assertIn('Reset agent network appearance', looks)  # also in the tray / menu bar and the AIPet menu
         self.assertIn('Reset agent network appearance',
-                      [e['label'] for e in next(x for x in context if x and x['label'] == 'Live Management')['submenu'] if e])
+                      [e['label'] for e in next(x for x in context if x and x['label'] == 'Appearance')['submenu'] if e])
         self.assertNotIn('checked', menu['Hide pet'])
         permissions = {e['label']: e for e in menu['Permissions']['submenu'] if e}
         claude_toggle = permissions['Answer Claude Code prompts from the pet']

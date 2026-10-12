@@ -1369,6 +1369,9 @@ class TrayApp:
                      slider={"value": core.SCALE["v"] / core.SCALE_UNIT, "min": 0.3, "max": 3.0, "step": 0.05,
                              "set": self.pet.set_size, "format": lambda v: f"{int(round(v * 100))}%"}),
                 item("Reset pet size", self.pet.reset_scale, help="Back to the standard size."),
+                item("Reset agent network appearance", self.reset_agent_network,
+                     help="The agent network window's default look again (opacity, nodes, scale, title bar, compact, "
+                          "always on top, see-through), centred on the main screen."),
                 item("Compact mode (one pet)", self.pet.toggle_compact, checked=bool(cfg.get("compact")),
                      help="One pet stands in for every session, showing the one that needs you most."),
                 None,
@@ -1523,9 +1526,6 @@ class TrayApp:
                               for m in (5, 10, 15, 30, 60)]),
                 dict(self.agent_network_item(None), icon="link"),
                 self.agent_network_separate_item(),
-                item("Reset agent network appearance", self.reset_agent_network, icon="refresh",
-                     help="Back to the default look (opacity, nodes, scale, title bar, compact, always on top, "
-                          "see-through) and centred on the main screen."),
                 None]
         sessions = [d for d in self.pet._last_items if d.get("source") == "CC" and d.get("session_id")]
         for d in sessions:
