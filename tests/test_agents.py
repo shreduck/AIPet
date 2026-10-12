@@ -3,6 +3,8 @@ import os
 import tempfile
 import time
 import unittest
+from contextlib import ExitStack
+from unittest.mock import patch
 
 import aipet_agents as agents
 
@@ -65,8 +67,8 @@ class ClaudeNetworkTests(unittest.TestCase):
         with open(os.path.join(sub, "agent-bbb.meta.json"), "w") as f:
             json.dump({"agentType": "Plan"}, f)
         old = os.path.join(sub, "agent-old.jsonl")  # from an earlier turn
-        write_lines(old, [claude_user(now - 100, "earlier")])
-        os.utime(old, (now - 99, now - 99))
+        write_lines(old, [claude_user(now - 300, "earlier")])
+        os.utime(old, (now - 299, now - 299))
         for name in ("agent-aaa.jsonl", "agent-bbb.jsonl"):
             os.utime(os.path.join(sub, name), (now - 50, now - 50))
 
@@ -143,8 +145,96 @@ class ClaudeNetworkTests(unittest.TestCase):
         names = [a["name"] for a in agents.read_network(self.item(), now=self.now)["agents"]]
         self.assertEqual(names, ["main", "Explore #1", "Explore #2"])
 
+    def test_finished_agents_survive_new_turn_until_eighty_percent_timeout(self):
+        with open(self.transcript, "a", encoding="utf-8") as f:
+            f.write(json.dumps(claude_user(self.now, "next task")) + "\n")
+        with patch.dict(agents.core.DONE_TIMEOUT, v=3):
+            item = self.item(agent_ids={}, state="working", wait_agent="")
+            before = agents.read_network(item, now=self.now + 93)
+            self.assertEqual([a["id"] for a in before["agents"]], ["", "aaa", "bbb"])
+            after = agents.read_network(item, now=self.now + 94)
+            self.assertEqual([a["id"] for a in after["agents"]], [""])
+
+    def test_reusing_an_agent_resets_its_retention(self):
+        path = os.path.join(self.dir.name, "sess", "subagents", "agent-aaa.jsonl")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(claude_assistant(self.now + 90, [{"type": "text", "text": "reused"}])) + "\n")
+        os.utime(path, (self.now + 90, self.now + 90))
+        with patch.dict(agents.core.DONE_TIMEOUT, v=3):
+            item = self.item(agent_ids={}, state="working", wait_agent="")
+            self.assertEqual([a["id"] for a in agents.read_network(item, now=self.now + 200)["agents"]],
+                             ["", "aaa"])
+            self.assertEqual(len(agents.read_network(item, now=self.now + 234)["agents"]), 1)
+
+    def test_retention_follows_changes_to_session_setting(self):
+        item = self.item(agent_ids={}, state="done", wait_agent="")
+        with patch.dict(agents.core.DONE_TIMEOUT, v=1):
+            self.assertEqual(len(agents.read_network(item, now=self.now)["agents"]), 1)
+        with patch.dict(agents.core.DONE_TIMEOUT, v=5):
+            self.assertEqual(len(agents.read_network(item, now=self.now)["agents"]), 3)
+
+    def test_never_setting_keeps_finished_agents(self):
+        with patch.dict(agents.core.DONE_TIMEOUT, v=0):
+            net = agents.read_network(self.item(agent_ids={}, state="done"), now=self.now + 10000)
+            self.assertEqual({a["id"] for a in net["agents"]}, {"", "aaa", "bbb", "old"})
+
+    def test_expired_parent_stays_while_its_child_is_running(self):
+        sub = os.path.join(self.dir.name, "sess", "subagents")
+        write_lines(os.path.join(sub, "agent-ccc.jsonl"), [claude_user(self.now, "nested task")])
+        with open(os.path.join(sub, "agent-ccc.meta.json"), "w") as f:
+            json.dump({"agentType": "Nested", "parentAgentId": "aaa"}, f)
+        with patch.dict(agents.core.DONE_TIMEOUT, v=3):
+            net = agents.read_network(self.item(agent_ids={"ccc": "Nested"}, state="working", wait_agent=""),
+                                      now=self.now + 1000)
+            by = {a["id"]: a for a in net["agents"]}
+            self.assertEqual(set(by), {"", "aaa", "ccc"})
+            self.assertEqual((by["ccc"]["parent"], by["ccc"]["depth"]), ("aaa", 2))
+
+    def test_more_than_twelve_recent_agents_are_kept(self):
+        sub = os.path.join(self.dir.name, "sess", "subagents")
+        for i in range(13):
+            path = os.path.join(sub, f"agent-extra{i}.jsonl")
+            write_lines(path, [claude_user(self.now - 10, "task")])
+            os.utime(path, (self.now - 10, self.now - 10))
+        with patch.dict(agents.core.DONE_TIMEOUT, v=3):
+            net = agents.read_network(self.item(), now=self.now)
+            self.assertEqual(len(net["agents"]), 16)  # main, original two, and thirteen new agents
+
 
 class CodexNetworkTests(unittest.TestCase):
+    def test_child_hooks_keep_root_transcript_and_user_prompt(self):
+        import aipet_hook as hook
+        with tempfile.TemporaryDirectory() as root, ExitStack() as stack:
+            for name, value in (("AGENT", "codex"), ("find_claude_pid", None),
+                                ("find_host_window", (None, "")), ("is_cowork", False),
+                                ("codex_thread_name", ""), ("debug_log", None)):
+                stack.enter_context(patch.object(hook, name, value) if name == "AGENT"
+                                    else patch.object(hook, name, return_value=value))
+            parent = os.path.join(root, "rollout-2026-10-12T16-05-50-root.jsonl")
+            child = os.path.join(root, "rollout-2026-10-12T16-06-00-child.jsonl")
+            write_lines(parent, [{"type": "session_meta", "payload": {"id": "root"}}])
+            record = os.path.join(root, "root.json")
+            base = {"session_id": "root", "cwd": root}
+            hook._update_session(record, record, "UserPromptSubmit",
+                                 dict(base, transcript_path=parent, prompt="test nesting"), False)
+            for event in ("SubagentStart", "UserPromptSubmit", "PostToolUse", "SubagentStop"):
+                hook._update_session(record, record, event,
+                                     dict(base, agent_id="child", agent_type="default",
+                                          transcript_path=child, prompt="child task"), False)
+                current = hook.read_json(record)
+                self.assertEqual(current["transcript_path"], parent, event)
+                self.assertEqual(current["last_prompt"], "test nesting", event)
+            # Repair a session file already overwritten by a previous hook version.
+            self.assertEqual(hook.codex_session_transcript("root", child, child), parent)
+
+    def test_metadata_is_retried_after_empty_rollout_is_written(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "rollout-child.jsonl")
+            write_lines(path, [])
+            self.assertEqual(agents._codex_meta(path), {})
+            write_lines(path, [{"type": "session_meta", "payload": {"id": "child"}}])
+            self.assertEqual(agents._codex_meta(path)["id"], "child")
+
     def test_spawned_rollouts_become_subagents(self):
         with tempfile.TemporaryDirectory() as root:
             agents._TAILS.clear()
@@ -197,6 +287,32 @@ class CodexNetworkTests(unittest.TestCase):
             self.assertIn("started hello_one", texts)
             self.assertIn("exec(git status)", texts)
             self.assertIn("Just say hello", texts)
+            # During work an old hook record can point at a child; keep names and the full tree.
+            active = agents.read_network({"agent": "codex", "transcript_path": child, "state": "working",
+                                         "session_id": parent_id,
+                                         "agent_ids": {"child-1": "default", "child-2": "default"}}, now=now)
+            self.assertEqual([a["name"] for a in active["agents"]],
+                             ["main", "Faraday (hello_one)", "Noether (deeper)"])
+            self.assertEqual((active["agents"][2]["parent"], active["agents"][2]["depth"]), ("child-1", 2))
+            self.assertEqual(active["agents"][0]["path"], parent)
+            # A new root prompt does not remove finished Codex agents before their timer expires.
+            with open(parent, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"type": "response_item", "timestamp": iso(now + 10), "payload": {
+                    "type": "message", "role": "user", "content": [{"text": "next task"}]}}) + "\n")
+            for path in (child, grandchild):
+                os.utime(path, (now, now))
+            item = {"agent": "codex", "transcript_path": parent, "state": "working", "session_id": parent_id}
+            with patch.dict(agents.core.DONE_TIMEOUT, v=3):
+                self.assertEqual(len(agents.read_network(item, now=now + 143)["agents"]), 3)
+                self.assertEqual(len(agents.read_network(item, now=now + 144)["agents"]), 1)
+                # Reuse the nested agent: even an expired parent stays to preserve the branch.
+                with open(grandchild, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"type": "event_msg", "timestamp": iso(now + 200),
+                                        "payload": {"type": "task_started"}}) + "\n")
+                os.utime(grandchild, (now + 200, now + 200))
+                resumed = agents.read_network(item, now=now + 1000)
+                self.assertEqual([a["id"] for a in resumed["agents"]], ["", "child-1", "child-2"])
+                self.assertEqual((resumed["agents"][2]["state"], resumed["agents"][2]["depth"]), ("working", 2))
 
 
 class WindowLogicTests(unittest.TestCase):

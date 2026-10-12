@@ -1014,6 +1014,21 @@ def codex_thread_name(session_id, max_bytes=2_000_000):
         return ""
 
 
+def codex_session_transcript(session_id, transcript, previous=""):
+    """Keep the root rollout: Codex's active subagent hooks carry the child's path."""
+    suffix = f"-{session_id}.jsonl"
+    for candidate in (transcript, previous):
+        if candidate and os.path.basename(candidate).endswith(suffix):
+            return candidate
+    # Recover records written by older hooks, or a child event received before the root event.
+    for candidate in (transcript, previous):
+        if candidate:
+            matches = glob.glob(os.path.join(os.path.dirname(candidate), f"rollout-*{suffix}"))
+            if matches:
+                return max(matches, key=os.path.getmtime)
+    return ""
+
+
 def _update_session(path, target, event, data, wsl, auto=None):
     """Apply one hook event to the session file (call under SessionLock). Returns the agent id, if any.
     auto: this PermissionRequest is being auto-approved ("all" or "whitelist"), so the session keeps working."""
@@ -1024,6 +1039,9 @@ def _update_session(path, target, event, data, wsl, auto=None):
     # Subagents: their hook payloads (probably) carry an agent_id. Track the recently active ones so the pet can
     # show a stack, and so a subagent's tool call can't hide a permission prompt that belongs to someone else.
     aid = str(data.get("agent_id") or data.get("subagent_id") or "")
+    transcript = data.get("transcript_path") or prev.get("transcript_path", "")
+    if AGENT == "codex":
+        transcript = codex_session_transcript(session_id, transcript, prev.get("transcript_path", ""))
     t_now = time.time()
     agents = {k: v for k, v in (prev.get("agents") or {}).items() if t_now - v < 900}  # until SubagentStop (15 min safety)
     if event == "SubagentStop":
@@ -1192,7 +1210,7 @@ def _update_session(path, target, event, data, wsl, auto=None):
     pid = find_claude_pid() or prev.get("pid")
     topic = prev.get("topic", "")
     last_prompt = prev.get("last_prompt", "")
-    prompt_text = " ".join(str(data.get("prompt") or "").split()) if event == "UserPromptSubmit" else ""
+    prompt_text = " ".join(str(data.get("prompt") or "").split()) if event == "UserPromptSubmit" and not aid else ""
     if prompt_text.startswith("<"):  # injected by the harness (<task-notification>, <command-name>...), not typed
         prompt_text = ""
     if prompt_text:  # the latest prompt the user typed: the name until the harness has one
@@ -1247,7 +1265,7 @@ def _update_session(path, target, event, data, wsl, auto=None):
         "conv": conv,  # the conversation's name, shown when several sessions share a folder name
         "conv_src": conv_src,  # "custom" (/rename) or "generated"; until then the pet uses last_prompt
         "last_prompt": last_prompt,
-        "transcript_path": data.get("transcript_path") or prev.get("transcript_path", ""),
+        "transcript_path": transcript,
         "updated": now,
         "changed": now if state != prev.get("state") else prev.get("changed", now),
     }

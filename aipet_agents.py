@@ -22,7 +22,6 @@ import aipet as core
 
 MAIN_TAIL = 262144  # bytes read from the end of the main transcript
 SUB_TAIL = 131072  # ... and of each subagent's
-MAX_SUBAGENTS = 12
 MAX_LOG = 240
 RECENT = 4.0  # a subagent file written this recently counts as working
 SKIP_TEXT = ("<", "[Request interrupted", "[Image", "Caveat:")
@@ -281,7 +280,9 @@ def _codex_meta(path):
             pass
         if len(_CODEX_META) > 2000:
             _CODEX_META.clear()
-        _CODEX_META[path] = meta
+        if meta:  # a newly created rollout may still be empty or have an incomplete first line
+            _CODEX_META[path] = meta
+        return meta
     return _CODEX_META[path]
 
 
@@ -329,11 +330,18 @@ def read_network(item, now=None):
     now = now or time.time()
     codex = item.get("agent") == "codex"
     transcript = core.transcript_file(item)
+    if codex and transcript and item.get("session_id"):
+        suffix = f"-{item['session_id']}.jsonl"
+        if not os.path.basename(transcript).endswith(suffix):
+            # Existing session files may point at a child until their next hook event.
+            matches = glob.glob(os.path.join(os.path.dirname(transcript), f"rollout-*{suffix}"))
+            transcript = max(matches, key=os.path.getmtime) if matches else ""
     parse = parse_codex if codex else parse_claude
     main_info = (_cached(transcript, MAIN_TAIL, parse) if transcript else None) or _empty()
     session_state = item.get("state") or "idle"
     running = dict(item.get("agent_ids") or {})
     wait_agent = str(item.get("wait_agent") or "")
+    retention = core.DONE_TIMEOUT["v"] * 60 * 0.8  # 0 = never, just like the session setting
 
     subs = []
     files = (codex_subagent_files(transcript, item.get("session_id")) if codex
@@ -345,13 +353,10 @@ def read_network(item, now=None):
         info = _cached(path, SUB_TAIL, parse)
         if not info:
             continue
-        if aid not in running and info["mtime"] < turn_start - 1:
-            continue  # from an earlier turn
-        missing = missing or bool(info.get("cut") and (info["first_t"] or 0) > turn_start + 1)
         if codex:
             nick, task = meta.get("agent_nickname") or "", str(meta.get("agent_path") or "").rsplit("/", 1)[-1]
             name = f"{nick} ({task})" if nick and task else (nick or task or "agent")
-            busy = info["done"] is False or (info["done"] is None and now - info["mtime"] < RECENT)
+            busy = aid in running or info["done"] is False or (info["done"] is None and now - info["mtime"] < RECENT)
         else:
             name = meta.get("agentType") or running.get(aid) or "subagent"
             busy = aid in running or now - info["mtime"] < RECENT
@@ -364,6 +369,7 @@ def read_network(item, now=None):
             parent = ""
         subs.append({"id": aid, "name": name, "main": False, "kind": meta.get("description") or "", "path": path,
                      "parent": parent,
+                     "_missing": bool(info.get("cut") and (info["first_t"] or 0) > turn_start + 1),
                      "state": state, "mtime": info["mtime"], "first_t": info["first_t"] or info["mtime"], **{
                          k: info[k] for k in ("model", "effort", "ctx", "ctx_max", "lines")}})
     known = {s["id"] for s in subs}
@@ -373,8 +379,20 @@ def read_network(item, now=None):
                          "parent": "",
                          "first_t": now, "state": "needs_input" if wait_agent == aid and session_state == "needs_input"
                          else "working", "model": "", "effort": "", "ctx": 0, "ctx_max": 0, "lines": []})
+    by_id = {s["id"]: s for s in subs}
+    visible = {s["id"] for s in subs if not retention or s["state"] in ("working", "needs_input")
+               or now - s["mtime"] < retention}
+    # Keep ancestors while any descendant is visible, so expiry never flattens a live branch.
+    pending = list(visible)
+    while pending:
+        parent = by_id[pending.pop()]["parent"]
+        if parent in by_id and parent not in visible:
+            visible.add(parent)
+            pending.append(parent)
+    subs = [s for s in subs if s["id"] in visible]
+    for s in subs:
+        missing = s.pop("_missing", False) or missing
     subs.sort(key=lambda s: s["first_t"])
-    subs = subs[-MAX_SUBAGENTS:]
     ids = {s["id"] for s in subs}
     for s in subs:  # a parent that isn't shown: hang it off the main agent
         if s["parent"] not in ids:

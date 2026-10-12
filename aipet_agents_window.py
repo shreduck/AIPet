@@ -1481,7 +1481,8 @@ class AgentNetworkWindow:
         W, H = max(50, c.winfo_width()), max(50, c.winfo_height())
         blocks = self.blocks
         sig = (W, H, self.gz, self.sel, self.key, self.theme, self.s, self.opts["node_alpha"], self.in_window,
-               tuple((k, tuple((a["name"], a["state"], a["model_label"], a["effort"], a["ctx"], a["thought"] if a["main"] else "")
+               tuple((k, tuple((a["id"], a.get("parent", ""), a.get("depth", 0),
+                                a["name"], a["state"], a["model_label"], a["effort"], a["ctx"], a["thought"] if a["main"] else "")
                                for a in net["agents"])) for k, _, net in blocks))
         if sig == self._graph_sig and not force:
             self._draw_stats()
