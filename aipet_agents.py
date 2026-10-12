@@ -22,7 +22,7 @@ import aipet as core
 
 MAIN_TAIL = 262144  # bytes read from the end of the main transcript
 SUB_TAIL = 131072  # ... and of each subagent's
-MAX_SUBAGENTS = 8
+MAX_SUBAGENTS = 12
 MAX_LOG = 240
 RECENT = 4.0  # a subagent file written this recently counts as working
 SKIP_TEXT = ("<", "[Request interrupted", "[Image", "Caveat:")
@@ -300,18 +300,25 @@ def codex_subagent_files(rollout, thread_id):
     except (ValueError, TypeError):
         pass
     mine = os.path.basename(rollout)
-    found = []
+    candidates = []
     for folder in folders:
         for path in glob.glob(os.path.join(folder, "rollout-*.jsonl")):
             if os.path.basename(path) <= mine and folder == day:
                 continue  # started before the parent
             meta = _codex_meta(path)
-            if str(meta.get("parent_thread_id") or "") != str(thread_id):
+            if not meta.get("parent_thread_id"):
                 continue
             if "guardian" in json.dumps(meta.get("source") or "") or meta.get("thread_source") == "guardian_review":
                 continue
-            found.append((str(meta.get("id") or os.path.basename(path)), path, meta))
-    return found
+            candidates.append((str(meta.get("id") or os.path.basename(path)), path, meta))
+    # this thread's children, then theirs (an agent spawned by a subagent names that subagent as its parent)
+    found, parents = [], {str(thread_id)}
+    while True:
+        more = [c for c in candidates if str(c[2].get("parent_thread_id")) in parents and c not in found]
+        if not more:
+            return found
+        found += more
+        parents |= {c[0] for c in more}
 
 
 # --------------------------------------------------------------------------- the network
@@ -351,17 +358,34 @@ def read_network(item, now=None):
         state = "working" if busy and session_state in ("working", "needs_input") else "done"
         if session_state == "needs_input" and wait_agent and wait_agent == aid:
             state = "needs_input"
+        # who started it: the main agent (""), or another subagent (an agent of an agent)
+        parent = str(meta.get("parentAgentId") or meta.get("parent_thread_id") or "")
+        if parent == str(item.get("session_id") or ""):
+            parent = ""
         subs.append({"id": aid, "name": name, "main": False, "kind": meta.get("description") or "", "path": path,
+                     "parent": parent,
                      "state": state, "mtime": info["mtime"], "first_t": info["first_t"] or info["mtime"], **{
                          k: info[k] for k in ("model", "effort", "ctx", "ctx_max", "lines")}})
     known = {s["id"] for s in subs}
     for aid, kind in running.items():  # running but no transcript found (older Claude Code): a bare node
         if aid not in known:
             subs.append({"id": aid, "name": kind or "subagent", "main": False, "kind": "", "path": "", "mtime": now,
+                         "parent": "",
                          "first_t": now, "state": "needs_input" if wait_agent == aid and session_state == "needs_input"
                          else "working", "model": "", "effort": "", "ctx": 0, "ctx_max": 0, "lines": []})
     subs.sort(key=lambda s: s["first_t"])
     subs = subs[-MAX_SUBAGENTS:]
+    ids = {s["id"] for s in subs}
+    for s in subs:  # a parent that isn't shown: hang it off the main agent
+        if s["parent"] not in ids:
+            s["parent"] = ""
+    depth = {"": 0}
+    for _ in range(len(subs)):  # depth = how many agents up to the main one (1 = started by the main agent)
+        for s in subs:
+            if s["parent"] in depth:
+                depth[s["id"]] = depth[s["parent"]] + 1
+    for s in subs:
+        s["depth"] = depth.get(s["id"], 1)
     names = {}
     for s in subs:  # "Explore", "Explore" -> "Explore #1", "Explore #2"
         names[s["name"]] = names.get(s["name"], 0) + 1

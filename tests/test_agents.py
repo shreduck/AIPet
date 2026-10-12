@@ -121,6 +121,16 @@ class ClaudeNetworkTests(unittest.TestCase):
             self.assertTrue(agents.network_stats(agents.read_network(self.item(), now=self.now))["missing"])
         agents._TAILS.clear()
 
+    def test_an_agent_started_by_a_subagent_hangs_off_that_subagent(self):
+        sub = os.path.join(self.dir.name, "sess", "subagents")
+        write_lines(os.path.join(sub, "agent-ccc.jsonl"), [claude_user(self.now - 52, "nested job")])
+        with open(os.path.join(sub, "agent-ccc.meta.json"), "w") as f:
+            json.dump({"agentType": "Nested", "parentAgentId": "bbb", "spawnDepth": 2}, f)
+        os.utime(os.path.join(sub, "agent-ccc.jsonl"), (self.now - 50, self.now - 50))
+        by = {a["name"]: a for a in agents.read_network(self.item(), now=self.now)["agents"]}
+        self.assertEqual((by["Nested"]["parent"], by["Nested"]["depth"]), ("bbb", 2))
+        self.assertEqual((by["Plan"]["parent"], by["Plan"]["depth"]), ("", 1))
+
     def test_running_agent_without_transcript_still_shows(self):
         net = agents.read_network(self.item(agent_ids={"zzz": "tester"}, wait_agent="", state="working"), now=self.now)
         tester = next(a for a in net["agents"] if a["id"] == "zzz")
@@ -169,12 +179,17 @@ class CodexNetworkTests(unittest.TestCase):
                     "type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "hello"}]}},
                 {"type": "event_msg", "timestamp": iso(now - 26), "payload": {"type": "task_complete"}},
             ])
+            grandchild = os.path.join(day, "rollout-2026-10-07T10-55-00-01a115c9-777.jsonl")
+            write_lines(grandchild, [{"type": "session_meta", "timestamp": iso(now - 20), "payload": {
+                "id": "child-2", "parent_thread_id": "child-1", "agent_nickname": "Noether",
+                "agent_path": "/root/hello_one/deeper"}}])
             guardian = os.path.join(day, "rollout-2026-10-07T10-54-41-01a115c9-ggg.jsonl")
             write_lines(guardian, [{"type": "session_meta", "payload": {
                 "id": "g", "parent_thread_id": parent_id, "source": {"subagent": {"other": "guardian"}}}}])
             net = agents.read_network({"agent": "codex", "transcript_path": parent, "state": "working",
                                        "session_id": parent_id}, now=now)
-            main, sub = net["agents"]
+            main, sub, deeper = net["agents"]
+            self.assertEqual((deeper["name"], deeper["parent"], deeper["depth"]), ("Noether (deeper)", "child-1", 2))
             self.assertEqual((main["model_label"], main["effort"], main["ctx"], main["ctx_max"]),
                              ("gpt-6-luna", "low", 20070, 258400))
             self.assertEqual((sub["name"], sub["state"], sub["thought"]), ("Faraday (hello_one)", "done", "hello"))

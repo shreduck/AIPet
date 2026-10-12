@@ -81,13 +81,13 @@ def dither(opacity):
     return "gray25"
 
 
-def needed_size(n_subs, scale, line, small, compact=False, side="bottom"):
+def needed_size(n_subs, scale, line, small, compact=False, side="bottom", depth=1):
     """(width, height) in pixels the window needs to show everything at this scale (s = 1.5 * scale), given the
-    line heights of its main and small fonts at that scale."""
+    line heights of its main and small fonts at that scale. depth: how deep agents start agents (columns)."""
     s = 1.5 * scale
-    cols = 1 if n_subs <= 4 else 2
-    rows = n_subs if cols == 1 else math.ceil(n_subs / 2)
-    graph_w = 10 + 150 + (70 + cols * 180 + (110 if cols == 1 else 0) if n_subs else 10)
+    cols = depth if depth > 1 else (1 if n_subs <= 4 else 2)
+    rows = n_subs if cols == 1 else math.ceil(n_subs / cols)
+    graph_w = 10 + 150 + (70 + cols * 200 + (110 if cols == 1 else 0) if n_subs else 10)
     width = max(380, graph_w) * s
     main_h = line * 4 + 10 * s
     sub_h = line * (4 if cols == 1 else 5) + 14 * s
@@ -551,8 +551,9 @@ class AgentNetworkWindow:
         u = self.u if u is None else u
         r = u / self.u
         n = max(0, len(self.net["agents"]) - 1)
+        depth = max([a.get("depth", 1) for a in self.net["agents"][1:]] or [1])
         return needed_size(n, u, self.f_main.metrics("linespace") * r, self.f_small.metrics("linespace") * r,
-                           side=self.opts.get("log_side", "bottom"))
+                           side=self.opts.get("log_side", "bottom"), depth=depth)
 
     def _place(self):
         w, h = self.needed()
@@ -1415,41 +1416,65 @@ class AgentNetworkWindow:
             if f.cget("size") != sz:
                 f.configure(size=sz)
 
+    @staticmethod
+    def _columns(net):
+        """Subagents (indexes into net["agents"]) per column: one column per depth (agents of agents go further
+        right, each kept with its parent's); only depth 1, and many of them: two columns. -> (columns, beside):
+        beside = thoughts go to the right of the nodes (a single column of up to 4)."""
+        ags = net["agents"]
+        subs = list(range(1, len(ags)))
+        if not subs:
+            return [], False
+        deepest = max(ags[i].get("depth", 1) for i in subs)
+        if deepest <= 1:
+            if len(subs) <= 4:
+                return [subs], True
+            half = math.ceil(len(subs) / 2)
+            return [subs[:half], subs[half:]], False
+        order = {"": 0}
+        cols = []
+        for d in range(1, deepest + 1):  # each depth after the one before, children under their parent's place
+            col = [i for i in subs if ags[i].get("depth", 1) == d]
+            col.sort(key=lambda i: (order.get(ags[i].get("parent", ""), 0), ags[i].get("first_t", 0)))
+            for k, i in enumerate(col):
+                order[ags[i]["id"]] = k
+            cols.append(col)
+        return cols, False
+
     def _block_height(self, net, H):
         """Height one session's graph needs (tabbed off: the sessions are stacked)."""
-        n = max(0, len(net["agents"]) - 1)
+        cols, beside = self._columns(net)
+        rows = max((len(c) for c in cols), default=0)
         lh = self.g_main.metrics("linespace")
-        cols = 1 if n <= 4 else 2
-        rows = n if cols == 1 else math.ceil(n / 2)
         main_h = lh * 4 + self.gpx(10)
-        sub_h = lh * (4 if cols == 1 else 5) + self.gpx(8)
+        sub_h = lh * (4 if beside else 5) + self.gpx(8)
         return int(max(main_h, rows * (sub_h + self.gpx(6))) + 2 * self.gpx(10) + lh * 1.6)
 
     def _layout(self, net, W, H, reserve=None):
-        """Node boxes: main on the left, subagents in one column (two when there are many). reserve: (x, y) of a box
-        at the bottom right that the column should stay above."""
-        n = len(net["agents"]) - 1
+        """Node boxes (one per agent, in net["agents"] order): main on the left, its subagents in a column to its
+        right, agents started by those further right. reserve: (x, y) of a box at the bottom right that the columns
+        should stay above. -> (boxes, beside)"""
         lh = self.g_main.metrics("linespace")
         pad = self.gpx(10)
         main_w, main_h = self.gpx(150), lh * 4 + pad
-        boxes = [(pad, max(pad, (H - main_h) // 2), main_w, main_h)]
-        if n <= 0:
+        boxes = [None] * len(net["agents"])
+        boxes[0] = (pad, max(pad, (H - main_h) // 2), main_w, main_h)
+        cols, beside = self._columns(net)
+        if not cols:
             return boxes, False
-        cols = 1 if n <= 4 else 2
         sub_w = self.gpx(140)
-        sub_h = lh * (4 if cols == 1 else 5) + self.gpx(8)
-        per_col = math.ceil(n / cols)
+        sub_h = lh * (4 if beside else 5) + self.gpx(8)
         x0 = pad + main_w + self.gpx(70)
-        gap_x = sub_w + self.gpx(40)
-        if reserve and x0 + (cols - 1) * gap_x + sub_w > reserve[0] - pad:
+        gap_x = sub_w + self.gpx(60)
+        if reserve and x0 + (len(cols) - 1) * gap_x + sub_w > reserve[0] - pad:
             H = max(sub_h + 2 * pad, reserve[1])
-        for k in range(n):
-            col, row = divmod(k, per_col)
-            rows = min(per_col, n - col * per_col)
+        for c, col in enumerate(cols):
+            rows = len(col)
             step = max(sub_h + self.gpx(6), (H - 2 * pad) / max(1, rows))
-            top = pad + (H - 2 * pad - step * rows) / 2 + row * step + (step - sub_h) / 2
-            boxes.append((x0 + col * gap_x, int(max(pad // 2, top)), sub_w, sub_h))
-        return boxes, cols == 1
+            for row, i in enumerate(col):
+                top = pad + (H - 2 * pad - step * rows) / 2 + row * step + (step - sub_h) / 2
+                boxes[i] = (x0 + c * gap_x, int(max(pad // 2, top)), sub_w, sub_h)
+        return boxes, beside
 
     def _draw_graph(self, force=False):
         c, P = self.canvas, self.P
@@ -1636,8 +1661,9 @@ class AgentNetworkWindow:
         boxes, beside = self._layout(net, W, H, reserve)
         boxes = [(x + ox, y + oy, w, h) for x, y, w, h in boxes]
         lh = self.g_main.metrics("linespace")
-        mx, my, mw, mh = boxes[0]
+        index = {a["id"]: k for k, a in enumerate(ags)}
         for i, (a, (x, y, w, h)) in enumerate(zip(ags[1:], boxes[1:]), 1):  # edges first, under the nodes
+            mx, my, mw, mh = boxes[index.get(a.get("parent", ""), 0)]  # from whoever started it
             p0, p3 = (mx + mw, my + mh / 2), (x, y + h / 2)
             mid = (p0[0] + p3[0]) / 2
             pts = (p0, (mid, p0[1]), (mid, p3[1]), p3)
