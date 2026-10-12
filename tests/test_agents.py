@@ -336,6 +336,66 @@ class WindowLogicTests(unittest.TestCase):
         view._stats_size = lambda: (150, 50)
         return view
 
+    def auto_fit_window(self):
+        view = self.graph_window()
+        view.opts = {"auto_fit": True}
+        view.canvas.winfo_ismapped.return_value = True
+        view.blocks = [("one", {}, {"agents": [{"id": ""}, {"id": "child"}]})]
+        view.fit_all = MagicMock()
+        return view
+
+    def test_auto_fit_on_add_remove_and_same_count_replacement(self):
+        view = self.auto_fit_window()
+        view._maybe_auto_fit()
+        view.fit_all.assert_called_once()
+        view.fit_all.reset_mock()
+        view.blocks[0][2]["agents"].reverse()  # reordering and normal updates preserve the view
+        view._maybe_auto_fit()
+        view.fit_all.assert_not_called()
+        view.blocks[0][2]["agents"].append({"id": "tool:Read"})
+        view._maybe_auto_fit()
+        self.assertEqual(view.fit_all.call_count, 1)
+        view.blocks[0][2]["agents"].pop()
+        view._maybe_auto_fit()
+        self.assertEqual(view.fit_all.call_count, 2)
+        view.blocks[0][2]["agents"][0] = {"id": "replacement"}
+        view._maybe_auto_fit()
+        self.assertEqual(view.fit_all.call_count, 3)
+
+    def test_auto_fit_covers_other_sessions_and_empty_graph(self):
+        view = self.auto_fit_window()
+        view._maybe_auto_fit()
+        view.fit_all.reset_mock()
+        view.blocks.append(("two", {}, {"agents": [{"id": ""}]}))
+        view._maybe_auto_fit()
+        self.assertEqual(view.fit_all.call_count, 1)
+        view.blocks.clear()
+        view._maybe_auto_fit()
+        self.assertEqual(view.fit_all.call_count, 2)
+
+    def test_auto_fit_disabled_does_not_change_view_and_enabling_fits_immediately(self):
+        view = self.auto_fit_window()
+        view.opts["auto_fit"] = False
+        view._maybe_auto_fit()
+        view.fit_all.assert_not_called()
+        view.opts["auto_fit"] = True
+        view._maybe_auto_fit(force=True)
+        view.fit_all.assert_called_once()
+        view.fit_all.reset_mock()
+        view._maybe_auto_fit()  # manual zoom/pan is kept until the next membership change
+        view.fit_all.assert_not_called()
+
+    def test_auto_fit_waits_for_window_to_be_visible(self):
+        view = self.auto_fit_window()
+        view.canvas.winfo_ismapped.return_value = False
+        view._maybe_auto_fit()
+        view.fit_all.assert_not_called()
+        self.assertTrue(view._auto_fit_pending)
+        view.canvas.winfo_ismapped.return_value = True
+        view._maybe_auto_fit()
+        view.fit_all.assert_called_once()
+        self.assertFalse(view._auto_fit_pending)
+
     def test_center_uses_node_gravity_center_and_keeps_zoom(self):
         view = self.graph_window()
         view.gz = 1.7
@@ -392,6 +452,12 @@ class WindowLogicTests(unittest.TestCase):
 
 
 class WindowOptionTests(unittest.TestCase):
+    def test_auto_fit_preference_is_saved_in_graph_options(self):
+        import aipet_agents_window as win
+        self.assertFalse(win.load_options({})["auto_fit"])
+        self.assertTrue(win.load_options({"agent_window": {"auto_fit": True}})["auto_fit"])
+        self.assertFalse(win.load_options({"agent_window": {"auto_fit": "yes"}})["auto_fit"])
+
     def test_options_load_and_snap(self):
         import aipet_agents_window as win
         opts = win.load_options({"agent_window": {"alpha": 73, "node_alpha": 0, "bg_alpha": 62, "on_top": "yes",

@@ -371,6 +371,8 @@ A live map of one session: the main agent and every subagent it started, Claude 
   node in it re-centres by itself.
   **Center** places the average of the node centres in the viewport centre without changing zoom.
   **Fit all** adjusts zoom to show every node and title, leaving room for the fixed controls.
+  The **auto** checkbox beside it (also **auto fit all** in the graph settings) automatically fits when an agent
+  or tool node is added or removed. Enabling it fits immediately; the preference is remembered across restarts.
 - **Reset agent network appearance** (Appearance, next to Reset pet size, in every menu and the AIPet menu window) puts the default look
   back and centres the open windows on the main screen; one window or one per session stays as it was.
 - **Size**: the window can't get smaller than what everything needs at 50% scale. Shrinking it below what the current

@@ -31,7 +31,7 @@ ZOOM_MIN, ZOOM_MAX = 0.01, 3.0
 OPTIONS_KEY = "agent_window"  # config.json
 DEFAULT_OPTIONS = {"on_top": False, "alpha": 100, "bg_alpha": 100, "node_alpha": 100, "frameless": False,
                    "separate": False, "tabbed": True, "tidy": False, "scale": 100, "log_lines": 6,
-                   "log_cols": 60, "log_side": "bottom", "log_tail": True, "tools": True}
+                   "log_cols": 60, "log_side": "bottom", "log_tail": True, "tools": True, "auto_fit": False}
 LOG_SIDES = ("bottom", "right", "top", "left")
 HINT = "tab/←→ agent · a all · pgup/pgdn session · space prompt · ctrl+wheel/+/- zoom · 0 reset · drag pan · esc close"
 BG_OPACITY = IS_MAC or sys.platform == "win32"  # a see-through background needs Windows' or macOS' window support
@@ -512,6 +512,9 @@ class AgentNetworkWindow:
 
     def _settle(self):
         """Once the window is on screen: default zoom, graph centred."""
+        if self.alive() and self.opts.get("auto_fit"):
+            self._maybe_auto_fit()
+            return
         if self.alive() and not getattr(self, "_user_moved", False):
             self.gz = 1.0
             self._center_next = True
@@ -588,7 +591,7 @@ class AgentNetworkWindow:
             self.close()
             return "break"
         toggles = {"frame": "frameless", "pin": "on_top", "each": "separate", "tabs": "tabbed", "tidy": "tidy",
-                   "tail": "log_tail", "tools": "tools"}
+                   "tail": "log_tail", "tools": "tools", "auto_fit": "auto_fit"}
         if name in toggles:
             o[toggles[name]] = not o[toggles[name]]
             if name == "tail":
@@ -611,6 +614,9 @@ class AgentNetworkWindow:
             self._apply_options(changed=name)
             if self.menu_open:
                 self._build_menu()
+        if name == "auto_fit":
+            self._update_auto_fit()
+            self._maybe_auto_fit(force=o["auto_fit"])
         self._save(name)
         return "break"
 
@@ -648,6 +654,9 @@ class AgentNetworkWindow:
         if self.opts.get("tools") != old.get("tools"):
             self._refresh()
         self._apply_options()
+        self._update_auto_fit()
+        if self.opts.get("auto_fit") != old.get("auto_fit"):
+            self._maybe_auto_fit(force=self.opts.get("auto_fit", False))
 
     def reset_appearance(self, opts, cascade=0):
         """Default look again, centred on the main screen (the AIPet menu's Reset agent network appearance)."""
@@ -839,6 +848,7 @@ class AgentNetworkWindow:
         self._graph_sig = self._tabs_sig = None
         self._draw_graph(force=True)
         self._draw_tabs()
+        self._update_auto_fit()
 
     def _win_caption(self, show):
         set_caption(self.win, show)
@@ -867,6 +877,7 @@ class AgentNetworkWindow:
             self._place_overlay()
         if self.menu_open:
             self._place_menu()
+        self._maybe_auto_fit()
 
     def _drag_start(self, e):
         self._drag = (e.x_root, e.y_root, self.win.winfo_x(), self.win.winfo_y(), self.win.winfo_width(),
@@ -974,6 +985,11 @@ class AgentNetworkWindow:
             else:
                 self.zoom_label = lab
             self.zoom_btns.append(lab)
+        self.auto_fit_var = tk.BooleanVar(master=self.win, value=self.opts.get("auto_fit", False))
+        self.auto_fit_btn = tk.Checkbutton(self.zoombar, text="auto", font=self.f_small,
+                                          variable=self.auto_fit_var, command=lambda: self.tool("auto_fit"),
+                                          bd=0, highlightthickness=0, padx=self.px(2), pady=0, cursor="hand2")
+        self.auto_fit_btn.pack(side="left")
         self.zoombar.place(x=self.px(4), y=self.px(4), anchor="nw")
         self.statc = tk.Canvas(self.canvas, bd=0, highlightthickness=1)
         self.statc.place(relx=1.0, rely=1.0, x=-self.px(6), y=-self.px(6), anchor="se")
@@ -1224,6 +1240,7 @@ class AgentNetworkWindow:
                                    lambda v: self.set_scale(v / 100), live=False)
 
         section("graph")
+        toggle("auto_fit", "auto_fit", "auto fit all")
         toggle("tools", "tools", "tool calls")
         if not o["separate"] and not self.pinned and not o["tabbed"]:
             toggle("tidy", "tidy", "tidy (each session a titled group)")
@@ -1377,6 +1394,7 @@ class AgentNetworkWindow:
         self._draw_tabs()
         self._draw_log()
         self._draw_prompt()
+        self._maybe_auto_fit()
 
     # ---- selection
     def select(self, i):
@@ -1873,6 +1891,29 @@ class AgentNetworkWindow:
         finally:
             self._fit_view = False
         return "break"
+
+    def _maybe_auto_fit(self, force=False):
+        """Fit on membership changes, including tool nodes and every displayed session."""
+        signature = frozenset((key, a["id"]) for key, _, net in self.blocks for a in net["agents"])
+        changed = signature != getattr(self, "_auto_fit_signature", None)
+        self._auto_fit_signature = signature
+        if not self.opts.get("auto_fit"):
+            self._auto_fit_pending = False
+            return
+        if not (force or changed or getattr(self, "_auto_fit_pending", False)):
+            return
+        c = self.canvas
+        if not c.winfo_ismapped() or c.winfo_width() <= 80 or c.winfo_height() <= 80:
+            self._auto_fit_pending = True
+            return  # wait for opening/resizing to settle before choosing a zoom
+        self._auto_fit_pending = False
+        self.fit_all()
+
+    def _update_auto_fit(self):
+        self.auto_fit_var.set(bool(self.opts.get("auto_fit")))
+        P = self.P
+        self.auto_fit_btn.configure(bg=P["bar"], fg=P["tx"], selectcolor=P["bar"],
+                                    activebackground=P["bar"], activeforeground=P["hi"])
 
     def _scroll_to(self, left, top):
         c = self.canvas
