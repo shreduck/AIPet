@@ -321,6 +321,8 @@ A live map of one session: the main agent and every subagent it started, Claude 
   Linux), see-through background (Windows and macOS; clicks go through the empty parts), compact, one window per
   session, and sliders for opacity (30-100%), node opacity and scale (50-150%). Toggles and sliders apply to every
   open agent network window.
+- **Reset agent network appearance** (Live Management, in every menu and the AIPet menu window) puts the default look
+  back and centres the open windows on the main screen; one window or one per session stays as it was.
 - **Size**: the window can't get smaller than what everything needs at 50% scale. Shrinking it below what the current
   scale needs turns the scale down with it; raising the scale grows the window to fit.
 - **One window per session** (toolbar `each`, or *One agent network window per session* in Live Management): every

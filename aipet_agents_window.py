@@ -285,7 +285,7 @@ class AgentNetworkWindow:
             sw, sh = self.win.winfo_screenwidth(), self.win.winfo_screenheight()
             w, h = min(w, sw - 40), min(h, sh - 80)
             off = self.px(28) * (self.cascade % 8)  # one window per session: fanned out
-            self.win.geometry(f"{w}x{h}+{(sw - w) // 2 + off}+{(sh - h) // 3 + off}")
+            self.win.geometry(f"{w}x{h}+{(sw - w) // 2 + off}+{(sh - h) // 2 + off}")
         except tk.TclError:
             pass
         self._update_minsize()
@@ -347,6 +347,16 @@ class AgentNetworkWindow:
         if self.opts["scale"] != old.get("scale"):
             self.set_scale(self.opts["scale"] / 100, save=False)
         self._apply_options()
+
+    def reset_appearance(self, opts, cascade=0):
+        """Default look again, centred on the main screen (the AIPet menu's Reset agent network appearance)."""
+        self.toggle_menu(False)
+        self.opts = dict(opts)
+        self.set_scale(self.opts["scale"] / 100, save=False, grow=False)
+        self._apply_options()
+        self.cascade = cascade
+        self._place()
+        self.raise_()
 
     def set_scale(self, u, save=True, grow=True):
         """Resize every font and drawing. grow: make the window big enough for the new scale."""

@@ -1523,6 +1523,9 @@ class TrayApp:
                               for m in (5, 10, 15, 30, 60)]),
                 dict(self.agent_network_item(None), icon="link"),
                 self.agent_network_separate_item(),
+                item("Reset agent network appearance", self.reset_agent_network, icon="refresh",
+                     help="Back to the default look (opacity, nodes, scale, title bar, compact, always on top, "
+                          "see-through) and centred on the main screen."),
                 None]
         sessions = [d for d in self.pet._last_items if d.get("source") == "CC" and d.get("session_id")]
         for d in sessions:
@@ -1597,6 +1600,17 @@ class TrayApp:
                 "enabled": True, "submenu": None, "checked": self.agent_network_separate(),
                 "help": "Each session gets its own agent network window, instead of one window you switch with "
                         "PgUp / PgDn. Opening the window then opens one for every session."}
+
+    def reset_agent_network(self):
+        """Default appearance for the agent network windows (one window or one per session stays as it is), and every
+        open one centred on the main screen."""
+        opts = dict(aipet_agents_window.DEFAULT_OPTIONS,
+                    separate=aipet_agents_window.load_options(self.pet.cfg)["separate"])
+        self.pet.cfg[aipet_agents_window.OPTIONS_KEY] = opts
+        core.save_setting(aipet_agents_window.OPTIONS_KEY, opts)
+        for n, w in enumerate(self._agent_windows().values()):
+            w.reset_appearance(opts, cascade=n)
+        self.refresh_menu()
 
     def toggle_agent_network(self, key=None):
         if self.agent_network_open():
