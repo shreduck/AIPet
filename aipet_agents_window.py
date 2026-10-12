@@ -1603,16 +1603,17 @@ class AgentNetworkWindow:
         on = key == self.key and not fade
         tag = f"band{b}" if b >= 0 else f"gone{abs(hash(key)) % 10000}"
         title = session_label(item).replace("agent-network ▸ ", "")
+        tbar = f"tbar{b}" if b >= 0 else tag  # the session's title bar: a click opens its [all] log
         pad = self.gpx(8)
         if tidy:  # a group: a title bar on top of the session's nodes, its name sliding when it doesn't fit
             x0, x1 = pad, VW - pad
             c.create_rectangle(x0, y + head, x1, y + bh, fill="", outline=F(P["blue"] if on else P["line"]),
                                dash=() if on else (2, 3))
             c.create_rectangle(x0, y, x1, y + head, fill=F(P["sel"] if on else P["bar"]),
-                               outline=F(P["blue"] if on else P["line"]), tags=tag)
+                               outline=F(P["blue"] if on else P["line"]), tags=(tag, tbar))
             font = self.g_bold if on else self.g_main
             entry = (f"ttl{b}_{abs(hash(key)) % 10000}", ("● " if on else "○ ") + title, font,
-                     F(P["hi"] if on else P["tx"]), x0 + pad, x1 - x0 - 2 * pad, y + head / 2, tag)
+                     F(P["hi"] if on else P["tx"]), x0 + pad, x1 - x0 - 2 * pad, y + head / 2, (tag, tbar))
             self._titles.append(entry)
             self._draw_title(entry, time.time())
         else:  # bands: a line between sessions; the name is a title bar on the session's main node
@@ -1623,7 +1624,11 @@ class AgentNetworkWindow:
         if b >= 0:
             c.tag_bind(tag, "<ButtonRelease-1>", lambda e, k=key: self._pick_session(k))
         self._draw_block(b, key, net, pad if tidy else 0, y + head, VW - (2 * pad if tidy else 0), bh - head, None,
-                         fade=fade, title=None if tidy else (title, on, tag))
+                         fade=fade, title=None if tidy else (title, on, (tag, tbar)))
+        if b >= 0:
+            c.tag_bind(tbar, "<ButtonRelease-1>", lambda e, k=key: self._title_click(k))
+            c.tag_bind(tbar, "<Enter>", lambda e: c.configure(cursor="hand2"))
+            c.tag_bind(tbar, "<Leave>", lambda e: c.configure(cursor=""))
 
     def _draw_title(self, entry, now):
         """A group's title: as is when it fits, else scrolling round like the pet's name tags (characters drawn one
@@ -1632,7 +1637,7 @@ class AgentNetworkWindow:
         c = self.canvas
         c.delete(tag)
         if font.measure(text) <= room:
-            c.create_text(left, ymid, text=text, anchor="w", fill=fill, font=font, tags=(tag, click))
+            c.create_text(left, ymid, text=text, anchor="w", fill=fill, font=font, tags=(tag,) + tuple(click))
             return False
         loop_text = text + "    "
         loop = font.measure(loop_text)
@@ -1645,7 +1650,7 @@ class AgentNetworkWindow:
                 if cx >= right:
                     break
                 if cx >= left and cx + cw <= right and not ch.isspace():
-                    c.create_text(cx, ymid, text=ch, anchor="w", fill=fill, font=font, tags=(tag, click))
+                    c.create_text(cx, ymid, text=ch, anchor="w", fill=fill, font=font, tags=(tag,) + tuple(click))
                 cx += cw
         return True
 
@@ -1724,6 +1729,14 @@ class AgentNetworkWindow:
                 c.tag_bind(tag, "<ButtonRelease-1>", lambda e, k=key, i=i: self._click_node(e, k, i))
             c.tag_bind(tag, "<Enter>", lambda e: c.configure(cursor="hand2"))
             c.tag_bind(tag, "<Leave>", lambda e: c.configure(cursor=""))
+
+    def _title_click(self, key):
+        """A click (not a drag) on a session's title bar: that session, with its [all] log."""
+        if self._panned:
+            return
+        if key != self.key:
+            self._pick_session(key)
+        self.select(-1)
 
     def _click_node(self, e, key, i):
         if self._panned:
