@@ -136,6 +136,8 @@ class AgentNetworkWindow:
         self.theme = None
         self.opts = load_options(getattr(pet, "cfg", {}))
         self._drag = None
+        self._released = set()  # prompts handed back to Codex (Answer in Codex): answer them in its window
+        self.in_window = None  # index of the agent whose prompt can only be answered in the session's window
         w = self.win = tk.Toplevel(root)
         w.withdraw()
         w.title("AIPet · agent network")
@@ -543,7 +545,7 @@ class AgentNetworkWindow:
     def _draw_graph(self, force=False):
         c, P = self.canvas, self.P
         W, H = max(50, c.winfo_width()), max(50, c.winfo_height())
-        sig = (W, H, self.sel, self.theme, self.opts["node_alpha"], tuple((a["name"], a["state"], a["model_label"], a["effort"], a["ctx"],
+        sig = (W, H, self.sel, self.theme, self.opts["node_alpha"], self.in_window, tuple((a["name"], a["state"], a["model_label"], a["effort"], a["ctx"],
                                                   a["thought"]) for a in self.net["agents"]))
         if sig == self._graph_sig and not force:
             return
@@ -596,6 +598,8 @@ class AgentNetworkWindow:
                                   fill=P["mu"], font=self.f_small, tags=tag)
                 ly += lh
             label = status
+            if i == self.in_window:
+                label = "! answer in the window"
             if a["main"] and a["state"] == "waiting" and a["thought"]:
                 label = "… " + a["thought"]
             c.create_text(x + self.px(8), y + h - self.px(4), text=self._fit(label, w - self.px(14), self.f_small),
@@ -717,6 +721,9 @@ class AgentNetworkWindow:
         item, P = self.item, self.P
         who = prompt_agent(self.net, item) if self.net["agents"] else None
         if who is None:
+            if self.in_window is not None:
+                self.in_window = None
+                self._draw_graph()
             self.chip.place_forget()
             if self.overlay_open:
                 self.open_overlay(False)
@@ -724,7 +731,12 @@ class AgentNetworkWindow:
             return
         req = item.get("request") or {}
         name = self.net["agents"][who]["name"]
-        self.chip.configure(text=f"▲ {name} needs your input — open")
+        answerable = core.hook_waiting(item) and self.pet.answers_enabled(item)
+        self.chip.configure(text=f"▲ {name} needs your input — " + ("open" if answerable else "answer it in the window"))
+        in_window = None if answerable else who
+        if in_window != self.in_window:
+            self.in_window = in_window
+            self._draw_graph()
         if not self.overlay_open:
             self.chip.place(relx=1.0, x=-self.px(10), y=self.body.winfo_y() + self.canvas.winfo_height()
                             - self.px(4), anchor="se")
@@ -823,8 +835,12 @@ class AgentNetworkWindow:
             lab.pack(side="left", padx=(0, self.px(4)))
             lab.bind("<Button-1>", lambda e, n=n: self.choose(n))
             self._opt_labels.append(lab)
-        hint = "1-9 or ←→ and Enter to answer · Esc fold" if answerable else \
-            "This prompt can only be answered in the session window (or turn on answering in Permissions)."
+        if answerable:
+            hint = "1-9 or ←→ and Enter to answer · Esc fold"
+        elif req.get("id") in self._released:
+            hint = "Handed back to Codex: answer it in the Codex window now (Go to window takes you there)."
+        else:
+            hint = "This prompt can only be answered in the session window (or turn on answering in Permissions)."
         self.note = tk.Label(ov, text=hint, font=self.f_small, bg=P["node"], fg=P["mu"], anchor="w")
         self.note.pack(fill="x", padx=pad, pady=(0, pad))
         self.note.configure(justify="left")
@@ -864,7 +880,11 @@ class AgentNetworkWindow:
     def _go(self):
         """Go to the session's window. Codex: AIPet lets go of the prompt, so Codex shows its own one there (with
         choices the pet doesn't have, like always allowing that tool)."""
+        req = (self.item or {}).get("request") or {}
+        if (self.item or {}).get("agent") == "codex" and req.get("id"):
+            self._released.add(req["id"])
         self.pet.go_to_prompt(self.key)
+        self._prompt_sig = None  # rebuilt as "answer it in the window"
         self.open_overlay(False)
 
     def _always(self):
