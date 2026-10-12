@@ -180,6 +180,18 @@ class WindowLogicTests(unittest.TestCase):
         self.assertIsNone(win.prompt_agent(net, {"state": "working", "request": {}}))
 
 
+class WindowOptionTests(unittest.TestCase):
+    def test_options_load_snap_and_cycle(self):
+        import aipet_agents_window as win
+        opts = win.load_options({"agent_window": {"alpha": 73, "node_alpha": 60, "on_top": "yes", "frameless": True}})
+        self.assertEqual((opts["alpha"], opts["node_alpha"], opts["on_top"], opts["frameless"]), (70, 50, False, True))
+        self.assertEqual(win.load_options({}), win.DEFAULT_OPTIONS)
+        self.assertEqual(win.next_step(win.ALPHAS, 100, 1), 90)
+        self.assertEqual(win.next_step(win.ALPHAS, 30, 1), 100)  # wraps around
+        self.assertEqual(win.next_step(win.NODE_ALPHAS, 100, -1), 0)
+        self.assertEqual(win.key_color("#fbfaf7"), "#fbfaf6")  # see-through key: one notch off the background
+
+
 class HelperTests(unittest.TestCase):
     def test_model_names_and_tokens(self):
         self.assertEqual(agents.model_name("claude-haiku-4-5-20251001"), "haiku-4.5")

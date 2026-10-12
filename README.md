@@ -310,6 +310,10 @@ A live map of one session: the main agent and every subagent it started, Claude 
   results), each line in its agent's colour; the other tabs show one agent each.
 - **Prompts**: when an agent needs you, a small warning shows (*Plan needs your input*). Click it (or press Space) and
   it opens over the log with the prompt or question and its answers; Esc folds it back.
+- **Window options** (right of the session arrows, kept in `config.json` under `agent_window`): `▣` title bar on /
+  off (without it, drag the top bar to move and the `◢` corner to resize; Windows and Linux), `pin` always on top,
+  `α100%` window opacity, `bg` see-through graph background (Windows and macOS; clicks go through the empty parts),
+  `node100%` node opacity. Click to change, right-click or scroll to go the other way.
 - **Keys**: Tab / → next agent, Shift+Tab / ← previous, A for the shared log, PgUp / PgDn for the previous or next
   session, Esc to fold the prompt or close the window.
 - Data comes from the session's transcript files: Claude Code keeps each subagent's in

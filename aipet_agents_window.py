@@ -10,6 +10,7 @@ Keys: Tab / Right next agent, Shift+Tab / Left previous, A shared log, PgUp / Pg
 1 / 2 / 3 answer, Esc fold the prompt (or close).
 """
 import math
+import sys
 import time
 import tkinter as tk
 from tkinter import font as tkfont
@@ -19,6 +20,37 @@ import aipet_agents as agents
 
 REFRESH_MS = 900
 FRAME_MS = 45
+IS_MAC = sys.platform == "darwin"
+ALPHAS = (100, 90, 80, 70, 60, 50, 40, 30)  # window opacity steps, %
+NODE_ALPHAS = (100, 75, 50, 25, 0)  # node fill opacity steps, % (drawn with Tk stipples)
+STIPPLE = {75: "gray75", 50: "gray50", 25: "gray25"}
+OPTIONS_KEY = "agent_window"  # config.json: {"on_top", "alpha", "clear_bg", "node_alpha", "frameless"}
+DEFAULT_OPTIONS = {"on_top": False, "alpha": 100, "clear_bg": False, "node_alpha": 100, "frameless": False}
+
+
+def load_options(cfg):
+    opts = dict(DEFAULT_OPTIONS)
+    saved = (cfg or {}).get(OPTIONS_KEY)
+    if isinstance(saved, dict):
+        for k, v in saved.items():
+            if k in opts and isinstance(v, type(opts[k])):
+                opts[k] = v
+    opts["alpha"] = min(ALPHAS, key=lambda a: abs(a - opts["alpha"]))
+    opts["node_alpha"] = min(NODE_ALPHAS, key=lambda a: abs(a - opts["node_alpha"]))
+    return opts
+
+
+def next_step(steps, value, d):
+    """The next value of a cycle (wrapping), from the nearest step."""
+    i = min(range(len(steps)), key=lambda k: abs(steps[k] - value))
+    return steps[(i + d) % len(steps)]
+
+
+def key_color(hex_color):
+    """A colour one notch off hex_color: made fully see-through (Windows -transparentcolor) without keying out text
+    or lines drawn in the theme's own colours."""
+    r, g, b = (int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
+    return f"#{r:02x}{g:02x}{b ^ 1:02x}"
 
 PALETTES = {
     "light": {"bg": "#fbfaf7", "bar": "#f1efe8", "node": "#ffffff", "line": "#d3d1c7", "tx": "#2c2c2a",
@@ -81,6 +113,8 @@ def prompt_agent(net, item):
 
 
 class AgentNetworkWindow:
+    HINT = "Tab / ←→ agent   A all logs   PgUp/PgDn session   Space prompt   Esc close"
+
     def __init__(self, root, pet, key=None):
         self.root, self.pet = root, pet
         self.key = None
@@ -100,6 +134,8 @@ class AgentNetworkWindow:
             zoom = 1.0
         self.s = 1.5 * min(1.5, max(0.5, zoom))
         self.theme = None
+        self.opts = load_options(getattr(pet, "cfg", {}))
+        self._drag = None
         w = self.win = tk.Toplevel(root)
         w.withdraw()
         w.title("AIPet · agent network")
@@ -110,6 +146,7 @@ class AgentNetworkWindow:
         self.show_session(key)
         self._place()
         w.deiconify()
+        self._apply_options()
         self.raise_()
         self._tick()
         self._animate()
@@ -153,6 +190,112 @@ class AgentNetworkWindow:
     def px(self, n):
         return int(round(n * self.s))
 
+    # ---- window options (header toolbar)
+    def tool(self, name, d):
+        o = self.opts
+        if name == "close":
+            self.close()
+            return "break"
+        if name == "frame":
+            o["frameless"] = not o["frameless"]
+        elif name == "pin":
+            o["on_top"] = not o["on_top"]
+        elif name == "alpha":
+            o["alpha"] = next_step(ALPHAS, o["alpha"], d)
+        elif name == "bg":
+            o["clear_bg"] = not o["clear_bg"]
+        elif name == "nodes":
+            o["node_alpha"] = next_step(NODE_ALPHAS, o["node_alpha"], d)
+        self._apply_options(changed=name)
+        try:
+            self.pet.cfg[OPTIONS_KEY] = dict(o)
+            core.save_setting(OPTIONS_KEY, dict(o))
+        except Exception as e:
+            core.log_error(f"agent network options: {e!r}")
+        return "break"
+
+    def _apply_options(self, changed=None):
+        o, P, w = self.opts, self.P, self.win
+        try:
+            w.attributes("-topmost", bool(o["on_top"]))
+            w.attributes("-alpha", o["alpha"] / 100)
+        except tk.TclError:
+            pass
+        if changed in (None, "frame") and not IS_MAC:
+            try:
+                if bool(w.overrideredirect()) != o["frameless"]:
+                    geo = w.geometry()
+                    w.withdraw()
+                    w.overrideredirect(o["frameless"])
+                    w.geometry(geo)
+                    w.deiconify()
+                    w.focus_force()
+            except tk.TclError:
+                pass
+        if o["frameless"] and not IS_MAC:
+            self.grip.pack(side="right")
+        else:
+            self.grip.pack_forget()
+        bg = P["bg"]
+        if o["clear_bg"]:
+            try:
+                if IS_MAC:
+                    w.attributes("-transparent", True)
+                    bg = "systemTransparent"
+                else:
+                    bg = key_color(P["bg"])
+                    w.attributes("-transparentcolor", bg)
+            except tk.TclError:
+                bg = P["bg"]
+        else:
+            try:
+                if IS_MAC:
+                    w.attributes("-transparent", False)
+                elif sys.platform == "win32":
+                    w.attributes("-transparentcolor", "")
+            except tk.TclError:
+                pass
+        try:
+            self.canvas.configure(bg=bg)  # only the graph: the logs stay readable
+        except tk.TclError:
+            pass
+        self._tabs_sig = None
+        on, off = P["blue"], P["mu"]
+        marks = {"close": ("✕", off), "frame": ("▭" if o["frameless"] else "▣", on if o["frameless"] else off),
+                 "pin": ("pin", on if o["on_top"] else off), "alpha": (f"α{o['alpha']}%", on if o["alpha"] < 100 else off),
+                 "bg": ("bg", on if o["clear_bg"] else off),
+                 "nodes": (f"node{o['node_alpha']}%", on if o["node_alpha"] < 100 else off)}
+        for name, lab in self.tools.items():
+            text, fg = marks[name]
+            lab.configure(text=text, fg=fg)
+        close, rest = self.tools["close"], [t for n, t in self.tools.items() if n != "close"]
+        if o["frameless"]:
+            close.pack(side="right", before=rest[0])  # without a title bar: a close button of its own
+        else:
+            close.pack_forget()
+        self._graph_sig = None
+        self._draw_graph(force=True)
+        self._draw_tabs()
+
+    def _on_resize(self, e=None):
+        self._draw_graph(force=True)
+        if self.overlay_open:
+            self._place_overlay()
+
+    def _drag_start(self, e):
+        self._drag = (e.x_root, e.y_root, self.win.winfo_x(), self.win.winfo_y(), self.win.winfo_width(),
+                      self.win.winfo_height())
+
+    def _drag_move(self, e):
+        if self._drag:
+            x0, y0, wx, wy, _, _ = self._drag
+            self.win.geometry(f"+{wx + e.x_root - x0}+{wy + e.y_root - y0}")
+
+    def _resize_move(self, e):
+        if self._drag:
+            x0, y0, _, _, ww, wh = self._drag
+            self.win.geometry(f"{max(self.px(300), ww + e.x_root - x0)}x{max(self.px(240), wh + e.y_root - y0)}")
+
     # ---- building
     def _build(self):
         s = self.s
@@ -166,21 +309,54 @@ class AgentNetworkWindow:
         self.prev_btn.pack(side="left")
         self.title = tk.Label(self.head, font=self.f_main, anchor="w")
         self.title.pack(side="left", fill="x", expand=True, pady=self.px(4))
+        # window options, right-most: frameless, always on top, opacity, see-through background, node opacity
+        self.tools = {}
+        tips = {"close": "Close (Esc)", "frame": "Title bar on / off (drag this bar to move, the corner to resize)",
+                "pin": "Always on top", "alpha": "Window opacity (click, or scroll)",
+                "bg": "See-through graph background", "nodes": "Node opacity (click, or scroll)"}
+        for name in ("close", "frame", "pin", "alpha", "bg", "nodes"):
+            if name == "frame" and IS_MAC:
+                continue  # a borderless window can't take the keyboard on macOS
+            if name == "bg" and not (IS_MAC or sys.platform == "win32"):
+                continue
+            lab = tk.Label(self.head, font=self.f_small, cursor="hand2", padx=self.px(4))
+            lab.bind("<Button-1>", lambda e, n=name: self.tool(n, 1))
+            lab.bind("<Button-3>", lambda e, n=name: self.tool(n, -1))
+            lab.bind("<MouseWheel>", lambda e, n=name: self.tool(n, 1 if e.delta < 0 else -1))
+            lab.bind("<Button-4>", lambda e, n=name: self.tool(n, -1))
+            lab.bind("<Button-5>", lambda e, n=name: self.tool(n, 1))
+            lab.tip = tips[name]
+            lab.bind("<Enter>", lambda e, l=lab: self.foot.configure(text=l.tip))
+            lab.bind("<Leave>", lambda e: self.foot.configure(text=self.HINT))
+            self.tools[name] = lab
+        for name in ("close", "frame", "pin", "alpha", "bg", "nodes"):
+            if name in self.tools:
+                self.tools[name].pack(side="right")
+        self.tool_sep = tk.Label(self.head, text="│", font=self.f_small)
+        self.tool_sep.pack(side="right", padx=(self.px(10), self.px(4)))
         self.next_btn = tk.Label(self.head, text="›", font=self.f_bold, cursor="hand2", padx=self.px(6))
         self.next_btn.pack(side="right")
         self.count = tk.Label(self.head, font=self.f_small)
         self.count.pack(side="right")
+        for wdg in (self.head, self.title):  # drag the bar to move the window (needed without a title bar)
+            wdg.bind("<Button-1>", self._drag_start)
+            wdg.bind("<B1-Motion>", self._drag_move)
         self.prev_btn.bind("<Button-1>", lambda e: self.step_session(-1))
         self.next_btn.bind("<Button-1>", lambda e: self.step_session(1))
 
-        self.foot = tk.Label(w, font=self.f_small, anchor="w", padx=self.px(8), pady=self.px(3),
-                             text="Tab / ←→ agent   A all logs   PgUp/PgDn session   Space prompt   Esc close")
-        self.foot.pack(side="bottom", fill="x")
+        self.footbar = tk.Frame(w)
+        self.footbar.pack(side="bottom", fill="x")
+        self.foot = tk.Label(self.footbar, font=self.f_small, anchor="w", padx=self.px(8), pady=self.px(3),
+                             text=self.HINT)
+        self.foot.pack(side="left", fill="x", expand=True)
+        self.grip = tk.Label(self.footbar, text="◢", font=self.f_small, cursor="size_nw_se", padx=self.px(3))
+        self.grip.bind("<Button-1>", self._drag_start)
+        self.grip.bind("<B1-Motion>", self._resize_move)
         self.body = tk.Frame(w)
         self.body.pack(fill="both", expand=True)
         self.canvas = tk.Canvas(self.body, highlightthickness=0, bd=0, height=self.px(200))
         self.canvas.pack(fill="both", expand=True)
-        self.canvas.bind("<Configure>", lambda e: self._draw_graph(force=True))
+        self.canvas.bind("<Configure>", self._on_resize)
         self.sep = tk.Frame(self.body, height=1)
         self.sep.pack(fill="x")
         self.tabs = tk.Frame(self.body)
@@ -197,6 +373,8 @@ class AgentNetworkWindow:
 
     def _bind_keys(self):
         w = self.win
+        # a borderless window doesn't get the keyboard by itself on Windows: take it on any click
+        w.bind("<Button-1>", lambda e: w.focus_force() if self.opts["frameless"] else None, add="+")
         w.bind("<Tab>", lambda e: self.step_agent(1))
         for seq in ("<Shift-Tab>", "<ISO_Left_Tab>"):
             try:
@@ -230,13 +408,15 @@ class AgentNetworkWindow:
         P = self.P
         for wdg in (self.win, self.body, self.tabs):
             wdg.configure(bg=P["bg"])
-        for wdg in (self.head, self.title, self.prev_btn, self.next_btn, self.count, self.foot):
+        for wdg in (self.head, self.title, self.prev_btn, self.next_btn, self.count, self.foot, self.footbar,
+                    self.grip, self.tool_sep, *self.tools.values()):
             wdg.configure(bg=P["bar"])
         for wdg in (self.title, self.prev_btn, self.next_btn):
             wdg.configure(fg=P["hi"])
-        self.count.configure(fg=P["mu"])
-        self.foot.configure(fg=P["mu"])
+        for wdg in (self.count, self.foot, self.grip, self.tool_sep):
+            wdg.configure(fg=P["mu"])
         self.canvas.configure(bg=P["bg"])
+        self._apply_options()
         self.sep.configure(bg=P["line"])
         self.log.configure(bg=P["bg"], fg=P["tx"], insertbackground=P["bg"], selectbackground=P["sel"],
                            selectforeground=P["hi"])
@@ -363,7 +543,7 @@ class AgentNetworkWindow:
     def _draw_graph(self, force=False):
         c, P = self.canvas, self.P
         W, H = max(50, c.winfo_width()), max(50, c.winfo_height())
-        sig = (W, H, self.sel, self.theme, tuple((a["name"], a["state"], a["model_label"], a["effort"], a["ctx"],
+        sig = (W, H, self.sel, self.theme, self.opts["node_alpha"], tuple((a["name"], a["state"], a["model_label"], a["effort"], a["ctx"],
                                                   a["thought"]) for a in self.net["agents"]))
         if sig == self._graph_sig and not force:
             return
@@ -393,9 +573,10 @@ class AgentNetworkWindow:
             if a["main"] and a["state"] == "waiting":
                 border = P["amb"]
             fill = P["sel"] if i == self.sel else P["node"]
+            na = self.opts["node_alpha"]
             tag = f"node{i}"
-            c.create_rectangle(x, y, x + w, y + h, fill=fill, outline=border, width=self.px(1.3 if i == self.sel else 1),
-                               tags=tag)
+            c.create_rectangle(x, y, x + w, y + h, fill=fill if na else "", stipple=STIPPLE.get(na, ""),
+                               outline=border, width=self.px(1.3 if i == self.sel else 1), tags=tag)
             img = self.robot(a["state"], int(lh * 1.15))
             c.create_image(x + self.px(6), y + self.px(5), image=img, anchor="nw", tags=tag)
             tx = x + self.px(6) + img.width() + self.px(5)
@@ -558,20 +739,37 @@ class AgentNetworkWindow:
             self.chip.place_forget()
             self.option = 0
             self._mark_option()
-            top = self.body.winfo_y() + int(self.canvas.winfo_height() * 0.72)
-            self.overlay.place(x=self.px(10), y=top, relwidth=1.0, width=-self.px(20),
-                               height=self.foot.winfo_y() - top - self.px(8))
-            self.overlay.lift()
+            self._place_overlay()
         else:
             self.overlay.place_forget()
             self._prompt_sig = None  # the chip comes back on the next refresh
         return "break"
 
+    def _place_overlay(self):
+        """Over the logs, and up over the graph as far as the prompt needs (never under the bars)."""
+        width = max(self.px(200), self.win.winfo_width() - self.px(20))
+        for lab in getattr(self, "_wraps", []):
+            try:
+                lab.configure(wraplength=width - self.px(36))
+            except tk.TclError:
+                pass
+        bottom = self.footbar.winfo_y() - self.px(6)
+        highest = self.body.winfo_y() + self.px(6)
+        top = self.body.winfo_y() + int(self.canvas.winfo_height() * 0.72)
+        try:
+            self.overlay.update_idletasks()
+            need = self.overlay.winfo_reqheight() + self.px(4)
+        except tk.TclError:
+            need = 0
+        top = max(highest, min(top, bottom - need))
+        self.overlay.place(x=self.px(10), y=top, width=width, height=max(self.px(60), bottom - top))
+        self.overlay.lift()
+
     def _build_overlay(self, name, req, item):
         P, ov = self.P, self.overlay
         for wdg in ov.winfo_children():
             wdg.destroy()
-        self.options = []
+        self.options, self._wraps = [], []
         pad = self.px(10)
         questions = req.get("questions") or []
         kind = "asks you" if req.get("kind") == "question" or questions else f"wants to use {req.get('tool') or 'a tool'}"
@@ -584,20 +782,26 @@ class AgentNetworkWindow:
         fold.bind("<Button-1>", lambda e: self.open_overlay(False))
         detail = (req.get("detail") or "").strip()
         if req.get("description"):
-            tk.Label(ov, text=req["description"], font=self.f_small, bg=P["node"], fg=P["mu"], anchor="w",
-                     justify="left", wraplength=self.px(560)).pack(fill="x", padx=pad)
+            lab = tk.Label(ov, text=req["description"], font=self.f_small, bg=P["node"], fg=P["mu"], anchor="w",
+                           justify="left", wraplength=self.px(560))
+            lab.pack(fill="x", padx=pad)
+            self._wraps.append(lab)
         if detail and not questions:
             lines = detail.splitlines()
             shown = "\n".join(lines[:6]) + ("\n…" if len(lines) > 6 else "")
-            tk.Label(ov, text=shown, font=self.f_main, bg=P["bar"], fg=P["hi"], anchor="w", justify="left",
-                     wraplength=self.px(560), padx=self.px(6), pady=self.px(3)).pack(fill="x", padx=pad, pady=self.px(4))
+            lab = tk.Label(ov, text=shown, font=self.f_main, bg=P["bar"], fg=P["hi"], anchor="w", justify="left",
+                           wraplength=self.px(560), padx=self.px(6), pady=self.px(3))
+            lab.pack(fill="x", padx=pad, pady=self.px(4))
+            self._wraps.append(lab)
         answerable = core.hook_waiting(item) and self.pet.answers_enabled(item)
         row = tk.Frame(ov, bg=P["node"])
         if questions:
             simple = len(questions) == 1 and not questions[0].get("multiSelect") and questions[0].get("options")
             for q in questions[:1]:
-                tk.Label(ov, text=q.get("question", ""), font=self.f_main, bg=P["node"], fg=P["hi"], anchor="w",
-                         justify="left", wraplength=self.px(560)).pack(fill="x", padx=pad, pady=(self.px(4), 0))
+                lab = tk.Label(ov, text=q.get("question", ""), font=self.f_main, bg=P["node"], fg=P["hi"], anchor="w",
+                               justify="left", wraplength=self.px(560))
+                lab.pack(fill="x", padx=pad, pady=(self.px(4), 0))
+                self._wraps.append(lab)
             if answerable and simple:
                 q = questions[0]
                 for opt in q["options"][:6]:
@@ -622,7 +826,11 @@ class AgentNetworkWindow:
             "This prompt can only be answered in the session window (or turn on answering in Permissions)."
         self.note = tk.Label(ov, text=hint, font=self.f_small, bg=P["node"], fg=P["mu"], anchor="w")
         self.note.pack(fill="x", padx=pad, pady=(0, pad))
+        self.note.configure(justify="left")
+        self._wraps.append(self.note)
         self._mark_option()
+        if self.overlay_open:
+            self._place_overlay()
 
     def _mark_option(self):
         P = self.P
