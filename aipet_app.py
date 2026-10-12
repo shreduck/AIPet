@@ -1632,9 +1632,14 @@ class TrayApp:
         wins = self._agent_windows()
         if wins:
             keep = source.key if source is not None else None
+            ref = source if source is not None and source.alive() else next(iter(wins.values()))
+            try:  # the new window(s) open where this one is
+                at = ref.win.geometry()
+            except Exception:
+                at = None
             for w in list(wins.values()):
                 w.close()
-            self.show_agent_network(keep if not self.agent_network_separate() else None)
+            self.show_agent_network(keep if not self.agent_network_separate() else None, at=at)
         self.refresh_menu()
 
     def _agent_options_changed(self, opts, source, changed):
@@ -1645,12 +1650,12 @@ class TrayApp:
             if w is not source:
                 w.set_options(opts)
 
-    def show_agent_network(self, key=None):
+    def show_agent_network(self, key=None, at=None):
         """One window for all sessions (opening it again switches it to that session), or, in "one per session"
         mode, that session's own window (key None: every session's)."""
         wins = self._agent_windows()
         new = lambda k, pinned, n=0: aipet_agents_window.AgentNetworkWindow(  # noqa: E731
-            self.root, self.pet, k, pinned=pinned, on_options=self._agent_options_changed, cascade=n)
+            self.root, self.pet, k, pinned=pinned, on_options=self._agent_options_changed, cascade=n, at=at)
         if not self.agent_network_separate():
             win = wins.get("*")
             if win:

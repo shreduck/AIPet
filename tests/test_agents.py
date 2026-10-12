@@ -212,6 +212,11 @@ class WindowOptionTests(unittest.TestCase):
         self.assertEqual(win.load_options({"agent_window": {"alpha": 5, "scale": 10}})["alpha"], 30)
         self.assertEqual(win.key_color("#fbfaf7"), "#fbfaf6")  # see-through key: one notch off the background
 
+    def test_geometry_kept_when_switching_compact(self):
+        import aipet_agents_window as win
+        self.assertEqual(win.parse_geometry("620x480+100+-20"), (620, 480, 100, -20))
+        self.assertIsNone(win.parse_geometry(""))
+
     def test_colour_mix_for_fading(self):
         import aipet_agents_window as win
         self.assertEqual(win.mix("#000000", "#ffffff", 0), "#000000")

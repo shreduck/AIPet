@@ -186,6 +186,16 @@ def prompt_agent(net, item):
 
 
 # ---- window helpers shared by the agent network window and its text pop-ups
+def parse_geometry(geo):
+    """"620x480+100+-20" -> (620, 480, 100, -20); None when there is none."""
+    import re
+    m = re.match(r"^(\d+)x(\d+)([+-]-?\d+)([+-]-?\d+)$", str(geo or ""))
+    if not m:
+        return None
+    w, h, x, y = m.groups()
+    return int(w), int(h), int(x.replace("+-", "-").lstrip("+")), int(y.replace("+-", "-").lstrip("+"))
+
+
 def set_caption(win, show):
     """Windows: a window's title bar on or off. Only the caption goes: the window keeps its resizable frame and its
     taskbar button (a borderless Tk window, overrideredirect, would lose both)."""
@@ -438,12 +448,13 @@ class Slider:
 
 
 class AgentNetworkWindow:
-    def __init__(self, root, pet, key=None, pinned=False, on_options=None, cascade=0):
+    def __init__(self, root, pet, key=None, pinned=False, on_options=None, cascade=0, at=None):
         """pinned: this window belongs to one session (one window per session): no switching sessions.
         on_options(opts, window, changed): called after a setting changed, so the app can apply it to its other
         agent network windows (and switch between one window and one per session)."""
         self.root, self.pet = root, pet
         self.pinned, self.on_options, self.cascade = pinned, on_options, cascade
+        self.at = parse_geometry(at)  # where to open (the window this one replaces), else centred
         self.key = None
         self.net = {"agents": [], "log": []}
         self.item = None
@@ -541,7 +552,11 @@ class AgentNetworkWindow:
             sw, sh = self.win.winfo_screenwidth(), self.win.winfo_screenheight()
             w, h = min(w, sw - 40), min(h, sh - 80)
             off = self.px(28) * (self.cascade % 8)  # one window per session: fanned out
-            self.win.geometry(f"{w}x{h}+{(sw - w) // 2 + off}+{(sh - h) // 2 + off}")
+            if self.at:  # where the window it replaces was (switching compact on / off)
+                aw, ah, ax, ay = self.at
+                self.win.geometry(f"{max(w, aw) if aw else w}x{max(h, ah) if ah else h}+{ax + off}+{ay + off}")
+            else:
+                self.win.geometry(f"{w}x{h}+{(sw - w) // 2 + off}+{(sh - h) // 2 + off}")
         except tk.TclError:
             pass
         self._update_minsize()
@@ -615,7 +630,7 @@ class AgentNetworkWindow:
         self.opts = dict(opts)
         self.set_scale(self.opts["scale"] / 100, save=False, grow=False)
         self._apply_options()
-        self.cascade = cascade
+        self.cascade, self.at = cascade, None
         self._place()
         self.raise_()
         self._user_moved = False
