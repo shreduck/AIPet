@@ -333,7 +333,9 @@ A live map of one session: the main agent and every subagent it started, Claude 
   the top bar to move, the edges or the `◢` corner to resize; Windows and Linux) and compact (like the pet's compact mode: one
   window for every session; off: each session gets its own window, titled after it and fanned out) with, in compact,
   tabbed (on: one session at a time, PgUp / PgDn switch; off: every session's graph in its own band, one under the
-  other; click a band to pick the session the logs and prompts follow); sliders for window opacity, background opacity (the graph's background; Windows and macOS) and node
+  other; click a band to pick the session the logs and prompts follow; there, *tidy* draws each session as a group
+  with a title bar instead, its name scrolling like the pet's name tags when it doesn't fit). A session that clears
+  fades out, then the ones below slide up into its place; sliders for window opacity, background opacity (the graph's background; Windows and macOS) and node
   opacity, 30-100%, and scale, 50-150% (applied when you let go of the mouse, so the window doesn't move under it).
   Background opacity shows the graph's background through a backdrop window of AIPet's own, so clicks never reach
   what is behind. Tk can't draw half see-through nodes, so node opacity is a dotted pattern (75 / 50 / 25%).

@@ -29,7 +29,7 @@ OPACITY_STEP = 5  # background and node opacity, % (30-100), drawn as Tk stipple
 SCALE_MIN, SCALE_MAX, SCALE_STEP = 50, 150, 5  # the window's text and drawing size, %
 OPTIONS_KEY = "agent_window"  # config.json
 DEFAULT_OPTIONS = {"on_top": False, "alpha": 100, "bg_alpha": 100, "node_alpha": 100, "frameless": False,
-                   "separate": False, "tabbed": True, "scale": 100}
+                   "separate": False, "tabbed": True, "tidy": False, "scale": 100}
 HINT = "tab/←→ agent · a all · pgup/pgdn session · space prompt · ctrl+wheel/+/- zoom · 0 reset · drag pan · esc close"
 BG_OPACITY = IS_MAC or sys.platform == "win32"  # a see-through background needs Windows' or macOS' window support
 
@@ -110,6 +110,17 @@ STATUS = {"working": ("blue", "● working"), "needs_input": ("red", "! needs yo
 ROBOT_STATE = {"working": "working", "needs_input": "needs_input", "waiting": "working", "done": "done",
                "idle": "idle", "error": "error"}
 KIND_MARK = {"you": "you ›", "say": "", "think": "thinking:", "tool": "→", "spawn": "⇢", "error": "✕"}
+
+
+def mix(a, b, t):
+    """Colour a blended toward colour b (t = 0: a, 1: b)."""
+    try:
+        ra, ga, ba = (int(a[i:i + 2], 16) for i in (1, 3, 5))
+        rb, gb, bb = (int(b[i:i + 2], 16) for i in (1, 3, 5))
+    except (ValueError, TypeError, IndexError):
+        return a
+    t = min(1.0, max(0.0, t))
+    return "#%02x%02x%02x" % (round(ra + (rb - ra) * t), round(ga + (gb - ga) * t), round(ba + (bb - ba) * t))
 
 
 def bezier(p0, p1, p2, p3, t):
@@ -274,6 +285,7 @@ class AgentNetworkWindow:
         self.gz = 1.0  # the graph's own zoom (zoom buttons, ctrl + wheel, + / -)
         self.blocks = []  # (key, item, net) of every session the graph shows (several when compact and not tabbed)
         self._content, self._center_next, self._panned = None, True, False
+        self._bands, self._leaving, self._titles, self._animating = {}, {}, [], False
         self.u = self.opts["scale"] / 100
         self.s = 1.5 * self.u
         self._applied = {}  # window attributes last set (only touched when they change)
@@ -368,7 +380,7 @@ class AgentNetworkWindow:
         if name == "close":
             self.close()
             return "break"
-        toggles = {"frame": "frameless", "pin": "on_top", "each": "separate", "tabs": "tabbed"}
+        toggles = {"frame": "frameless", "pin": "on_top", "each": "separate", "tabs": "tabbed", "tidy": "tidy"}
         if name in toggles:
             o[toggles[name]] = not o[toggles[name]]
         elif name == "alpha":
@@ -869,6 +881,8 @@ class AgentNetworkWindow:
         rows.append(("each", "separate", "compact (one window for every session)", True))
         if not o["separate"] and not self.pinned:
             rows.append(("tabs", "tabbed", "  tabbed (one session at a time)", False))
+            if not o["tabbed"]:
+                rows.append(("tidy", "tidy", "    tidy (each session a titled group)", False))
         for name, opt, text, inverted in rows:
             on = bool(o[opt]) != inverted
             lab = tk.Label(m, text=f"{'[on ]' if on else '[off]'} {text}", font=self.f_main, bg=P["bar"],
@@ -1013,7 +1027,7 @@ class AgentNetworkWindow:
         if len(self.net["agents"]) != n_before:
             self._update_minsize()
         self.blocks = [(self.key, self.item, self.net)] if self.item else []
-        if not self.pinned and not self.opts["separate"] and not self.opts["tabbed"]:
+        if self._stacked_mode():
             # compact, not tabbed: every session's graph, one under the other
             self.blocks = [(i["key"], i, self.net if i["key"] == self.key else agents.read_network(i))
                            for i in sessions]
@@ -1128,7 +1142,9 @@ class AgentNetworkWindow:
         view = (c.canvasx(0), c.canvasy(0)) if old else None
         c.delete("all")
         self.edges = []
-        if not blocks or not any(net["agents"] for _, _, net in blocks):
+        fading = self._stacked_mode() and (self._leaving or any(
+            b.get("net", {}).get("agents") for b in self._bands.values()))  # the last session still fading out
+        if (not blocks or not any(net["agents"] for _, _, net in blocks)) and not fading:
             c.configure(scrollregion=(0, 0, W, H))
             c.xview_moveto(0)
             c.yview_moveto(0)
@@ -1138,47 +1154,155 @@ class AgentNetworkWindow:
             self._draw_stats()
             return
         VW = max(W * self.gz, self.gpx(420))
-        stacked = len(blocks) > 1
+        stacked = self._stacked_mode() or bool(self._leaving)
         sbox = self._stats_size()
-        y0 = 0
-        for b, (key, item, net) in enumerate(blocks):
-            bh = self._block_height(net, H) if stacked else max(H * self.gz, self._block_height(net, H))
-            head = 0
-            if stacked:  # each session its own band, with its name
-                head = int(self.g_main.metrics("linespace") * 1.6)
-                on = key == self.key
-                tag = f"band{b}"
-                c.create_rectangle(0, y0, VW, y0 + bh, fill=P["sel"] if on else P["bg"], outline="",
-                                   stipple="gray25" if on else "", tags=tag)
-                c.create_line(0, y0, VW, y0, fill=P["line"])
-                c.create_text(self.gpx(8), y0 + self.gpx(4), anchor="nw", tags=tag,
-                              text=("▍" if on else "  ") + session_label(item).replace("agent-network ▸ ", ""),
-                              fill=P["hi"] if on else P["mu"], font=self.g_bold if on else self.g_small)
-                c.tag_bind(tag, "<Button-1>", lambda e, k=key: self._pick_session(k))
-            reserve = None if stacked else (VW - sbox[0] - self.gpx(8), bh - sbox[1] - self.gpx(8))
-            self._draw_block(b, key, net, 0, y0 + head, VW, bh - head, reserve)
-            y0 += bh
-        x1, y1 = VW, y0
+        now = time.time()
+        self._titles = []
+        animating = False
+        if stacked:
+            y1 = self._plan_bands(blocks, H, now)
+            tidy = self.opts.get("tidy")
+            lh = self.g_main.metrics("linespace")
+            head = int(lh * 1.6)
+            order = [(k, None) for k in self._leaving] + [(k, b) for b, (k, _, _) in enumerate(blocks)]
+            for key, b in order:
+                leaving = key in self._leaving
+                band = self._leaving[key] if leaving else self._bands[key]
+                fade = min(1.0, (now - band["t0"]) / self.FADE_S) if leaving else 0.0
+                y = band["y"] if leaving else self._band_y(band, now)
+                animating = animating or leaving or now < band["t"] + self.SLIDE_S
+                self._draw_band(b if b is not None else -1, key, band["item"], band["net"], y, band["h"], VW, head,
+                                tidy, fade)
+        else:
+            self._bands, y1 = {}, 0
+            key, item, net = blocks[0]
+            bh = max(H * self.gz, self._block_height(net, H))
+            self._bands[key] = {"from": 0, "to": 0, "t": 0, "y": 0, "item": item, "net": net, "h": bh}
+            reserve = (VW - sbox[0] - self.gpx(8), bh - sbox[1] - self.gpx(8))
+            self._draw_block(0, key, net, 0, 0, VW, bh, reserve)
+            y1 = bh
+        self._animating = animating
+        x1 = VW
+        content_old = self._content
         self._content = (x1, y1)
         # scroll region: the drawing plus a view's worth around it, so it can be panned anywhere
         c.configure(scrollregion=(-W, -H, x1 + W, y1 + H))
-        layout = tuple(k for k, _, _ in blocks)
+        layout = ("stacked",) if stacked else ("single", blocks[0][0])
         if layout != getattr(self, "_last_layout", None):
             self._last_layout, self._center_next, self._user_moved = layout, True, False
         if self._center_next or not old:
             if W > 80 and H > 80 and c.winfo_ismapped():
                 self._center_next = False  # centred for real (not on the 1-pixel canvas of a window still opening)
             self.center_view()
+        elif view and (animating or getattr(self, "_was_animating", False)):
+            self._scroll_to(*view)  # sessions sliding: the view stays exactly where it is
         elif view:
             fx, fy = (view[0] + W / 2) / max(1, old[0]), (view[1] + H / 2) / max(1, old[1])
             self._scroll_to(fx * x1 - W / 2, fy * y1 - H / 2)
+        self._was_animating = animating
         self._dots = [c.create_oval(0, 0, 0, 0, fill=col, outline="", state="hidden")
                       for pts, st, col in self.edges for _ in range(2)]
         self._draw_stats()
 
-    def _draw_block(self, b, key, net, ox, oy, W, H, reserve):
-        """One session's graph, at (ox, oy) in a W x H area."""
+    # ---- stacked sessions (compact, not tabbed): bands that fade out and slide up
+    def _stacked_mode(self):
+        return not self.pinned and not self.opts["separate"] and not self.opts["tabbed"]
+
+    FADE_S, SLIDE_S = 0.45, 0.35
+
+    def _plan_bands(self, blocks, H, now):
+        """Where each session's band goes. A session that left fades where it was; the others then slide to their
+        new place. Returns the drawing's height."""
+        gap = self.gpx(14) if self.opts.get("tidy") else 0
+        head = int(self.g_main.metrics("linespace") * 1.6)
+        targets, heights, y = {}, {}, 0
+        for key, item, net in blocks:
+            heights[key] = self._block_height(net, H) + (self.gpx(6) if self.opts.get("tidy") else 0)
+            targets[key] = y
+            y += heights[key] + gap
+        prev = getattr(self, "_bands", {}) or {}
+        for key, band in prev.items():
+            if key not in targets and key not in self._leaving and band.get("net", {}).get("agents"):
+                self._leaving[key] = dict(band, y=self._band_y(band, now), t0=now)
+        self._leaving = {k: v for k, v in self._leaving.items() if now - v["t0"] < self.FADE_S and k not in targets}
+        delay = max([self.FADE_S - (now - v["t0"]) for v in self._leaving.values()] or [0])
+        bands = {}
+        for key, item, net in blocks:
+            band = prev.get(key)
+            if band is None:
+                band = {"from": targets[key], "to": targets[key], "t": now - self.SLIDE_S}
+            elif abs(band["to"] - targets[key]) > 0.5:  # its place changed: slide there (after any fade)
+                band = {"from": self._band_y(band, now), "to": targets[key], "t": now + delay}
+            bands[key] = dict(band, item=item, net=net, h=heights[key])
+        self._bands = bands
+        end = max([b["to"] + b["h"] for b in bands.values()] + [v["y"] + v["h"] for v in self._leaving.values()]
+                  + [head])
+        return end
+
+    def _band_y(self, band, now):
+        p = min(1.0, max(0.0, (now - band["t"]) / self.SLIDE_S))
+        ease = 1 - (1 - p) ** 3
+        return band["from"] + (band["to"] - band["from"]) * ease
+
+    def _draw_band(self, b, key, item, net, y, bh, VW, head, tidy, fade):
         c, P = self.canvas, self.P
+        F = (lambda col: mix(col, P["bg"], fade)) if fade else (lambda col: col)
+        on = key == self.key and not fade
+        tag = f"band{b}" if b >= 0 else f"gone{abs(hash(key)) % 10000}"
+        title = session_label(item).replace("agent-network ▸ ", "")
+        pad = self.gpx(8)
+        if tidy:  # a group: a title bar on top of the session's nodes, its name sliding when it doesn't fit
+            x0, x1 = pad, VW - pad
+            c.create_rectangle(x0, y + head, x1, y + bh, fill="", outline=F(P["blue"] if on else P["line"]),
+                               dash=() if on else (2, 3))
+            c.create_rectangle(x0, y, x1, y + head, fill=F(P["sel"] if on else P["bar"]),
+                               outline=F(P["blue"] if on else P["line"]), tags=tag)
+            font = self.g_bold if on else self.g_main
+            entry = (f"ttl{b}_{abs(hash(key)) % 10000}", ("● " if on else "○ ") + title, font,
+                     F(P["hi"] if on else P["tx"]), x0 + pad, x1 - x0 - 2 * pad, y + head / 2, tag)
+            self._titles.append(entry)
+            self._draw_title(entry, time.time())
+        else:  # bands: a line between sessions, the name at the top left
+            c.create_rectangle(0, y, VW, y + bh, fill=P["sel"] if on else P["bg"], outline="",
+                               stipple="gray25" if on else "", tags=tag)
+            c.create_line(0, y, VW, y, fill=F(P["line"]))
+            c.create_text(pad, y + self.gpx(4), anchor="nw", tags=tag,
+                          text=("▍" if on else "  ") + title,
+                          fill=F(P["hi"] if on else P["mu"]), font=self.g_bold if on else self.g_small)
+        if b >= 0:
+            c.tag_bind(tag, "<ButtonRelease-1>", lambda e, k=key: self._pick_session(k))
+        self._draw_block(b, key, net, pad if tidy else 0, y + head, VW - (2 * pad if tidy else 0), bh - head, None,
+                         fade=fade)
+
+    def _draw_title(self, entry, now):
+        """A group's title: as is when it fits, else scrolling round like the pet's name tags (characters drawn one
+        by one, only while wholly inside the bar: a Tk canvas can't clip text)."""
+        tag, text, font, fill, left, room, ymid, click = entry
+        c = self.canvas
+        c.delete(tag)
+        if font.measure(text) <= room:
+            c.create_text(left, ymid, text=text, anchor="w", fill=fill, font=font, tags=(tag, click))
+            return False
+        loop_text = text + "    "
+        loop = font.measure(loop_text)
+        offset = (now * 30 * self.s * self.gz) % loop
+        right = left + room
+        for k in (0, 1):
+            cx = left - offset + k * loop
+            for ch in loop_text:
+                cw = font.measure(ch)
+                if cx >= right:
+                    break
+                if cx >= left and cx + cw <= right and not ch.isspace():
+                    c.create_text(cx, ymid, text=ch, anchor="w", fill=fill, font=font, tags=(tag, click))
+                cx += cw
+        return True
+
+    def _draw_block(self, b, key, net, ox, oy, W, H, reserve, fade=0.0):
+        """One session's graph, at (ox, oy) in a W x H area. fade: 0 as is .. 1 gone (a session being cleared)."""
+        c, P0 = self.canvas, self.P
+        P = {k: (mix(v, P0["bg"], fade) if fade and isinstance(v, str) and v.startswith("#") else v)
+             for k, v in P0.items()}
         ags = net["agents"]
         if not ags:
             return
@@ -1195,7 +1319,8 @@ class AgentNetworkWindow:
             dash = () if a["state"] == "done" else (3, 4)
             line = [coord for t in range(0, 21) for coord in bezier(*pts, t / 20)]
             c.create_line(*line, fill=col, width=max(1, self.gpx(1)), dash=dash, smooth=True)
-            self.edges.append((pts, a["state"], col))
+            if not fade:
+                self.edges.append((pts, a["state"], col))
         for i, (a, (x, y, w, h)) in enumerate(zip(ags, boxes)):
             status_col, status = STATUS.get(a["state"], STATUS["idle"])
             border = P[status_col] if a["state"] != "idle" else P["line"]
@@ -1203,15 +1328,17 @@ class AgentNetworkWindow:
                 border = P["amb"]
             picked = current and i == self.sel
             fill = P["sel"] if picked else P["node"]
-            tag = f"node{b}_{i}"
+            tag = f"node{b}_{i}" if b >= 0 else "gone"
             c.create_rectangle(x, y, x + w, y + h, fill=fill, stipple=dither(self.opts["node_alpha"]),
                                outline=border, width=max(1, self.gpx(1.3 if picked else 1)), tags=tag)
             img = self.robot(a["state"], max(6, int(lh * 1.15)))
-            c.create_image(x + self.gpx(6), y + self.gpx(5), image=img, anchor="nw", tags=tag)
+            if fade < 0.35:  # an image can't fade: it goes early
+                c.create_image(x + self.gpx(6), y + self.gpx(5), image=img, anchor="nw", tags=tag)
             tx = x + self.gpx(6) + img.width() + self.gpx(5)
             inner = x + w - tx - self.gpx(4)
             c.create_text(tx, y + self.gpx(5), text=self._fit(a["name"], inner, self.g_bold), anchor="nw",
-                          fill=self.color(i), font=self.g_bold, tags=tag)
+                          fill=mix(self.color(i), P0["bg"], fade) if fade else self.color(i), font=self.g_bold,
+                          tags=tag)
             info = " · ".join(v for v in (a["model_label"], a["effort"]) if v)
             ctx = agents.fmt_tokens(a["ctx"])
             ctx_line = (f"ctx {ctx}" + (f"/{agents.fmt_tokens(a['ctx_max'])}" if a["ctx_max"] else "")) if ctx else ""
@@ -1241,7 +1368,8 @@ class AgentNetworkWindow:
                                   text=self._fit(f"› {a['thought']}", room, self.g_small), anchor="w",
                                   fill=P[status_col] if a["state"] != "done" else P["grn"], font=self.g_small,
                                   tags=tag)
-            c.tag_bind(tag, "<ButtonRelease-1>", lambda e, k=key, i=i: self._click_node(e, k, i))
+            if b >= 0:
+                c.tag_bind(tag, "<ButtonRelease-1>", lambda e, k=key, i=i: self._click_node(e, k, i))
             c.tag_bind(tag, "<Enter>", lambda e: c.configure(cursor="hand2"))
             c.tag_bind(tag, "<Leave>", lambda e: c.configure(cursor=""))
 
@@ -1483,6 +1611,13 @@ class AgentNetworkWindow:
                     x, y = bezier(*pts, u)
                     self.canvas.coords(dot, x - r, y - r, x + r, y + r)
                     self.canvas.itemconfigure(dot, state="normal")
+            if self._animating or self._leaving:  # sessions fading out / sliding into place
+                self._draw_graph(force=True)
+            else:
+                now = time.time()
+                for entry in self._titles:  # long group titles scroll like the pet's name tags
+                    if entry[2].measure(entry[1]) > entry[5]:
+                        self._draw_title(entry, now)
             # the cogwheel turns while hovered, while its drop-down is open, and for a moment after a change
             if self.menu_open or getattr(self, "_cog_hover", False) or time.time() < self._spin_until:
                 self._spin = (self._spin + 0.12) % (2 * math.pi)

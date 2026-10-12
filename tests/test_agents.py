@@ -212,6 +212,14 @@ class WindowOptionTests(unittest.TestCase):
         self.assertEqual(win.load_options({"agent_window": {"alpha": 5, "scale": 10}})["alpha"], 30)
         self.assertEqual(win.key_color("#fbfaf7"), "#fbfaf6")  # see-through key: one notch off the background
 
+    def test_colour_mix_for_fading(self):
+        import aipet_agents_window as win
+        self.assertEqual(win.mix("#000000", "#ffffff", 0), "#000000")
+        self.assertEqual(win.mix("#000000", "#ffffff", 1), "#ffffff")
+        self.assertEqual(win.mix("#000000", "#ffffff", 0.5), "#808080")
+        self.assertEqual(win.mix("systemTransparent", "#ffffff", 0.5), "systemTransparent")
+        self.assertEqual(win.load_options({})["tidy"], False)
+
     def test_needed_size_follows_scale_agents_and_compact(self):
         import aipet_agents_window as win
         small, big = win.needed_size(2, 0.5, 9, 8), win.needed_size(2, 1.5, 27, 24)
