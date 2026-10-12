@@ -340,7 +340,7 @@ A live map of one session: the main agent and every subagent it started, Claude 
 - **Stats node** (bottom right of the graph) for the current task, since your latest prompt: *subagents* (which kinds,
   how many times), *context* (the sum; its drop-down lists every agent call in order with its model and context, not
   grouped by name) and *tools* (every tool and how often, and the skills used). Click a line for its read-only
-  drop-down; Esc or a click elsewhere folds it. A `⚠` (hover it) shows when the task began before the part of a
+  drop-down; Esc or a click elsewhere folds it. A small `ⓘ` (hover it) shows when the task began before the part of a
   transcript AIPet reads (its last 256 KB, 128 KB for a subagent): older entries may be missing then.
 - **Zoom and pan** the graph: `[-] 100% [+] [reset] [center]` at its top left, Ctrl + mouse wheel (at the pointer),
   + / - and 0; drag to pan, the wheel scrolls (Shift: sideways). The stats node and zoom controls stay put.

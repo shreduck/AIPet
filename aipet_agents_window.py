@@ -293,8 +293,17 @@ class AgentNetworkWindow:
         w.deiconify()
         self._apply_options()
         self.raise_()
+        self.win.after(250, self._settle)
         self._tick()
         self._animate()
+
+    def _settle(self):
+        """Once the window is on screen: default zoom, graph centred."""
+        if self.alive() and not getattr(self, "_user_moved", False):
+            self.gz = 1.0
+            self._center_next = True
+            self._draw_graph(force=True)
+            self._update_zoombar()
 
     # ---- window
     def alive(self):
@@ -417,6 +426,8 @@ class AgentNetworkWindow:
         self.cascade = cascade
         self._place()
         self.raise_()
+        self._user_moved = False
+        self.win.after(150, self._settle)  # and the graph at 100%, centred
 
     def set_scale(self, u, save=True, grow=True):
         """Resize every font and drawing. grow: make the window big enough for the new scale."""
@@ -593,6 +604,8 @@ class AgentNetworkWindow:
         self._draw_tabs()
 
     def _on_resize(self, e=None):
+        if not getattr(self, "_user_moved", False):
+            self._center_next = True  # until you pan or zoom, the graph stays centred as the window opens / resizes
         self._draw_graph(force=True)
         if getattr(self, "backdrop", None) is not None:
             self.win.after_idle(self._sync_backdrop)
@@ -692,7 +705,7 @@ class AgentNetworkWindow:
         self.zoombar = tk.Frame(self.canvas, bd=0, highlightthickness=1)
         self.zoom_btns = []
         for text, fn in (("[-]", lambda: self.zoom(1 / 1.25)), (None, None), ("[+]", lambda: self.zoom(1.25)),
-                         ("[reset]", lambda: self.zoom(reset=True)), ("[center]", self.center_view)):
+                         ("[reset]", lambda: self.zoom(reset=True)), ("[center]", lambda: self.center_view(by_user=True))):
             lab = tk.Label(self.zoombar, text=text or "100%", font=self.f_small, cursor="" if fn is None else "hand2",
                            padx=self.px(2))
             lab.pack(side="left")
@@ -1149,8 +1162,12 @@ class AgentNetworkWindow:
         self._content = (x1, y1)
         # scroll region: the drawing plus a view's worth around it, so it can be panned anywhere
         c.configure(scrollregion=(-W, -H, x1 + W, y1 + H))
+        layout = tuple(k for k, _, _ in blocks)
+        if layout != getattr(self, "_last_layout", None):
+            self._last_layout, self._center_next, self._user_moved = layout, True, False
         if self._center_next or not old:
-            self._center_next = False
+            if W > 80 and H > 80 and c.winfo_ismapped():
+                self._center_next = False  # centred for real (not on the 1-pixel canvas of a window still opening)
             self.center_view()
         elif view:
             fx, fy = (view[0] + W / 2) / max(1, old[0]), (view[1] + H / 2) / max(1, old[1])
@@ -1254,6 +1271,7 @@ class AgentNetworkWindow:
         new = 1.0 if reset else min(3.0, max(0.4, round(old * factor, 2)))
         if abs(new - old) < 1e-3 and not reset:
             return "break"
+        self._user_moved = not reset
         W, H = c.winfo_width(), c.winfo_height()
         mx, my = at if at else (W / 2, H / 2)
         content = getattr(self, "_content", None)
@@ -1269,8 +1287,10 @@ class AgentNetworkWindow:
         self._update_zoombar()
         return "break"
 
-    def center_view(self):
+    def center_view(self, by_user=False):
         """The drawing in the middle of the view (its top first when it's taller than the view)."""
+        if by_user:
+            self._user_moved = False
         c = self.canvas
         W, H = c.winfo_width(), c.winfo_height()
         x1, y1 = getattr(self, "_content", None) or (W, H)
@@ -1294,7 +1314,7 @@ class AgentNetworkWindow:
     def _pan_move(self, e):
         fx, fy = getattr(self, "_pan_from", (e.x, e.y))
         if self._panned or abs(e.x - fx) + abs(e.y - fy) > 4:
-            self._panned = True
+            self._panned = self._user_moved = True
             self.canvas.configure(cursor="fleur")
             self.canvas.scan_dragto(e.x, e.y, gain=1)
 
@@ -1308,6 +1328,7 @@ class AgentNetworkWindow:
         up = (getattr(e, "delta", 0) > 0) or getattr(e, "num", 0) == 4
         if e.state & 0x4 or (IS_MAC and e.state & 0x8):
             return self.zoom(1.15 if up else 1 / 1.15, at=(e.x, e.y))
+        self._user_moved = True
         if e.state & 0x1:
             self.canvas.xview_scroll(-2 if up else 2, "units")
         else:
@@ -1340,10 +1361,10 @@ class AgentNetworkWindow:
             return
         sc.create_text(self.px(6), self.px(4), text="≡ this task", anchor="nw", fill=P["hi"], font=self.f_bold)
         if st.get("missing"):  # the task began before the part of a transcript that was read
-            sc.create_text(w - self.px(6), self.px(4), text="⚠", anchor="ne", fill=P["amb"], font=self.f_bold,
+            sc.create_text(w - self.px(6), self.px(4), text="ⓘ", anchor="ne", fill=P["mu"], font=self.f_bold,
                            tags="warn")
             sc.tag_bind("warn", "<Enter>", lambda e: self._show_tip(
-                "This task started a long way back: AIPet reads only the last part of each transcript (about 256 KB "
+                "For your info: this task started a long way back. AIPet reads only the last part of each transcript (about 256 KB "
                 "for the main agent, 128 KB for a subagent), so older subagents, tool calls and skills may be "
                 "missing from these lists.", sc, w))
             sc.tag_bind("warn", "<Leave>", lambda e: self._hide_tip())
@@ -1364,7 +1385,7 @@ class AgentNetworkWindow:
         P = self.P
         try:
             self.tip.configure(text=text, bg=P["bar"], fg=P["tx"], wraplength=self.px(260),
-                               highlightbackground=P["amb"], highlightthickness=1)
+                               highlightbackground=P["line"], highlightthickness=1)
             self.tip.place(in_=near, x=width, y=0, anchor="se")
             self.tip.lift()
         except tk.TclError:
@@ -1406,7 +1427,7 @@ class AgentNetworkWindow:
         lines.append(("── skills ──", "mu"))
         lines += [(f"{name:<26} ×{n}", "") for name, n in st["skills"]] or [("# no skills used", "mu")]
         if st.get("missing"):
-            lines.append(("⚠ older entries may be missing (long task)", "warn"))
+            lines.append(("ⓘ older entries may be missing (long task)", "mu"))
         return lines
 
     def _fill_stat(self):
