@@ -287,6 +287,17 @@ When Claude Code or Codex asks for permission, the popup (click the bubble) show
 - For background subagents Claude Code may wait for the hook before showing its own prompt, so a long timeout also
   lengthens that delay (with no limit, until you answer from the pet); lower the slider if you notice it.
 
+## Live Management and timed auto approve
+**Live Management** (any menu, and its own page in the settings window) lists your running sessions. For each one:
+- **Auto approve for N min...** approves every permission prompt from that session by itself until the timer ends,
+  after a confirmation (Enter doesn't confirm it). Other sessions keep asking, and questions from the AI still wait for
+  you. The prompt card has the same thing as a link: *Auto approve this session for N min...* (it also allows the
+  prompt on screen). The length is a slider in the settings window (1 - 120 min, default 10; `timed_approve_minutes`).
+- While one runs, its countdown shows in Live Management and at the top of the pet's right-click menu
+  (*Stop auto approve: name · 7:32 left*), one click to stop it early. It also stops when AIPet quits (the hooks only
+  honour it while the pet runs). Grants are kept in `~/.aipet/auto-approve.json` under `timed`.
+- **Subagents running** lists what the session's subagents are (their agent type, e.g. `tester`).
+
 ## Auto approve
 **Permissions → Auto approve** (pet right-click, the tray icon's menu, or the macOS menu-bar icon) lists every hook config: *This PC /
 This Mac*, each *WSL* distro, *Cowork* (the Claude app plugin) and each place *Codex* was found. **Everything is off by

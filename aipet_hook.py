@@ -610,6 +610,20 @@ def auto_approve_rules(base, key):
     return rules
 
 
+def timed_decision(base, session_id, now=None):
+    """'timed' while this session has a running "auto approve for N minutes" grant from the pet (auto-approve.json
+    "timed": {session id: {"until": epoch seconds}}), else None. Like the other rules, only while the pet runs."""
+    try:
+        with open(os.path.join(base, AUTO_APPROVE_FILE), encoding="utf-8") as f:
+            grant = (json.load(f).get("timed") or {}).get(str(session_id))
+    except Exception:
+        return None
+    until = grant.get("until") if isinstance(grant, dict) else None
+    if not isinstance(until, (int, float)) or (now or time.time()) >= until or not pet_alive(base):
+        return None
+    return "timed"
+
+
 def request_subjects(data):
     """What the patterns are matched against, never truncated: the command (or file path, URL, pattern...), the tool
     name, and Tool(command) - so 'git status', 'Read' and 'Bash\\(npm test\\)' all work as patterns."""
@@ -1000,6 +1014,10 @@ def _update_session(path, target, event, data, wsl, auto=None):
     elif aid:
         agents[aid] = t_now
     agents = dict(sorted(agents.items(), key=lambda kv: kv[1])[-8:])
+    # what each running subagent is (its agent_type, e.g. "tester"), for the pet's Live Management menu
+    agent_types = {k: v for k, v in (prev.get("agent_types") or {}).items() if k in agents}
+    if aid and aid in agents and data.get("agent_type"):
+        agent_types[aid] = str(data.get("agent_type"))[:40]
     wait_agent = prev.get("wait_agent", "")
     requests = pending_requests(prev)  # every prompt still waiting, oldest (the one on screen) first
     main_stopped = bool(prev.get("main_stopped"))  # the main agent finished its turn while subagents kept running
@@ -1193,6 +1211,7 @@ def _update_session(path, target, event, data, wsl, auto=None):
         "host": host,
         "pid": pid,
         "agents": agents,
+        "agent_types": agent_types,
         "main_stopped": main_stopped,
         "wait_agent": wait_agent if state == "needs_input" else "",
         "request": requests[0] if state == "needs_input" and requests else {},  # the prompt on screen
@@ -1420,7 +1439,8 @@ def main():
 
     auto = None
     if event == "PermissionRequest" and data.get("tool_name") != QUESTION_TOOL:  # never auto-"approve" a question
-        auto = auto_decision(auto_approve_rules(os.path.dirname(target), auto_approve_key(wsl)), data)
+        auto = timed_decision(os.path.dirname(target), session_id) or \
+            auto_decision(auto_approve_rules(os.path.dirname(target), auto_approve_key(wsl)), data)
     if auto:
         with SessionLock(path):
             _update_session(path, target, event, data, wsl, auto=auto)

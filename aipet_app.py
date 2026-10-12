@@ -1266,8 +1266,9 @@ class TrayApp:
             item("Dismiss this pet", self.pet.dismiss_menu_pet, real_pet),
         ]
         shared = self._mac_menu_spec()  # starts with Settings... and a separator
-        return shared[:1] + [self._fast_cancel_item(pet, session), {"label": "This session", "submenu": session_actions},
-                             None] + shared[2:]
+        timers = self._timed_countdown_items()
+        return shared[:1] + timers + [self._fast_cancel_item(pet, session),
+                                      {"label": "This session", "submenu": session_actions}, None] + shared[2:]
 
     def _fast_cancel_item(self, pet, session):
         """Fix fast cancel: a prompt cancelled the instant it was sent leaves no trace Claude Code reports, so the pet
@@ -1356,6 +1357,8 @@ class TrayApp:
                          "values) to the clipboard. Paste it into Claude, Codex or another assistant and ask it to "
                          "change AIPet's settings for you.")] if settings else []),
             None,
+            item("Live Management", icon="clock", submenu=self._live_spec(item, settings),
+                 help="Your running sessions right now: give one a timed auto approve, and see its subagents."),
             item("Appearance", icon="palette", help="How the pet and its windows look.", submenu=[
                 item("Pet style", choice=True, help="Which creature sits on your screen.",
                      submenu=[item(label, lambda k=key: self.set_style(k), checked=core.STYLE["v"] == key)
@@ -1498,6 +1501,62 @@ class TrayApp:
             None,
             item("Quit AIPet", self.quit),
         ]
+
+    def _live_spec(self, item, settings=False):
+        """Live Management: the timed auto approve (per session, with its countdown) and each session's subagents.
+        Menus show exact countdowns (they are built when opened); the settings window rounds to minutes so it
+        doesn't redraw every second."""
+        grants, now = core.timed_grants(), time.time()
+        default = self.pet.timed_minutes()
+
+        def left(grant):
+            secs = grant["until"] - now
+            return f"{max(1, int(-(-secs // 60)))} min left" if settings else f"{core.fmt_left(secs)} left"
+
+        spec = [item("Timed auto approve length", choice=True,
+                     help='How long "Auto approve for ..." lasts. Every start asks you to confirm first.',
+                     slider={"value": default, "min": core.TIMED_MIN, "max": core.TIMED_MAX, "step": 1,
+                             "set": self.pet.set_timed_minutes, "format": lambda v: f"{int(v)} min"},
+                     submenu=[item(f"{m} min", lambda m=m: self.pet.set_timed_minutes(m), checked=default == m)
+                              for m in (5, 10, 15, 30, 60)]),
+                None]
+        sessions = [d for d in self.pet._last_items if d.get("source") == "CC" and d.get("session_id")]
+        for d in sessions:
+            grant = grants.get(str(d["session_id"]))
+            name = d.get("title") or "session"
+            if d.get("conv"):
+                name += f" · {d['conv']}"
+            state = core.LABELS.get(d.get("state"), d.get("state") or "")
+            agents = d.get("agent_types") or []
+            entries = ([item(f"Auto approving · {left(grant)}", enabled=False),
+                        item("Stop auto approving", lambda sid=d["session_id"]: self._stop_timed(sid))]
+                       if grant else
+                       [item(f"Auto approve for {default} min…", lambda d=d: self._start_timed(d),
+                             help="Approves every permission prompt from this session until the timer ends "
+                                  "(asks to confirm first). Questions from the AI still ask you.")])
+            entries += [None, item(f"Subagents running: {len(agents)}" if agents else "No subagents running",
+                                   enabled=False)]
+            entries += [item(f"• {a}", enabled=False) for a in agents]
+            spec.append(item(f"{name}  ({state})" + (f"  ⏱ {left(grant)}" if grant else ""), submenu=entries,
+                             icon="check" if grant else None, help=d.get("where") or None))
+        if not sessions:
+            spec.append(item("No sessions right now", enabled=False))
+        return spec
+
+    def _start_timed(self, d):
+        if self.pet.start_timed_approve(d):
+            self.refresh_menu()
+
+    def _stop_timed(self, session_id):
+        self.pet.stop_timed_approve(session_id)
+        self.refresh_menu()
+
+    def _timed_countdown_items(self):
+        """Right-click: every running timed auto approve, with its countdown, one click to stop it."""
+        grants, now = core.timed_grants(), time.time()
+        return [{"label": f"⏱ Stop auto approve: {g.get('title') or 'session'} · "
+                          f"{core.fmt_left(g['until'] - now)} left",
+                 "action": lambda sid=sid: self._stop_timed(sid), "enabled": True} for sid, g in grants.items()]
 
     def settings_item(self):
         return {"label": "Settings...", "action": self.show_settings, "enabled": True, "submenu": None,

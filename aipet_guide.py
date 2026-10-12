@@ -40,6 +40,9 @@ CONFIG_KEYS = {
                            "EXPERIMENTAL: reads Claude Code's sign-in token to fetch account usage from an unofficial "
                            "endpoint. Only turn on if the user explicitly asks; the app asks for consent itself.",
                            "live"),
+    "timed_approve_minutes": ("number 1 - 120 (default 10)",
+                              "How long a timed auto approve lasts (Live Management / the prompt card). Starting one "
+                              "always asks the user to confirm; don't start one yourself.", "live"),
     "settings_zoom": ("number 0.5 - 1.5", "Size of the settings window (1.0 = 100%).", "live"),
     "card_scale": ("number 0.5 - 1.5", "Size of the permission / question card.", "live"),
     "vscode_open_conversation": ("true / false",
@@ -135,6 +138,8 @@ Lets AIPet approve permission prompts automatically. Format:
   asks for everything (the whitelist then never applies).
 - `allow_all: true` approves every prompt of that target. Risky: only if the user explicitly wants it.
 - Questions the AI asks the user are never auto-approved. Read fresh by the hooks on every prompt.
+- `"timed": {{"<session id>": {{"until": <epoch seconds>, "title": "..."}}}}` holds running timed auto approves, written
+  by the app after the user confirms. Leave it alone: never add or extend one on the user's behalf.
 
 ## Other things
 

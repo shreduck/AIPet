@@ -57,7 +57,8 @@ DEFAULT_CONFIG = {
     "sound_style": "chimes",  # AIPet's own sounds by default; "system" uses the host OS sounds
     "notifications": False,  # Windows toast notifications; off by default (toggle in the tray menu)
     "theme": "light",  # "light" (default) or "dark"; toggle in the tray / right-click menu
-    "answer_wait_seconds": 180,  # how long a permission prompt can be answered from the pet: 0 (no limit) - 1800
+    "answer_wait_seconds": 180,
+    "timed_approve_minutes": 10,  # length of "Auto approve for N min" (Live Management / prompt card): 1 - 120  # how long a permission prompt can be answered from the pet: 0 (no limit) - 1800
     "pet_style": "robot",  # "robot" (default), "mole" or "cat"
     # "size": 1.0 is written when you use the Size slider (1.0 = 100%, range 0.3 - 3.0); deliberately not a default
     # here, so an old absolute "scale" value in config.json can still be migrated once.
@@ -864,16 +865,64 @@ def save_auto_approve(key, rules):
             r["enabled"] = False
     else:
         targets[key] = rules
+    return _write_auto_approve(targets=targets)
+
+
+def _write_auto_approve(targets=None, timed=None):
+    """Write auto-approve.json, keeping whichever section (rules per hook config / timed grants) isn't given."""
+    try:
+        with open(AUTO_APPROVE_PATH, encoding="utf-8") as f:
+            current = json.load(f)
+        current = current if isinstance(current, dict) else {}
+    except Exception:
+        current = {}
+    data = {"targets": targets if targets is not None else current.get("targets", {}),
+            "timed": timed if timed is not None else current.get("timed", {})}
     try:
         os.makedirs(HOME_DIR, exist_ok=True)
         tmp = AUTO_APPROVE_PATH + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"targets": targets}, f, indent=2)
+            json.dump(data, f, indent=2)
         os.replace(tmp, AUTO_APPROVE_PATH)
         return True
     except OSError as e:
         log_error(f"auto-approve: {e!r}")
         return False
+
+
+# ---- timed auto approve: one session approves every permission prompt by itself for N minutes
+TIMED_MIN, TIMED_MAX, TIMED_DEFAULT = 1, 120, 10  # minutes
+
+
+def timed_grants(now=None):
+    """{session id: {"until", "title"}} for the grants still running (the hooks ignore expired ones too)."""
+    now = time.time() if now is None else now
+    try:
+        with open(AUTO_APPROVE_PATH, encoding="utf-8") as f:
+            timed = json.load(f).get("timed") or {}
+    except Exception:
+        return {}
+    return {sid: g for sid, g in timed.items()
+            if isinstance(g, dict) and isinstance(g.get("until"), (int, float)) and g["until"] > now}
+
+
+def set_timed_grant(session_id, minutes, title=""):
+    grants = timed_grants()
+    minutes = max(TIMED_MIN, min(TIMED_MAX, int(minutes)))
+    grants[str(session_id)] = {"until": time.time() + minutes * 60, "title": str(title)[:80]}
+    return _write_auto_approve(timed=grants)
+
+
+def stop_timed_grant(session_id):
+    grants = timed_grants()
+    grants.pop(str(session_id), None)
+    return _write_auto_approve(timed=grants)
+
+
+def fmt_left(seconds):
+    """Countdown text: 9:41, then 0:05."""
+    seconds = max(0, int(round(seconds)))
+    return f"{seconds // 60}:{seconds % 60:02d}"
 
 
 def bad_patterns(lines):
@@ -1223,6 +1272,9 @@ def read_claude_code_sessions(cfg):
             "app": rec.get("app", ""),
             "hwnd": rec.get("hwnd"),
             "subagents": _active_agents(rec),
+            "agent_types": [((rec.get("agent_types") or {}).get(a) or "subagent")
+                            for a, ts in (rec.get("agents") or {}).items() if time.time() - ts < 900]
+            if rec.get("state") in ("working", "needs_input") else [],
             "request": rec.get("request") or {},
             "pending": len(rec.get("requests") or []) or (1 if rec.get("request") else 0),  # prompts queued
             "pid": rec.get("pid"),
@@ -3163,6 +3215,10 @@ class Detail:
         self.clearlink = tk.Label(right, text="Not asking anymore? Clear this prompt", bg=bg, fg=muted, cursor="hand2",
                                   anchor="w", font=self.f(8, "underline"))
         self.clearlink.bind("<Button-1>", lambda e: self.clear_prompt())
+        # Timed auto approve for this session (asks to confirm first)
+        self.timedlink = tk.Label(right, bg=bg, fg=themed_color("#b45309"), cursor="hand2", anchor="w",
+                                  font=self.f(8, "underline"))
+        self.timedlink.bind("<Button-1>", lambda e: self.auto_approve_for_a_while())
         # Questions (Claude's AskUserQuestion): one block per question, options as toggles, plus an own-answer field
         self.qframe = tk.Frame(self.body, bg=bg)
         self._qid, self._qvars = None, []
@@ -3388,6 +3444,14 @@ class Detail:
             self.clearlink.pack(fill="x", pady=(0, 6), after=self.note)
         else:
             self.clearlink.pack_forget()
+        if can_answer and not question:
+            grant = timed_grants().get(str(item.get("session_id")))
+            self.timedlink.config(text=(f"Auto approving this session \u00b7 {fmt_left(grant['until'] - time.time())} left"
+                                        if grant else
+                                        f"Auto approve this session for {self.app.timed_minutes()} min\u2026"))
+            self.timedlink.pack(fill="x", pady=(0, 4), after=self.note)
+        else:
+            self.timedlink.pack_forget()
         if can_answer or self.sent:  # small link while the answer buttons (or the "sent" note) are showing
             self.golink.pack(side="right")
             self.go_row.pack_forget()
@@ -3501,6 +3565,7 @@ class Detail:
         self.answer_row.pack_forget()
         self.q_row.pack_forget()
         self.qframe.pack_forget()
+        self.timedlink.pack_forget()
         self.golink.pack_forget()
         self.go_row.pack(fill="x", after=self.note)
         self._place()
@@ -3554,6 +3619,15 @@ class Detail:
 
     def clear_prompt(self):
         self.app.clear_prompt(self.key, getattr(self, "_req_id", None))  # the next poll moves the card on / closes it
+
+    def auto_approve_for_a_while(self):
+        """Start the timed auto approve for this session (after its confirmation), and allow the prompt on screen."""
+        item = next((i for i in self.app._last_items if i["key"] == self.key), {})
+        if timed_grants().get(str(item.get("session_id"))):
+            self.answer("allow")
+            return
+        if self.app.start_timed_approve(item):
+            self.answer("allow")
 
     def answer(self, behavior):
         item = next((i for i in self.app._last_items if i["key"] == self.key), {})
@@ -3898,6 +3972,40 @@ class PetApp:
             return True
         except OSError:
             return False
+
+    def timed_minutes(self):
+        try:
+            return max(TIMED_MIN, min(TIMED_MAX, int(self.cfg.get("timed_approve_minutes", TIMED_DEFAULT))))
+        except (TypeError, ValueError):
+            return TIMED_DEFAULT
+
+    def set_timed_minutes(self, minutes):
+        self.cfg["timed_approve_minutes"] = max(TIMED_MIN, min(TIMED_MAX, int(round(float(minutes)))))
+        save_setting("timed_approve_minutes", self.cfg["timed_approve_minutes"])
+
+    def start_timed_approve(self, item, minutes=None):
+        """Auto approve every permission prompt from this session for N minutes, after a safety confirmation.
+        Returns True once the grant is running."""
+        if not item or not item.get("session_id"):
+            return False
+        minutes = minutes or self.timed_minutes()
+        name = item.get("title") or "this session"
+        if item.get("conv"):
+            name += f" \u00b7 {item['conv']}"
+        ok = themed_dialog(
+            self.root, "AIPet", kind="warning", heading=f"Auto approve {name} for {minutes} min?",
+            text=(f"Every permission prompt from this session (commands, file edits, tool calls) will be approved "
+                  f"without asking for the next {minutes} minutes. Other sessions keep asking, and questions from the "
+                  "AI still wait for you.\n\nLive Management in the right-click menu shows the countdown and can "
+                  "stop it early. It also stops when AIPet quits."),
+            buttons=(("Cancel", False, "secondary"), (f"Auto approve {minutes} min", True, "danger")),
+            cancel=False, enter_confirms=False)
+        if not ok:
+            return False
+        return set_timed_grant(item["session_id"], minutes, name)
+
+    def stop_timed_approve(self, session_id):
+        stop_timed_grant(session_id)
 
     def clear_prompt(self, key, req_id):
         """Drop one permission prompt from a session that still shows it although nobody is asking anymore (its

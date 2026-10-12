@@ -1,0 +1,95 @@
+"""Timed auto approve: one session approves its permission prompts by itself for N minutes."""
+import json
+import os
+import tempfile
+import time
+import unittest
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+import aipet
+import aipet_app
+import aipet_hook as hook
+
+
+class TimedApproveTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.tmp.name, "auto-approve.json")
+        self.p = patch.object(aipet, "AUTO_APPROVE_PATH", self.path)
+        self.p.start()
+
+    def tearDown(self):
+        self.p.stop()
+        self.tmp.cleanup()
+
+    def test_grant_is_stored_beside_the_rules_and_expires(self):
+        aipet.save_auto_approve("windows", dict(aipet.default_auto_rules(), enabled=True, whitelist=["ls"]))
+        self.assertTrue(aipet.set_timed_grant("s-1", 10, "esign"))
+        aipet.save_auto_approve("wsl:U", aipet.default_auto_rules())  # saving rules keeps the grant
+        with open(self.path) as f:
+            data = json.load(f)
+        self.assertEqual(data["targets"]["windows"]["whitelist"], ["ls"])
+        grant = aipet.timed_grants()["s-1"]
+        self.assertAlmostEqual(grant["until"], time.time() + 600, delta=5)
+        self.assertEqual(aipet.timed_grants(now=time.time() + 601), {})  # expired
+        aipet.stop_timed_grant("s-1")
+        self.assertEqual(aipet.timed_grants(), {})
+        self.assertEqual(aipet.fmt_left(65), "1:05")
+
+    def test_hook_approves_only_that_session_only_while_running(self):
+        aipet.set_timed_grant("s-1", 10)
+        base = self.tmp.name
+        with patch.object(hook, "pet_alive", return_value=True):
+            self.assertEqual(hook.timed_decision(base, "s-1"), "timed")
+            self.assertIsNone(hook.timed_decision(base, "s-2"))  # other sessions keep asking
+            self.assertIsNone(hook.timed_decision(base, "s-1", now=time.time() + 601))  # timer over
+        with patch.object(hook, "pet_alive", return_value=False):
+            self.assertIsNone(hook.timed_decision(base, "s-1"))  # AIPet closed
+
+    def test_start_asks_first(self):
+        app = object.__new__(aipet.PetApp)
+        app.cfg, app.root = {"timed_approve_minutes": 15}, MagicMock()
+        item = {"session_id": "s-1", "title": "esign", "conv": "PdfBox"}
+        with patch.object(aipet, "themed_dialog", return_value=False) as ask:
+            self.assertFalse(app.start_timed_approve(item))
+        self.assertIn("15 min", ask.call_args.kwargs["heading"])
+        self.assertFalse(ask.call_args.kwargs["enter_confirms"])  # Enter must not start it
+        self.assertEqual(aipet.timed_grants(), {})
+        with patch.object(aipet, "themed_dialog", return_value=True):
+            self.assertTrue(app.start_timed_approve(item))
+        self.assertIn("s-1", aipet.timed_grants())
+
+    @patch.object(aipet_app.hi, "list_backups", return_value=[])
+    @patch.object(aipet, "auto_approve_rules", return_value={})
+    def test_live_management_and_right_click_countdowns(self, *_):
+        app = object.__new__(aipet_app.TrayApp)
+        app.pet = MagicMock(cfg=dict(aipet.DEFAULT_CONFIG))
+        app.pet.timed_minutes.return_value = 10
+        app.status, app.distros, app.codex_targets = {}, [], []
+        app.c_auto, app.update_info = [], None
+        app.hidden = app.c_muted = app.c_notify = app.c_autostart = False
+        app.c_wb, app.version = "off", "test"
+        app.pet._last_items = [
+            {"source": "CC", "session_id": "s-1", "title": "esign", "state": "working", "agent_types": ["tester"]},
+            {"source": "CC", "session_id": "s-2", "title": "notes", "state": "idle", "agent_types": []}]
+        aipet.set_timed_grant("s-1", 10, "esign")
+        live = next(e for e in app._mac_menu_spec() if e and e["label"] == "Live Management")["submenu"]
+        esign = next(e for e in live if e and e["label"].startswith("esign"))
+        self.assertIn("⏱", esign["label"])  # countdown on the session's entry
+        labels = [e["label"] for e in esign["submenu"] if e]
+        self.assertTrue(labels[0].startswith("Auto approving"))
+        self.assertIn("Stop auto approving", labels)
+        self.assertIn("• tester", labels)
+        notes = next(e for e in live if e and e["label"].startswith("notes"))
+        self.assertTrue(notes["submenu"][0]["label"].startswith("Auto approve for 10 min"))
+        app.pet._menu_session.return_value = None
+        context = app._context_menu_spec(SimpleNamespace(key="_none", data={}))
+        self.assertTrue(context[1]["label"].startswith("⏱ Stop auto approve: esign"))  # right under Settings
+        app.refresh_menu = MagicMock()
+        context[1]["action"]()
+        app.pet.stop_timed_approve.assert_called_once_with("s-1")
+
+
+if __name__ == "__main__":
+    unittest.main()

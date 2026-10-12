@@ -121,7 +121,7 @@ class SettingsSpecTests(unittest.TestCase):
         app.c_wb, app.version = 'off', 'test'
         pages = settings.pages_from_spec(app._mac_menu_spec())
         self.assertEqual([p[0] for p in pages],
-                         ["General", "Appearance", "Behavior", "Integrations", "Permissions", "Help"])
+                         ["General", "Live Management", "Appearance", "Behavior", "Integrations", "Permissions", "Help"])
         for name, icon, help_text, entries, _ in pages:
             self.assertIn(icon, settings.ICONS, name)
             self.assertTrue(help_text, name)
