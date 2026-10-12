@@ -1110,11 +1110,26 @@ _TRANSCRIPT_TAILS = {}  # path -> ((mtime, size), interrupted): read each transc
 def transcript_file(rec):
     """The session's transcript as this machine can open it (WSL paths through \\\\wsl.localhost\\<distro>)."""
     path = str(rec.get("transcript_path") or "")
-    if not path:
-        return ""
     if rec.get("env") == "wsl" and os.name == "nt" and path.startswith("/") and rec.get("distro"):
-        return "\\\\wsl.localhost\\" + rec["distro"] + path.replace("/", "\\")
+        path = "\\\\wsl.localhost\\" + rec["distro"] + path.replace("/", "\\")
+    if rec.get("agent") == "codex" and (rec.get("env") != "wsl" or os.name == "nt"):
+        from aipet_codex import root_rollout
+        path = root_rollout(rec.get("session_id") or rec.get("id"), path)
     return path
+
+
+def visible_hook_session(rec):
+    """Use the same conversation identity for desktop pets and agent graph groups."""
+    if rec.get("agent") != "codex":
+        return True
+    from aipet_codex import session_meta, internal_thread
+    path = transcript_file(rec)
+    meta = session_meta(path or str(rec.get("transcript_path") or ""))
+    if internal_thread(meta) or meta.get("parent_thread_id"):
+        return False
+    # Ephemeral post-turn jobs have no conversation rollout. Keep real alerts
+    # visible even if their transcript is not available, and preserve remote WSL sessions.
+    return bool(path or rec.get("env") == "wsl" or rec.get("state") in ("needs_input", "error"))
 
 
 def turn_interrupted(rec):
@@ -1330,6 +1345,8 @@ def read_claude_code_sessions(cfg):
             except OSError:
                 pass
     for path, rec in sorted(newest.values(), key=lambda pr: pr[0]):
+        if not visible_hook_session(rec):
+            continue
         sid = str(rec.get("id"))
         local = rec.get("env") == ("windows" if os.name == "nt" else sys.platform)
         quiet = time.time() - rec.get("updated", 0) > max(60, HEALTH["v"])  # an active session isn't judged by its pid

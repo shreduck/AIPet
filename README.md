@@ -334,8 +334,9 @@ A live map of one session: the main agent and every subagent it started, Claude 
   text window titled after the reply, with a copy button): *[all]* merges every agent's activity into one log (prompts, what each one said, tool calls,
   results), each line in its agent's colour; the other tabs select one agent, including its tool calls.
 - **Log filters** have their own bar below the agent tabs: **show tools**, **primary** (user queries and final results),
-  and separate **tools** and **MCP** dropdowns with a checkbox per unique tool. Agent and session title clicks keep
-  the filters; **clear filters** restores the full log. The controls wrap when the log pane is narrow.
+  and separate **tools** and **MCP** dropdowns with a checkbox per unique tool. Clicking an agent node clears the
+  filters and shows that agent's full log; clicking a session title clears them for its combined log.
+  Tool nodes filter to their tool. **Clear filters** also restores the full log. The controls wrap when the log pane is narrow.
   Tool nodes do not add tabs to the agent bar.
 - **Prompts**: when an agent needs you, a small warning shows (*Plan needs your input*). Click it (or press Space) and
   it opens over the log with the prompt or question and its answers (side by side when they fit, one per line when
@@ -378,7 +379,8 @@ A live map of one session: the main agent and every subagent it started, Claude 
   **Center** places the average of the node centres in the viewport centre without changing zoom.
   **Fit all** adjusts zoom to show every node and title, leaving room for the fixed controls.
   The **auto** checkbox beside it (also **auto fit all** in the graph settings) automatically fits when an agent
-  or tool node is added or removed. Enabling it fits immediately; the preference is remembered across restarts.
+  or tool node is added or removed, and after resizing the window or the graph/log split.
+  Enabling it fits immediately; the preference is remembered across restarts.
 - **Reset agent network appearance** (Appearance, next to Reset pet size, in every menu and the AIPet menu window) puts the default look
   back and centres the open windows on the main screen; one window or one per session stays as it was.
 - **Size**: resizing preserves both scale settings. Raising the window scale grows the window to fit;

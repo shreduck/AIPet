@@ -22,6 +22,7 @@ import threading
 import time
 
 import aipet as core
+from aipet_codex import session_meta, internal_thread, root_rollout
 
 MAIN_TAIL = 262144  # bytes read from the end of the main transcript
 SUB_TAIL = 131072  # ... and of each subagent's
@@ -429,10 +430,7 @@ def _codex_meta(path):
     if path not in _CODEX_META:
         meta = {}
         try:
-            with open(path, "rb") as f:
-                first = json.loads(f.readline().decode("utf-8", "replace") or "{}")
-            if first.get("type") == "session_meta" and isinstance(first.get("payload"), dict):
-                meta = first["payload"]
+            meta = session_meta(path)
         except (OSError, ValueError):
             pass
         if len(_CODEX_META) > 2000:
@@ -444,29 +442,25 @@ def _codex_meta(path):
 
 
 def codex_subagent_files(rollout, thread_id):
-    """[(id, path, meta)] of the agents a Codex thread spawned: rollouts written since the parent's, in its day folder
-    and the next one, whose session_meta names it as the parent. Guardian (auto review) threads are left out."""
+    """Descendant rollouts across session days, including branches created before a root resume."""
     if not rollout or not thread_id:
         return []
     day = os.path.dirname(rollout)
     folders = [day]
-    try:  # .../YYYY/MM/DD: the next day too, for a session that runs past midnight
+    try:  # A resumed conversation and its descendants can span many dates.
         y, m, d = (int(x) for x in day.replace("\\", "/").rstrip("/").split("/")[-3:])
-        nxt = datetime.date(y, m, d) + datetime.timedelta(days=1)
-        folders.append(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(day))),
-                                    f"{nxt.year:04d}", f"{nxt.month:02d}", f"{nxt.day:02d}"))
+        datetime.date(y, m, d)
+        sessions = os.path.dirname(os.path.dirname(os.path.dirname(day)))
+        folders = sorted(set(folders + glob.glob(os.path.join(sessions, "*", "*", "*"))))
     except (ValueError, TypeError):
         pass
-    mine = os.path.basename(rollout)
     candidates = []
     for folder in folders:
         for path in glob.glob(os.path.join(folder, "rollout-*.jsonl")):
-            if os.path.basename(path) <= mine and folder == day:
-                continue  # started before the parent
             meta = _codex_meta(path)
             if not meta.get("parent_thread_id"):
                 continue
-            if "guardian" in json.dumps(meta.get("source") or "") or meta.get("thread_source") == "guardian_review":
+            if internal_thread(meta):
                 continue
             candidates.append((str(meta.get("id") or os.path.basename(path)), path, meta))
     # this thread's children, then theirs (an agent spawned by a subagent names that subagent as its parent)
@@ -492,12 +486,8 @@ def _read_network(item, now=None, include_tools=False, bootstrap=False):
     now = now or time.time()
     codex = item.get("agent") == "codex"
     transcript = core.transcript_file(item)
-    if codex and transcript and item.get("session_id"):
-        suffix = f"-{item['session_id']}.jsonl"
-        if not os.path.basename(transcript).endswith(suffix):
-            # Existing session files may point at a child until their next hook event.
-            matches = glob.glob(os.path.join(os.path.dirname(transcript), f"rollout-*{suffix}"))
-            transcript = max(matches, key=os.path.getmtime) if matches else ""
+    if codex and item.get("session_id") and item.get("env") != "wsl":
+        transcript = root_rollout(item["session_id"], transcript)
     parse = parse_codex if codex else parse_claude
     main_info = (_cached(transcript, MAIN_TAIL, parse, bootstrap=bootstrap) if transcript else None) or _empty()
     session_state = item.get("state") or "idle"

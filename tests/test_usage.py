@@ -272,6 +272,7 @@ class UsageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             script = Path(folder) / "aipet_hook.py"
             shutil.copyfile(aipet_hook.__file__, script)
+            shutil.copyfile(Path(aipet_hook.__file__).with_name("aipet_codex.py"), Path(folder) / "aipet_codex.py")
             data = {"hook_event_name": "UserPromptSubmit", "session_id": "isolated", "cwd": folder, "prompt": "test"}
             result = subprocess.run([sys.executable, str(script)], input=json.dumps(data), text=True, capture_output=True,
                                     cwd=folder, env={**os.environ, "PYTHONPATH": "", "AIPET_DIR": folder}, timeout=10)

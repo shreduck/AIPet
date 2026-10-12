@@ -10,6 +10,59 @@ import unittest
 @unittest.skipUnless(sys.platform == "darwin" and os.environ.get("AIPET_NATIVE_WINDOW_TEST") == "1",
                      "requires an opt-in macOS GUI session")
 class MacWindowTests(unittest.TestCase):
+    def test_expanded_log_header_body_and_outline_follow_scroll_and_resize(self):
+        import json
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import aipet
+        import aipet_agents as agents
+        from aipet_agents_window import AgentNetworkWindow
+
+        root = aipet.MacPetWindow()
+        root.withdraw()
+        window = None
+        text = json.dumps({"command": "echo first\necho second", "output": "first\nsecond"}, indent=2)
+        rows = [(1, 0, "input", text)] + [(i + 2, 0, "say", "other entry") for i in range(40)]
+        try:
+            window = AgentNetworkWindow(root, SimpleNamespace(cfg={}, _last_items=[]))
+            window.net = {"agents": [{"name": "exec_command", "state": "working"}], "log": []}
+            window.opts["log_tail"] = False
+            with patch.object(agents, "filtered_log_rows", return_value=rows):
+                root.update()
+                window._draw_log()
+                window._entry_click(0)
+                for width in (640, 1000):
+                    window.win.geometry(f"{width}x800")
+                    window.log.configure(height=16)
+                    window.log.yview_moveto(0)
+                    root.update()
+                    expanded = window.log.get("entry0.first", "entry0.last")
+                    self.assertIn("exec_command · Input  ‹\ncommand:\n", expanded)
+                    self.assertIn("  echo first\n  echo second", expanded)
+                    self.assertNotIn("\\n", expanded)
+                    self.assertEqual(window._entries[0][1], text)  # original copy / popup content is preserved
+                    edges = window._log_borders["entry0"]
+                    self.assertTrue(all(edge.winfo_ismapped() for edge in edges))
+                    self.assertEqual(edges[2].winfo_width(), window.log.winfo_width())
+                    for edge in edges:
+                        self.assertLessEqual(edge.winfo_x() + edge.winfo_width(), window.log.winfo_width())
+                        self.assertLessEqual(edge.winfo_y() + edge.winfo_height(), window.log.winfo_height())
+                    self.assertTrue(all(edge.cget("bg") == "#244c80" for edge in edges))
+                    window.log.tag_add("sel", "entry0.first", "entry0.last")
+                    self.assertEqual(window.log.get("sel.first", "sel.last"), expanded)
+                    window.log.tag_remove("sel", "1.0", "end")
+                    window.log.yview_moveto(1)
+                    root.update()
+                    self.assertFalse(any(edge.winfo_ismapped() for edge in edges))
+                window.log.yview_moveto(0)
+                window._entry_click(0)
+                root.update()
+                self.assertFalse(window._log_borders)
+        finally:
+            if window:
+                window.close()
+            root.destroy()
+
     def test_collapsed_logs_fit_one_display_line_and_expand_without_losing_text(self):
         from types import SimpleNamespace
         from unittest.mock import patch
@@ -164,7 +217,7 @@ class MacWindowTests(unittest.TestCase):
         root.report_callback_exception = lambda *error: callbacks.append(error)
         try:
             for items in ([], [{"key": "test-network", "source": "CC", "session_id": "test-network",
-                               "agent": "codex", "title": "Isolated network test", "state": "working"}]):
+                               "agent": "claude", "title": "Isolated network test", "state": "working"}]):
                 with self.subTest(sessions=len(items)):
                     window = AgentNetworkWindow(root, SimpleNamespace(cfg={}, _last_items=items))
                     try:

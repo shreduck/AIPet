@@ -37,6 +37,7 @@ import shutil
 import subprocess
 import sys
 import time
+from aipet_codex import root_rollout
 try:
     import aipet_usage as usage
 except Exception:  # optional display data must never disable session hooks
@@ -1016,17 +1017,7 @@ def codex_thread_name(session_id, max_bytes=2_000_000):
 
 def codex_session_transcript(session_id, transcript, previous=""):
     """Keep the root rollout: Codex's active subagent hooks carry the child's path."""
-    suffix = f"-{session_id}.jsonl"
-    for candidate in (transcript, previous):
-        if candidate and os.path.basename(candidate).endswith(suffix):
-            return candidate
-    # Recover records written by older hooks, or a child event received before the root event.
-    for candidate in (transcript, previous):
-        if candidate:
-            matches = glob.glob(os.path.join(os.path.dirname(candidate), f"rollout-*{suffix}"))
-            if matches:
-                return max(matches, key=os.path.getmtime)
-    return ""
+    return root_rollout(session_id, transcript, previous)
 
 
 def _update_session(path, target, event, data, wsl, auto=None):
@@ -1361,12 +1352,9 @@ def capture_codex_usage(target, sid, data, previous):
         usage.save(target, sid, limits)
         return
     transcript = data.get("transcript_path") or previous.get("transcript_path")
-    if not transcript:
-        home = os.environ.get("CODEX_HOME") or os.path.join(os.path.expanduser("~"), ".codex")
-        matches = glob.glob(os.path.join(home, "sessions", "*", "*", "*", f"*{sid}.jsonl"))
-        transcript = max(matches, key=os.path.getmtime) if matches else None
-        if transcript:
-            data["transcript_path"] = transcript
+    transcript = root_rollout(sid, transcript) or transcript
+    if transcript:
+        data["transcript_path"] = transcript
     if not transcript:
         return
     try:

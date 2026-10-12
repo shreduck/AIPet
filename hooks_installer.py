@@ -384,6 +384,7 @@ def deploy_files(only_if_deployed=False):
     os.makedirs(INSTALL_DIR, exist_ok=True)
     os.makedirs(os.path.join(PET_DIR, "sessions"), exist_ok=True)
     _sync_file(resource_path("aipet_hook.py"), os.path.join(INSTALL_DIR, "aipet_hook.py"))
+    _sync_file(resource_path("aipet_codex.py"), os.path.join(INSTALL_DIR, "aipet_codex.py"))
     _sync_file(resource_path("aipet_usage.py"), os.path.join(INSTALL_DIR, "aipet_usage.py"))
     _sync_file(resource_path("aipet_claude_usage.py"), os.path.join(INSTALL_DIR, "aipet_claude_usage.py"))
     _deploy_shared_hook()

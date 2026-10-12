@@ -319,6 +319,34 @@ class CodexNetworkTests(unittest.TestCase):
 
 
 class WindowLogicTests(unittest.TestCase):
+    def test_node_clicks_restore_full_logs_but_tools_keep_their_scope(self):
+        import aipet_agents_window as win
+        view = object.__new__(win.AgentNetworkWindow)
+        view.key, view.item, view._panned = "session", None, False
+        view.net = {"agents": [{"id": "", "name": "main", "lines": [(1, "say", "main reply")]},
+                                {"id": "helper", "name": "helper", "lines": [(2, "say", "helper reply")]},
+                                {"id": "tool", "name": "Bash", "parent": "helper", "tool": True,
+                                 "lines": [(3, "input", "echo test")]}]}
+        for method in ("_draw_graph", "_draw_tabs", "_update_log_filters", "_draw_log"):
+            setattr(view, method, MagicMock())
+        restricted = dict(show_tools=False, primary=True, tools=set(), mcp=set(), only_tool="Read")
+        for i, expected in ((0, ["main reply"]), (1, ["helper reply", "echo test"])):
+            view._log_filters = dict(restricted)
+            view._click_node(None, "session", i)
+            self.assertEqual(view._log_filters, agents.default_log_filters())
+            self.assertEqual([r[3] for r in agents.filtered_log_rows(view.net, view.sel, view._log_filters)], expected)
+        view._log_filters = dict(restricted)
+        view._click_node(None, "session", 2)
+        self.assertEqual(view.sel, 1)
+        self.assertEqual([r[3] for r in agents.filtered_log_rows(view.net, view.sel, view._log_filters)], ["echo test"])
+        view._title_click("session")
+        self.assertEqual(view.sel, -1)
+        self.assertEqual(view._log_filters, agents.default_log_filters())
+        view._log_filters = dict(restricted)
+        view._panned = True
+        view._click_node(None, "session", 0)
+        self.assertEqual(view._log_filters, restricted)  # dragging the graph must not clear filters
+
     def test_node_spacing_does_not_expand_to_fill_tall_windows(self):
         import aipet_agents_window as win
         view = object.__new__(win.AgentNetworkWindow)
@@ -437,6 +465,21 @@ class WindowLogicTests(unittest.TestCase):
         view.fit_all.assert_called_once()
         self.assertFalse(view._auto_fit_pending)
 
+    def test_resize_refits_unchanged_nodes_only_when_auto_fit_is_enabled(self):
+        view = self.auto_fit_window()
+        view._draw_graph = MagicMock()
+        view.overlay_open = view.menu_open = False
+        view._maybe_auto_fit()
+        view.fit_all.reset_mock()
+        view.canvas.winfo_width.return_value = 800
+        view._resized()
+        view.fit_all.assert_called_once()
+        view.opts["auto_fit"] = False
+        view.fit_all.reset_mock()
+        view.canvas.winfo_width.return_value = 400
+        view._resized()
+        view.fit_all.assert_not_called()
+
     def test_center_uses_node_gravity_center_and_keeps_zoom(self):
         view = self.graph_window()
         view.gz = 1.7
@@ -548,6 +591,15 @@ class WindowOptionTests(unittest.TestCase):
 
 
 class FullReplyTests(unittest.TestCase):
+    def test_expanded_content_formats_structures_and_decodes_only_json_escapes(self):
+        from aipet_agents_window import formatted_log_content
+        original = "# Result\n\n- First\n- Second\n\nC:\\new\\test"
+        self.assertEqual(formatted_log_content(original), original)
+        self.assertEqual(formatted_log_content(json.dumps(original)), original)
+        content = json.dumps({"command": "echo first\necho second", "result": [{"text": "one\ntwo"}], "ok": True})
+        self.assertEqual(formatted_log_content(content),
+                         "command:\n  echo first\n  echo second\nresult:\n  - text:\n      one\n      two\nok: true")
+
     def test_log_keeps_the_whole_reply_and_the_label_its_last_line(self):
         info = agents.parse_claude([claude_assistant(time.time(), [
             {"type": "text", "text": "Summary: 3 callers.\n\nDetails below.\nTo retry, ask again."}])])

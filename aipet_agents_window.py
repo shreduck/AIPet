@@ -12,6 +12,7 @@ opacity and for the scale.
 Keys: Tab / Right next agent, Shift+Tab / Left previous, A shared log, PgUp / PgDn other sessions, Space prompt,
 1-9 answer, Esc fold the prompt / settings (or close).
 """
+import json
 import math
 import sys
 import time
@@ -83,6 +84,41 @@ def log_preview(text, width, font, marker_width):
         else:
             hi = mid - 1
     return (first[:lo] + "…" if font.measure("…") <= available else ""), True
+
+
+def formatted_log_content(text):
+    """Display structured tool content with real line breaks; leave ordinary text and paths intact."""
+    try:
+        value = json.loads(text)
+    except (ValueError, TypeError):
+        return text
+
+    def lines(value, indent=0):
+        pad = " " * indent
+        if isinstance(value, dict):
+            if not value:
+                return [pad + "{}"]
+            result = []
+            for key, item in value.items():
+                if isinstance(item, (dict, list)) or isinstance(item, str) and "\n" in item:
+                    result.append(pad + str(key) + ":")
+                    result.extend(lines(item, indent + 2))
+                else:
+                    result.append(pad + str(key) + ": " + (item if isinstance(item, str) else json.dumps(item)))
+            return result
+        if isinstance(value, list):
+            if not value:
+                return [pad + "[]"]
+            result = []
+            for item in value:
+                nested = lines(item, indent + 2)
+                result.append(pad + "- " + nested[0][indent + 2:])
+                result.extend(nested[1:])
+            return result
+        shown = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+        return [pad + line for line in shown.split("\n")]
+
+    return "\n".join(lines(value))
 
 
 def key_color(hex_color):
@@ -171,7 +207,8 @@ def session_label(item):
 
 
 def candidate_sessions(items):
-    return [i for i in items or [] if i.get("source") == "CC" and i.get("session_id")]
+    return [item for item in items or [] if item.get("source") == "CC" and item.get("session_id")
+            and core.visible_hook_session(item)]
 
 
 def pick_session(items, key=None):
@@ -914,7 +951,7 @@ class AgentNetworkWindow:
             self._place_overlay()
         if self.menu_open:
             self._place_menu()
-        self._maybe_auto_fit()
+        self._maybe_auto_fit(force=True)  # the viewport changed even when the nodes did not
 
     def _drag_start(self, e):
         self._drag = (e.x_root, e.y_root, self.win.winfo_x(), self.win.winfo_y(), self.win.winfo_width(),
@@ -1064,6 +1101,8 @@ class AgentNetworkWindow:
         self.log = tk.Text(self.logbox, height=6, width=40, wrap="word", bd=0, highlightthickness=0,
                            font=self.f_main, padx=self.px(8), pady=self.px(4), cursor="xterm", takefocus=0,
                            exportselection=True)
+        self._log_borders = {}
+        self.log.configure(yscrollcommand=self._position_log_borders)
         self.log.pack(fill="both", expand=True)
         self._arrange()
         self.log.bind("<Control-c>", lambda e: self._copy(self.log))
@@ -1462,7 +1501,9 @@ class AgentNetworkWindow:
         self._maybe_auto_fit()
 
     # ---- selection
-    def select(self, i):
+    def select(self, i, clear_filters=False):
+        if clear_filters:
+            self._log_filters = agents.default_log_filters()
         if 0 <= i < len(self.net["agents"]) and self.net["agents"][i].get("tool"):
             tool = self.net["agents"][i]
             self._log_filters.update(show_tools=True, primary=False, only_tool=tool["name"],
@@ -1871,14 +1912,14 @@ class AgentNetworkWindow:
             return
         if key != self.key:
             self._pick_session(key)
-        self.select(-1)
+        self.select(-1, clear_filters=True)
 
     def _click_node(self, e, key, i):
         if self._panned:
             return  # that was a drag
         if key != self.key:
             self._pick_session(key)
-        self.select(i)
+        self.select(i, clear_filters=True)
         if prompt_agent(self.net, self.item) == i:  # the agent that is asking: open its prompt
             self._draw_prompt()
             self.open_overlay(True)
@@ -2385,6 +2426,10 @@ class AgentNetworkWindow:
         self._log_sig = sig
         top = log.yview()[0]
         log.configure(state="normal")
+        for edges in self._log_borders.values():
+            for edge in edges:
+                edge.destroy()
+        self._log_borders.clear()
         log.delete("1.0", "end")
         for i in range(len(ags)):
             log.tag_configure(f"a{i}", foreground=self.color(i), font=self.f_bold)
@@ -2410,6 +2455,10 @@ class AgentNetworkWindow:
         # an agent's final reply (its result): a light green tint, and a green mark before its time stamp
         log.tag_configure("final", background=mix(P["grn"], P["bg"], 0.9))
         log.tag_configure("finalmark", foreground=P["grn"])
+        log.tag_configure("expanded_body", lmargin1=self.px(6), lmargin2=self.px(6),
+                          rmargin=self.px(6), spacing1=self.px(3), spacing3=self.px(3), font=self.f_main)
+        log.tag_configure("expanded_header", lmargin1=self.px(6), lmargin2=self.px(6),
+                          rmargin=self.px(6), spacing1=self.px(4), spacing3=self.px(3), font=self.f_bold)
         finals = set()
         for i, a in enumerate(ags):
             if a["state"] not in ("working", "needs_input", "waiting"):
@@ -2430,21 +2479,32 @@ class AgentNetworkWindow:
             shown, big = log_preview(text, available - prefix_width, text_font, self.f_main.measure("  ›"))
             expanded = key in self._expanded
             if expanded:
-                shown = text
+                shown = formatted_log_content(text)
                 big = True  # keep collapse available even after widening the pane
             self._entries.append((key, text, ags[i]["name"], big))
             start = log.index("end-1c")
-            if n in finals:
-                log.insert("end", "▍", "finalmark")
-            log.insert("end", stamp, "mu")
-            log.insert("end", name, f"a{i}")
-            log.insert("end", " │ ", "mu")
-            if mark:
-                log.insert("end", mark + " ", "mu" if kind in ("tool", "say") else kind)
-            log.insert("end", shown, (kind if kind in ("think", "you", "error", "spawn") else "say", "hang"))
-            if big:
-                log.insert("end", "  ‹" if key in self._expanded else "  ›", ("fold", "hang"))
-            log.insert("end", "\n")
+            if expanded:
+                title = {"you": "Query", "say": "Response", "think": "Thinking", "input": "Input",
+                         "output": "Output", "tool": "Tool", "error": "Error", "spawn": "Agent started"}.get(kind, kind)
+                log.insert("end", f"{stamp}{ags[i]['name']} · {title}  ‹\n", ("expanded_header", f"a{i}"))
+                log.insert("end", shown + "\n", "expanded_body")
+                tag = f"entry{n}"
+                edges = tuple(tk.Frame(log, bg="#244c80", bd=0, takefocus=0) for _ in range(4))
+                self._log_borders[tag] = edges
+                for edge in edges:
+                    edge.bind("<ButtonRelease-1>", lambda e, n=n: self._entry_click(n))
+            else:
+                if n in finals:
+                    log.insert("end", "▍", "finalmark")
+                log.insert("end", stamp, "mu")
+                log.insert("end", name, f"a{i}")
+                log.insert("end", " │ ", "mu")
+                if mark:
+                    log.insert("end", mark + " ", "mu" if kind in ("tool", "say") else kind)
+                log.insert("end", shown, (kind if kind in ("think", "you", "error", "spawn") else "say", "hang"))
+                if big:
+                    log.insert("end", "  ›", ("fold", "hang"))
+                log.insert("end", "\n")
             log.tag_add(f"entry{n}", start, "end-1c")
             log.tag_configure(f"entry{n}", wrap="word" if expanded else "none")
             if n % 2:
@@ -2454,6 +2514,8 @@ class AgentNetworkWindow:
             log.tag_bind(f"entry{n}", "<ButtonRelease-1>", lambda e, n=n: self._entry_click(n))
             for b in ("<Button-3>",) + (("<Button-2>", "<Control-Button-1>") if IS_MAC else ()):
                 log.tag_bind(f"entry{n}", b, lambda e, n=n: self._entry_menu(e, n))
+            if expanded:
+                log.insert("end", "\n", ())  # space between outlined entries; outside the clickable entry
         log.configure(state="disabled")
         if keep is not None:
             log.yview_moveto(keep)
@@ -2461,6 +2523,35 @@ class AgentNetworkWindow:
             log.see("end")  # tail: follow the newest line
         else:
             log.yview_moveto(top)  # stays where you are reading
+        log.after_idle(self._position_log_borders)
+
+    def _position_log_borders(self, *args):
+        """Contour expanded text without embedding widgets that break selection and copying."""
+        log = self.log
+        if not self.alive():
+            return
+        height, width = log.winfo_height(), log.winfo_width()
+        visible_first, visible_last = log.index("@0,0"), log.index(f"@0,{height}")
+        for tag, edges in self._log_borders.items():
+            for edge in edges:
+                edge.place_forget()
+            if not log.tag_ranges(tag):
+                continue
+            first, last = f"{tag}.first", f"{tag}.last-1c"
+            if log.compare(last, "<", visible_first) or log.compare(first, ">", visible_last):
+                continue
+            top_line, bottom_line = log.dlineinfo(first), log.dlineinfo(last)
+            top = max(0, top_line[1]) if top_line else 0
+            bottom = min(height, bottom_line[1] + bottom_line[3]) if bottom_line else height
+            thick = max(1, self.px(1))
+            if bottom <= top:
+                continue
+            edges[0].place(x=0, y=top, width=thick, height=bottom - top, bordermode="ignore")
+            edges[1].place(x=width - thick, y=top, width=thick, height=bottom - top, bordermode="ignore")
+            if top_line and top_line[1] >= 0:
+                edges[2].place(x=0, y=top, width=width, height=thick, bordermode="ignore")
+            if bottom_line and bottom_line[1] + bottom_line[3] <= height:
+                edges[3].place(x=0, y=bottom - thick, width=width, height=thick, bordermode="ignore")
 
     # ---- log entries: fold / unfold, copy, open in a window
     def _entry_click(self, n):

@@ -32,6 +32,15 @@ def check_hook(executable, base):
 
         assert event('SessionStart')['state'] == 'idle'
         assert event('UserPromptSubmit', prompt='Packaging test')['state'] == 'working'
+        if agent == 'codex':
+            rollout = config / 'rollout-2026-10-12T12-00-00-packaging-check_resumed.jsonl'
+            rollout.write_text(json.dumps({'type': 'session_meta', 'payload': {'id': 'packaging-check'}}) + '\n')
+            child = config / 'rollout-2026-10-12T12-01-00-child.jsonl'
+            child.write_text(json.dumps({'type': 'session_meta', 'payload': {
+                'id': 'child', 'parent_thread_id': 'packaging-check'}}) + '\n')
+            assert event('UserPromptSubmit', prompt='Resume check', transcript_path=str(rollout))['transcript_path'] == str(rollout)
+            assert event('PostToolUse', tool_name='Test', agent_id='child', transcript_path=str(child))['transcript_path'] == str(rollout)
+            assert event('SubagentStop', agent_id='child', transcript_path=str(child))['transcript_path'] == str(rollout)
         if agent == 'claude':
             question = {'questions': [{'question': 'Test question?', 'options': [{'label': 'Test'}]}]}
             assert event('PermissionRequest', tool_name='AskUserQuestion', tool_input=question)['state'] == 'needs_input'

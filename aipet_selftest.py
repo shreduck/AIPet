@@ -101,7 +101,12 @@ def start_spaces_probe(app, output):
                                           "ui_scale": win.opts["scale"],
                                           "text_scale": win.opts["text_scale"],
                                           "control_line_height": win.f_small.metrics("linespace"),
-                                          "agents": len(win.net["agents"])}
+                                          "agents": len(win.net["agents"]),
+                                          "session_groups": len(win.blocks),
+                                          "subagents": [{"name": a["name"], "parent": a.get("parent", ""),
+                                                         "depth": a.get("depth", 0)}
+                                                        for a in win.net["agents"]
+                                                        if not a.get("main") and not a.get("tool")]}
                                          for win in app._agent_windows().values()]
             data["pet_positions"] = {key: [p.canvas.winfo_rootx() + core.px(core.BADGE_GUTTER + getattr(p, "gutter", 0) + core.PET_W / 2),
                                             p.canvas.winfo_rooty() + core.px(90 - core.TOP_TRIM)]

@@ -52,7 +52,7 @@ class MacRuntimeSharingTests(unittest.TestCase):
                 self.assertFalse(shared.readlink().is_absolute())
                 self.assertEqual(hook_python.resolve(), app_python.resolve())
                 self.assertEqual(share_runtime(bundle), 0)  # safe to repeat
-                for name in ('aipet_hook.py', 'aipet_usage.py', 'aipet_claude_usage.py'):
+                for name in ('aipet_hook.py', 'aipet_codex.py', 'aipet_usage.py', 'aipet_claude_usage.py'):
                     (frameworks / name).write_text('# test')
                 target = root / 'deployed'
                 with patch.object(hi, 'resource_path', lambda *parts: str(frameworks.joinpath(*parts))), \
@@ -97,7 +97,7 @@ class MacRuntimeSharingTests(unittest.TestCase):
             self.assertTrue((contents / 'Resources/hook/_internal/base_library.zip').is_symlink())
             self.assertEqual(share_identical_files(root / 'AIPet.app'), 0)  # safe to repeat
             frameworks = contents / 'Frameworks'
-            for name in ('aipet_hook.py', 'aipet_usage.py', 'aipet_claude_usage.py'):
+            for name in ('aipet_hook.py', 'aipet_codex.py', 'aipet_usage.py', 'aipet_claude_usage.py'):
                 (frameworks / name).write_text('# test')
             target = root / 'deployed'
             with patch.object(hi, 'resource_path', lambda *parts: str(frameworks.joinpath(*parts))), \
