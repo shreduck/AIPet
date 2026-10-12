@@ -65,6 +65,26 @@ def load_options(cfg):
     return opts
 
 
+def log_preview(text, width, font, marker_width):
+    """Fit a collapsed entry to one display line, leaving room for its expand marker."""
+    lines = text.strip().splitlines()
+    first = (lines[0] if lines else "").expandtabs(4)
+    big = len(lines) > 1 or font.measure(first) > width
+    if not big:
+        return first, False
+    available = max(0, width - marker_width)
+    if font.measure(first) <= available:
+        return first, True
+    lo, hi = 0, len(first)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if font.measure(first[:mid] + "…") <= available:
+            lo = mid
+        else:
+            hi = mid - 1
+    return (first[:lo] + "…" if font.measure("…") <= available else ""), True
+
+
 def key_color(hex_color):
     """A colour one notch off hex_color: made fully see-through (Windows -transparentcolor) without keying out text
     or lines drawn in the theme's own colours."""
@@ -1049,6 +1069,8 @@ class AgentNetworkWindow:
         self.log.bind("<Control-c>", lambda e: self._copy(self.log))
         self.log.bind("<Control-a>", lambda e: (self.log.tag_add("sel", "1.0", "end"), "break")[1])
         self.log.bind("<Button-1>", lambda e: self.log.focus_set(), add="+")  # so Ctrl+C reaches it
+        self.log.bind("<Configure>", lambda e: self._draw_log(keep=self.log.yview()[0])
+                      if self.theme is not None else None)
         self.win.bind("<Configure>", self._on_window_resize, add="+")
         for seq in ("<FocusIn>", "<Map>", "<Unmap>"):  # brought to the front, minimised or restored
             self.win.bind(seq, self._window_event, add="+")
@@ -2349,7 +2371,9 @@ class AgentNetworkWindow:
         ags = self.net["agents"]
         rows = agents.filtered_log_rows(self.net, self.sel, self._log_filters)[-160:]
         filter_sig = tuple((k, tuple(sorted(v)) if isinstance(v, set) else v) for k, v in self._log_filters.items())
-        sig = (self.sel, self.theme, self.s, tuple(rows), len(ags), filter_sig)
+        available = max(0, log.winfo_width() - 2 * int(log.cget("padx")) - 2)
+        sig = (self.sel, self.theme, self.s, self.opts.get("text_scale", 100), available,
+               tuple(rows), len(ags), filter_sig)
         if sig == self._log_sig:
             return
         switched = (self._log_sig or (None,))[0] != sig[0]
@@ -2396,18 +2420,25 @@ class AgentNetworkWindow:
         for n, (t, i, kind, text) in enumerate(rows):
             # long entries show their first line with ›: click (or right-click) to unfold them, ‹ to fold again
             key = (t, ags[i]["name"], kind, hash(text))
-            big = "\n" in text.strip() or len(text) > 220
-            first = text.strip().split("\n", 1)[0]
-            shown = text if not big or key in self._expanded else (first[:220].rstrip() + "…" if len(first) > 220
-                                                                    else first)
+            stamp = time.strftime("%H:%M:%S ", time.localtime(t)) if t else " " * 9
+            name = ags[i]["name"].ljust(width)[:width]
+            mark = KIND_MARK.get(kind, "")
+            mark_font = self.f_bold if kind == "you" else self.f_main
+            prefix_width = (self.f_main.measure(("▍" if n in finals else "") + stamp + " │ ") +
+                            self.f_bold.measure(name) + mark_font.measure(mark + " " if mark else ""))
+            text_font = self.f_bold if kind == "you" else self.f_main
+            shown, big = log_preview(text, available - prefix_width, text_font, self.f_main.measure("  ›"))
+            expanded = key in self._expanded
+            if expanded:
+                shown = text
+                big = True  # keep collapse available even after widening the pane
             self._entries.append((key, text, ags[i]["name"], big))
             start = log.index("end-1c")
             if n in finals:
                 log.insert("end", "▍", "finalmark")
-            log.insert("end", time.strftime("%H:%M:%S ", time.localtime(t)) if t else " " * 9, "mu")
-            log.insert("end", ags[i]["name"].ljust(width)[:width], f"a{i}")
+            log.insert("end", stamp, "mu")
+            log.insert("end", name, f"a{i}")
             log.insert("end", " │ ", "mu")
-            mark = KIND_MARK.get(kind, "")
             if mark:
                 log.insert("end", mark + " ", "mu" if kind in ("tool", "say") else kind)
             log.insert("end", shown, (kind if kind in ("think", "you", "error", "spawn") else "say", "hang"))
@@ -2415,6 +2446,7 @@ class AgentNetworkWindow:
                 log.insert("end", "  ‹" if key in self._expanded else "  ›", ("fold", "hang"))
             log.insert("end", "\n")
             log.tag_add(f"entry{n}", start, "end-1c")
+            log.tag_configure(f"entry{n}", wrap="word" if expanded else "none")
             if n % 2:
                 log.tag_add("odd", start, "end-1c")
             if n in finals:

@@ -10,6 +10,54 @@ import unittest
 @unittest.skipUnless(sys.platform == "darwin" and os.environ.get("AIPET_NATIVE_WINDOW_TEST") == "1",
                      "requires an opt-in macOS GUI session")
 class MacWindowTests(unittest.TestCase):
+    def test_collapsed_logs_fit_one_display_line_and_expand_without_losing_text(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import aipet
+        import aipet_agents as agents
+        from aipet_agents_window import AgentNetworkWindow
+
+        root = aipet.MacPetWindow()
+        root.withdraw()
+        window = None
+        texts = ["A short preview that still needs folding in a narrow pane. " * 3,
+                 "First line\nSecond line\nThird line", "工具 output\t" * 60]
+        rows = [(1, 0, "output", text) for text in texts]
+        try:
+            window = AgentNetworkWindow(root, SimpleNamespace(cfg={}, _last_items=[]))
+            window.net = {"agents": [{"name": "exec_command", "state": "working"}], "log": []}
+            window.opts["log_tail"] = False
+            with patch.object(agents, "filtered_log_rows", return_value=rows):
+                for text_scale in (100, 150):
+                    window.opts["text_scale"] = text_scale
+                    window.f_main.configure(size=round(12 * text_scale / 100))
+                    window.f_bold.configure(size=round(12 * text_scale / 100))
+                    for width in (640, 1100):
+                        window.win.geometry(f"{width}x800")
+                        root.update()
+                        window._draw_log()
+                        root.update()
+                        for i, original in enumerate(texts):
+                            tag = f"entry{i}"
+                            self.assertEqual(window.log.count(f"{tag}.first", f"{tag}.last", "displaylines"), (1,))
+                            if window._entries[i][3]:
+                                window.log.see(f"{tag}.last-2c")
+                                root.update()
+                                marker = window.log.bbox(f"{tag}.last-2c")
+                                self.assertIsNotNone(marker)
+                                self.assertLessEqual(marker[0] + marker[2], window.log.winfo_width())
+                                window._entry_click(i)
+                                root.update()
+                                self.assertIn(original, window.log.get(f"{tag}.first", f"{tag}.last"))
+                                self.assertGreater(window.log.count(f"{tag}.first", f"{tag}.last", "displaylines")[0], 1)
+                                window._entry_click(i)
+                                root.update()
+                                self.assertEqual(window.log.count(f"{tag}.first", f"{tag}.last", "displaylines"), (1,))
+        finally:
+            if window:
+                window.close()
+            root.destroy()
+
     def test_text_slider_is_independent_persists_and_resets_to_100(self):
         import json
         import tempfile
