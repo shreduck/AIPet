@@ -1344,9 +1344,10 @@ class AgentNetworkWindow:
             self._titles.append(entry)
             self._draw_title(entry, time.time())
         else:  # bands: a line between sessions; the name is a title bar on the session's main node
-            c.create_rectangle(0, y, VW, y + bh, fill=P["sel"] if on else P["bg"], outline="",
+            far = 50000  # bands run on forever sideways, however far you pan
+            c.create_rectangle(-far, y, VW + far, y + bh, fill=P["sel"] if on else P["bg"], outline="",
                                stipple="gray25" if on else "", tags=tag)
-            c.create_line(0, y, VW, y, fill=F(P["line"]))
+            c.create_line(-far, y, VW + far, y, fill=F(P["line"]))
         if b >= 0:
             c.tag_bind(tag, "<ButtonRelease-1>", lambda e, k=key: self._pick_session(k))
         self._draw_block(b, key, net, pad if tidy else 0, y + head, VW - (2 * pad if tidy else 0), bh - head, None,
