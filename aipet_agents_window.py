@@ -26,7 +26,7 @@ NODE_ALPHAS = (100, 75, 50, 25, 0)  # node fill opacity steps, % (drawn with Tk 
 STIPPLE = {75: "gray75", 50: "gray50", 25: "gray25"}
 OPTIONS_KEY = "agent_window"  # config.json: {"on_top", "alpha", "clear_bg", "node_alpha", "frameless"}
 DEFAULT_OPTIONS = {"on_top": False, "alpha": 100, "clear_bg": False, "node_alpha": 100, "frameless": False,
-                   "compact": False}
+                   "compact": False, "separate": False}
 
 
 def load_options(cfg):
@@ -116,8 +116,12 @@ def prompt_agent(net, item):
 class AgentNetworkWindow:
     HINT = "Tab / ←→ agent   A all logs   PgUp/PgDn session   Space prompt   Esc close"
 
-    def __init__(self, root, pet, key=None):
+    def __init__(self, root, pet, key=None, pinned=False, on_options=None, cascade=0):
+        """pinned: this window belongs to one session (one window per session): no switching sessions.
+        on_options(opts, window, changed): called after a toolbar option changed, so the app can apply it to its
+        other agent network windows (and switch between one window and one per session)."""
         self.root, self.pet = root, pet
+        self.pinned, self.on_options, self.cascade = pinned, on_options, cascade
         self.key = None
         self.net = {"agents": [], "log": []}
         self.item = None
@@ -188,7 +192,8 @@ class AgentNetworkWindow:
         try:
             sw, sh = self.win.winfo_screenwidth(), self.win.winfo_screenheight()
             w, h = min(w, sw - 40), min(h, sh - 80)
-            self.win.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 3}")
+            off = self.px(28) * (self.cascade % 8)  # one window per session: fanned out
+            self.win.geometry(f"{w}x{h}+{(sw - w) // 2 + off}+{(sh - h) // 3 + off}")
         except tk.TclError:
             pass
 
@@ -211,15 +216,25 @@ class AgentNetworkWindow:
             o["clear_bg"] = not o["clear_bg"]
         elif name == "view":
             o["compact"] = not o["compact"]
+        elif name == "each":
+            o["separate"] = not o["separate"]
         elif name == "nodes":
             o["node_alpha"] = next_step(NODE_ALPHAS, o["node_alpha"], d)
-        self._apply_options(changed=name)
+        if name != "each":
+            self._apply_options(changed=name)
         try:
             self.pet.cfg[OPTIONS_KEY] = dict(o)
             core.save_setting(OPTIONS_KEY, dict(o))
         except Exception as e:
             core.log_error(f"agent network options: {e!r}")
+        if self.on_options:
+            self.on_options(dict(o), self, name)
         return "break"
+
+    def set_options(self, opts):
+        """The same options as another agent network window (changed there)."""
+        self.opts = dict(opts)
+        self._apply_options()
 
     def _apply_options(self, changed=None):
         o, P, w = self.opts, self.P, self.win
@@ -272,7 +287,8 @@ class AgentNetworkWindow:
                  "pin": ("pin", on if o["on_top"] else off), "alpha": (f"α{o['alpha']}%", on if o["alpha"] < 100 else off),
                  "bg": ("bg", on if o["clear_bg"] else off),
                  "nodes": (f"node{o['node_alpha']}%", on if o["node_alpha"] < 100 else off),
-                 "view": ("compact", on if o["compact"] else off)}
+                 "view": ("compact", on if o["compact"] else off),
+                 "each": ("each", on if o["separate"] else off)}
         for name, lab in self.tools.items():
             text, fg = marks[name]
             lab.configure(text=text, fg=fg)
@@ -356,10 +372,10 @@ class AgentNetworkWindow:
         self.title.pack(side="left", fill="x", expand=True, pady=self.px(4))
         # window options, right-most: frameless, always on top, opacity, see-through background, node opacity
         self.tools = {}
-        tips = {"view": "Compact: just the graph, in a small window (C)", "close": "Close (Esc)", "frame": "Title bar on / off (drag this bar to move, the corner to resize)",
+        tips = {"each": "One window per session, or one window for all (PgUp / PgDn switch)", "view": "Compact: just the graph, in a small window (C)", "close": "Close (Esc)", "frame": "Title bar on / off (drag this bar to move, the corner to resize)",
                 "pin": "Always on top", "alpha": "Window opacity (click, or scroll)",
                 "bg": "See-through graph background", "nodes": "Node opacity (click, or scroll)"}
-        for name in ("close", "frame", "pin", "alpha", "bg", "nodes", "view"):
+        for name in ("close", "frame", "pin", "alpha", "bg", "nodes", "view", "each"):
             if name == "frame" and IS_MAC:
                 continue  # a borderless window can't take the keyboard on macOS
             if name == "bg" and not (IS_MAC or sys.platform == "win32"):
@@ -374,7 +390,7 @@ class AgentNetworkWindow:
             lab.bind("<Enter>", lambda e, l=lab: self.foot.configure(text=l.tip))
             lab.bind("<Leave>", lambda e: self.foot.configure(text=self.HINT))
             self.tools[name] = lab
-        for name in ("close", "frame", "pin", "alpha", "bg", "nodes", "view"):
+        for name in ("close", "frame", "pin", "alpha", "bg", "nodes", "view", "each"):
             if name in self.tools:
                 self.tools[name].pack(side="right")
         self.tool_sep = tk.Label(self.head, text="│", font=self.f_small)
@@ -496,6 +512,8 @@ class AgentNetworkWindow:
     def show_session(self, key=None):
         item = pick_session(getattr(self.pet, "_last_items", []), key)
         new_key = item.get("key") if item else None
+        if self.pinned and key:
+            new_key = key  # its own session, even after it ends
         if new_key != self.key:
             self.key, self.sel = new_key, -1
             self.open_overlay(False)
@@ -503,6 +521,8 @@ class AgentNetworkWindow:
         self._refresh()
 
     def step_session(self, d):
+        if self.pinned:
+            return "break"  # one window per session: this one stays on its session
         sessions = candidate_sessions(getattr(self.pet, "_last_items", []))
         if not sessions:
             return "break"
@@ -524,17 +544,25 @@ class AgentNetworkWindow:
         self._apply_theme()
         items = getattr(self.pet, "_last_items", [])
         self.item = next((i for i in candidate_sessions(items) if i.get("key") == self.key), None)
-        if self.item is None and self.key is None:
+        if self.item is None and self.key is None and not self.pinned:
             self.item = pick_session(items)
             self.key = self.item.get("key") if self.item else None
         sessions = candidate_sessions(items)
         self.count.configure(text=f"{[i['key'] for i in sessions].index(self.key) + 1}/{len(sessions)} "
                              if self.key in [i['key'] for i in sessions] else "")
+        for wdg in (self.prev_btn, self.next_btn, self.count):  # nothing to switch in a session's own window
+            if self.pinned and wdg.winfo_manager():
+                wdg.pack_forget()
         if not self.item:
-            self.title.configure(text="No sessions right now")
+            self.title.configure(text="This session has ended" if self.pinned and self.key else "No sessions right now")
             self.net = {"agents": [], "log": []}
         else:
             self.title.configure(text=session_label(self.item))
+            try:
+                self.win.title(f"AIPet · {self.item.get('title') or 'agent network'}" if self.pinned
+                               else "AIPet · agent network")
+            except tk.TclError:
+                pass
             self.net = agents.read_network(self.item)
         if self.sel >= len(self.net["agents"]):
             self.sel = -1

@@ -320,6 +320,9 @@ A live map of one session: the main agent and every subagent it started, Claude 
   off (without it, drag the top bar to move and the `◢` corner to resize; Windows and Linux), `pin` always on top,
   `α100%` window opacity, `bg` see-through graph background (Windows and macOS; clicks go through the empty parts),
   `node100%` node opacity. Click to change, right-click or scroll to go the other way.
+- **One window per session** (toolbar `each`, or *One agent network window per session* in Live Management): every
+  session gets its own window, titled after it and fanned out on screen, instead of one window you switch with
+  PgUp / PgDn. Toolbar changes apply to all of them.
 - **Compact** (toolbar, or C): just the graph in a small window; the prompt chip still shows, and the window grows
   while a prompt is open.
 - **Keys**: Tab / → next agent, Shift+Tab / ← previous, A shared log, ↑↓ scroll the log, PgUp / PgDn previous or

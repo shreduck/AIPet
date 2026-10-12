@@ -1522,6 +1522,7 @@ class TrayApp:
                      submenu=[item(f"{m} min", lambda m=m: self.pet.set_timed_minutes(m), checked=default == m)
                               for m in (5, 10, 15, 30, 60)]),
                 dict(self.agent_network_item(None), icon="link"),
+                self.agent_network_separate_item(),
                 None]
         sessions = [d for d in self.pet._last_items if d.get("source") == "CC" and d.get("session_id")]
         for d in sessions:
@@ -1572,32 +1573,87 @@ class TrayApp:
         return {"label": "AIPet menu...", "action": self.show_settings, "enabled": True, "submenu": None,
                 "settings": True}
 
+    # ---- agent network windows: one for all sessions, or one per session ("each")
+    def _agent_windows(self):
+        wins = {k: w for k, w in (getattr(self, "agents_wins", None) or {}).items() if w.alive()}
+        self.agents_wins = wins
+        return wins
+
     def agent_network_open(self):
-        win = getattr(self, "agents_win", None)
-        return bool(win is not None and win.alive())
+        return bool(self._agent_windows())
+
+    def agent_network_separate(self):
+        return aipet_agents_window.load_options(self.pet.cfg)["separate"]
 
     def agent_network_item(self, key=None, label="Agent network window"):
-        """A switch: opens the agent network window (on this session), or closes it when it is open."""
+        """A switch: opens the agent network window (on this session), or closes it (them) when open."""
         return {"label": label, "action": lambda: self.toggle_agent_network(key), "enabled": True, "submenu": None,
                 "checked": self.agent_network_open(),
                 "help": "A live map of a session's main agent and its subagents: what each one is doing, its model "
                         "and context, a shared log, and prompts you can answer from there."}
 
+    def agent_network_separate_item(self):
+        return {"label": "One agent network window per session", "action": self.toggle_agent_network_separate,
+                "enabled": True, "submenu": None, "checked": self.agent_network_separate(),
+                "help": "Each session gets its own agent network window, instead of one window you switch with "
+                        "PgUp / PgDn. Opening the window then opens one for every session."}
+
     def toggle_agent_network(self, key=None):
         if self.agent_network_open():
-            self.agents_win.close()
+            for w in list(self._agent_windows().values()):
+                w.close()
         else:
             self.show_agent_network(key)
         self.refresh_menu()
 
-    def show_agent_network(self, key=None):
-        """The agent network window: one per app; opening it again switches it to that session."""
-        win = getattr(self, "agents_win", None)
-        if win is not None and win.alive():
-            win.show_session(key)
-            win.raise_()
+    def toggle_agent_network_separate(self):
+        opts = aipet_agents_window.load_options(self.pet.cfg)
+        opts["separate"] = not opts["separate"]
+        self.pet.cfg[aipet_agents_window.OPTIONS_KEY] = opts
+        core.save_setting(aipet_agents_window.OPTIONS_KEY, opts)
+        self._agent_mode_changed(None)
+
+    def _agent_mode_changed(self, source):
+        """Switched between one window and one per session: reopen what was open in the new mode."""
+        wins = self._agent_windows()
+        if wins:
+            keep = source.key if source is not None else None
+            for w in list(wins.values()):
+                w.close()
+            self.show_agent_network(keep if not self.agent_network_separate() else None)
+        self.refresh_menu()
+
+    def _agent_options_changed(self, opts, source, changed):
+        if changed == "each":
+            self._agent_mode_changed(source)
             return
-        self.agents_win = aipet_agents_window.AgentNetworkWindow(self.root, self.pet, key)
+        for w in self._agent_windows().values():  # the same look for every agent network window
+            if w is not source:
+                w.set_options(opts)
+
+    def show_agent_network(self, key=None):
+        """One window for all sessions (opening it again switches it to that session), or, in "one per session"
+        mode, that session's own window (key None: every session's)."""
+        wins = self._agent_windows()
+        new = lambda k, pinned, n=0: aipet_agents_window.AgentNetworkWindow(  # noqa: E731
+            self.root, self.pet, k, pinned=pinned, on_options=self._agent_options_changed, cascade=n)
+        if not self.agent_network_separate():
+            win = wins.get("*")
+            if win:
+                win.show_session(key)
+                win.raise_()
+            else:
+                wins["*"] = new(key, False)
+            return
+        keys = [key] if key else [i["key"] for i in aipet_agents_window.candidate_sessions(self.pet._last_items)][:6]
+        if not keys:  # no session yet: one window that waits for the first
+            wins["*"] = wins.get("*") or new(None, False)
+            return
+        for n, k in enumerate(keys):
+            if k in wins:
+                wins[k].raise_()
+            else:
+                wins[k] = new(k, True, len(wins) + n)
 
     def show_settings(self):
         if getattr(self, "settings_win", None) is not None and self.settings_win.alive():
