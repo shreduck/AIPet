@@ -298,7 +298,8 @@ When Claude Code or Codex asks for permission, the popup (click the bubble) show
   honour it while the pet runs). Grants are kept in `~/.aipet/auto-approve.json` under `timed`.
 - **Subagents running** lists what the session's subagents are (their agent type, e.g. `tester`).
 - **Agent network window** (a switch here and right below *AIPet menu...* in the pet's right-click menu; each
-  session's entry also has *Agent network...* to open it on that session) opens or closes the window below.
+  session's entry also has *Agent network...* to open it on that session) opens or closes the window below, and
+  **Agent network compact mode** chooses one window for every session or one per session.
 
 ## Agent network window
 A live map of one session: the main agent and every subagent it started, Claude Code and Codex alike.
@@ -306,7 +307,7 @@ A live map of one session: the main agent and every subagent it started, Claude 
   effort and context size when the transcript records them, and its state. Edges show what is going on: blue with dots
   flowing out while a subagent works, amber while the main agent waits on it, green with a dot flowing back once it
   handed back its result. Next to each subagent: its latest thought or words.
-- **Logs** at the bottom: *All* merges every agent's activity into one log (prompts, what each one said, tool calls,
+- **Logs** at the bottom: *[all]* merges every agent's activity into one log (prompts, what each one said, tool calls,
   results), each line in its agent's colour; the other tabs show one agent each.
 - **Prompts**: when an agent needs you, a small warning shows (*Plan needs your input*). Click it (or press Space) and
   it opens over the log with the prompt or question and its answers (side by side when they fit, one per line when
@@ -317,21 +318,19 @@ A live map of one session: the main agent and every subagent it started, Claude 
   prompt with all its choices, like always allowing that tool. Claude Code shows its own prompt alongside the pet's
   anyway, so there it only jumps to the window.
 - **Settings** drop down from the cogwheel at the top right (it turns while open), kept in `config.json` under
-  `agent_window`: `[x]` always on top, no title bar (drag the top bar to move, the `◢` corner to resize; Windows and
-  Linux), see-through background (Windows and macOS; clicks go through the empty parts), compact, one window per
-  session, and sliders for opacity (30-100%), node opacity and scale (50-150%). Toggles and sliders apply to every
-  open agent network window.
+  `agent_window` and applied to every open agent network window: `[on ]` / `[off]` always on top, title bar (off: drag
+  the top bar to move, the `◢` corner to resize; Windows and Linux) and compact (like the pet's compact mode: one
+  window for every session, switched with PgUp / PgDn; off: each session gets its own window, titled after it and
+  fanned out); sliders for window opacity, background opacity (the graph's background; Windows and macOS) and node
+  opacity, 30-100%, and scale, 50-150% (applied when you let go of the mouse, so the window doesn't move under it).
+  Tk can't draw half see-through, so background and node opacity are dotted patterns (75 / 50 / 25%); macOS only has
+  solid or fully see-through.
 - **Reset agent network appearance** (Appearance, next to Reset pet size, in every menu and the AIPet menu window) puts the default look
   back and centres the open windows on the main screen; one window or one per session stays as it was.
 - **Size**: the window can't get smaller than what everything needs at 50% scale. Shrinking it below what the current
   scale needs turns the scale down with it; raising the scale grows the window to fit.
-- **One window per session** (toolbar `each`, or *One agent network window per session* in Live Management): every
-  session gets its own window, titled after it and fanned out on screen, instead of one window you switch with
-  PgUp / PgDn. Toolbar changes apply to all of them.
-- **Compact** (toolbar, or C): just the graph in a small window; the prompt chip still shows, and the window grows
-  while a prompt is open.
 - **Keys**: Tab / → next agent, Shift+Tab / ← previous, A shared log, ↑↓ scroll the log, PgUp / PgDn previous or
-  next session, C compact, Space open / fold the prompt, Esc fold it or close the window. With the prompt open: 1-9
+  next session, Space open / fold the prompt, Esc fold it or close the window. With the prompt open: 1-9
   pick and send an answer, arrows move between answers, Enter sends the highlighted one.
 - Data comes from the session's transcript files: Claude Code keeps each subagent's in
   `<transcript>/subagents/agent-<id>.jsonl`, Codex writes each spawned agent its own rollout file. Read-only; nothing is

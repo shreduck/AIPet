@@ -1370,8 +1370,8 @@ class TrayApp:
                              "set": self.pet.set_size, "format": lambda v: f"{int(round(v * 100))}%"}),
                 item("Reset pet size", self.pet.reset_scale, help="Back to the standard size."),
                 item("Reset agent network appearance", self.reset_agent_network,
-                     help="The agent network window's default look again (opacity, nodes, scale, title bar, compact, "
-                          "always on top, see-through), centred on the main screen."),
+                     help="The agent network window's default look again (opacity, background, nodes, scale, title "
+                          "bar, always on top), centred on the main screen."),
                 item("Compact mode (one pet)", self.pet.toggle_compact, checked=bool(cfg.get("compact")),
                      help="One pet stands in for every session, showing the one that needs you most."),
                 None,
@@ -1596,10 +1596,10 @@ class TrayApp:
                         "and context, a shared log, and prompts you can answer from there."}
 
     def agent_network_separate_item(self):
-        return {"label": "One agent network window per session", "action": self.toggle_agent_network_separate,
-                "enabled": True, "submenu": None, "checked": self.agent_network_separate(),
-                "help": "Each session gets its own agent network window, instead of one window you switch with "
-                        "PgUp / PgDn. Opening the window then opens one for every session."}
+        return {"label": "Agent network compact mode", "action": self.toggle_agent_network_separate,
+                "enabled": True, "submenu": None, "checked": not self.agent_network_separate(),
+                "help": "Like the pet's compact mode: one agent network window for every session (PgUp / PgDn "
+                        "switch). Off: each session gets its own window."}
 
     def reset_agent_network(self):
         """Default appearance for the agent network windows (one window or one per session stays as it is), and every

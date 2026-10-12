@@ -5,11 +5,12 @@ model, effort and context. Edges show what is going on: blue with dots flowing o
 needs you, green with a dot flowing back once it is done. Next to each subagent: its latest thought or words.
 Bottom: logs. [all] merges every agent's activity in time order, each line in its agent's colour; one tab per agent.
 When an agent needs you, a small chip says so; clicking it (or Space) opens the prompt over the logs, with its answers.
-The cogwheel (top right) drops down the window's settings: always on top, title bar, see-through background, compact,
-one window per session, and sliders for opacity, node opacity and scale.
+The cogwheel (top right) drops down the window's settings: always on top, title bar, compact (one window for every
+session, like the pet's compact mode; off: one window per session), and sliders for window, background and node
+opacity and for the scale.
 
 Keys: Tab / Right next agent, Shift+Tab / Left previous, A shared log, PgUp / PgDn other sessions, Space prompt,
-1-9 answer, C compact, Esc fold the prompt / settings (or close).
+1-9 answer, Esc fold the prompt / settings (or close).
 """
 import math
 import sys
@@ -24,13 +25,13 @@ REFRESH_MS = 900
 FRAME_MS = 45
 IS_MAC = sys.platform == "darwin"
 ALPHA_MIN, ALPHA_STEP = 30, 5  # window opacity, %
-NODE_STEP = 25  # node fill opacity, %: 0 / 25 / 50 / 75 / 100 (drawn with Tk stipples)
+OPACITY_STEP = 5  # background and node opacity, % (30-100), drawn as Tk stipple patterns (see dither())
 SCALE_MIN, SCALE_MAX, SCALE_STEP = 50, 150, 5  # the window's text and drawing size, %
-STIPPLE = {75: "gray75", 50: "gray50", 25: "gray25"}
 OPTIONS_KEY = "agent_window"  # config.json
-DEFAULT_OPTIONS = {"on_top": False, "alpha": 100, "clear_bg": False, "node_alpha": 100, "frameless": False,
-                   "compact": False, "separate": False, "scale": 100}
-HINT = "tab/←→ agent · a all · pgup/pgdn session · space prompt · c compact · esc close"
+DEFAULT_OPTIONS = {"on_top": False, "alpha": 100, "bg_alpha": 100, "node_alpha": 100, "frameless": False,
+                   "separate": False, "scale": 100}
+HINT = "tab/←→ agent · a all · pgup/pgdn session · space prompt · esc close"
+BG_OPACITY = IS_MAC or sys.platform == "win32"  # a see-through background needs Windows' or macOS' window support
 
 
 def _snap(value, lo, hi, step):
@@ -49,7 +50,8 @@ def load_options(cfg):
             if k in opts and isinstance(v, type(opts[k])) and not (isinstance(v, bool) and not isinstance(opts[k], bool)):
                 opts[k] = v
     opts["alpha"] = _snap(opts["alpha"], ALPHA_MIN, 100, ALPHA_STEP)
-    opts["node_alpha"] = _snap(opts["node_alpha"], 0, 100, NODE_STEP)
+    opts["bg_alpha"] = _snap(opts["bg_alpha"], ALPHA_MIN, 100, OPACITY_STEP)
+    opts["node_alpha"] = _snap(opts["node_alpha"], ALPHA_MIN, 100, OPACITY_STEP)
     opts["scale"] = _snap(opts["scale"], SCALE_MIN, SCALE_MAX, SCALE_STEP)
     return opts
 
@@ -59,6 +61,18 @@ def key_color(hex_color):
     or lines drawn in the theme's own colours."""
     r, g, b = (int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
     return f"#{r:02x}{g:02x}{b ^ 1:02x}"
+
+
+def dither(opacity):
+    """Tk can't draw half see-through, only stipple patterns: the pattern closest to this opacity ("" = solid,
+    None = nothing drawn)."""
+    if opacity >= 88:
+        return ""
+    if opacity >= 63:
+        return "gray75"
+    if opacity >= 38:
+        return "gray50"
+    return "gray25"
 
 
 def needed_size(n_subs, scale, line, small, compact=False):
@@ -140,13 +154,17 @@ def prompt_agent(net, item):
 
 
 class Slider:
-    """A terminal-looking slider: [██████░░░░] 70%. Click or drag to set, scroll to step."""
+    """A terminal-looking slider: [██████░░░░] 70%. Click or drag to set, scroll to step.
+    live=False: the value is only applied when the mouse button is let go (or a moment after scrolling), for
+    settings that resize the window under the pointer."""
 
-    def __init__(self, win, parent, lo, hi, step, value, on_change, fmt=lambda v: f"{v}%"):
+    def __init__(self, win, parent, lo, hi, step, value, on_change, fmt=lambda v: f"{v}%", live=True):
         self.win, self.lo, self.hi, self.step, self.value = win, lo, hi, step, value
-        self.on_change, self.fmt = on_change, fmt
+        self.on_change, self.fmt, self.live = on_change, fmt, live
+        self._applied_value, self._job = value, None
         self.c = tk.Canvas(parent, highlightthickness=0, bd=0, cursor="hand2")
         for seq, fn in (("<Button-1>", self._click), ("<B1-Motion>", self._click),
+                        ("<ButtonRelease-1>", lambda e: self._commit()),
                         ("<MouseWheel>", lambda e: self.nudge(1 if e.delta > 0 else -1)),
                         ("<Button-4>", lambda e: self.nudge(1)), ("<Button-5>", lambda e: self.nudge(-1)),
                         ("<Configure>", lambda e: self.draw())):
@@ -186,6 +204,13 @@ class Slider:
 
     def nudge(self, d):
         self.set(self.value + d * self.step)
+        if not self.live:  # scrolling: apply once it settles
+            try:
+                if self._job:
+                    self.c.after_cancel(self._job)
+                self._job = self.c.after(450, self._commit)
+            except tk.TclError:
+                pass
         return "break"
 
     def set(self, value, notify=True):
@@ -193,8 +218,17 @@ class Slider:
         if value != self.value:
             self.value = value
             self.draw()
-            if notify:
+            if notify and self.live:
+                self._applied_value = value
                 self.on_change(value)
+            elif not notify:
+                self._applied_value = value
+
+    def _commit(self):
+        self._job = None
+        if not self.live and self.value != self._applied_value:
+            self._applied_value = self.value
+            self.on_change(self.value)
 
 
 class AgentNetworkWindow:
@@ -274,13 +308,11 @@ class AgentNetworkWindow:
         u = self.u if u is None else u
         r = u / self.u
         n = max(0, len(self.net["agents"]) - 1)
-        return needed_size(n, u, self.f_main.metrics("linespace") * r, self.f_small.metrics("linespace") * r,
-                           self.opts["compact"])
+        return needed_size(n, u, self.f_main.metrics("linespace") * r, self.f_small.metrics("linespace") * r)
 
     def _place(self):
         w, h = self.needed()
-        w, h = max(w, int((420 if self.opts["compact"] else 620) * self.s)), max(h, 0 if self.opts["compact"]
-                                                                                  else int(480 * self.s))
+        w, h = max(w, int(620 * self.s)), max(h, int(480 * self.s))
         try:
             sw, sh = self.win.winfo_screenwidth(), self.win.winfo_screenheight()
             w, h = min(w, sw - 40), min(h, sh - 80)
@@ -304,13 +336,13 @@ class AgentNetworkWindow:
         if name == "close":
             self.close()
             return "break"
-        toggles = {"frame": "frameless", "pin": "on_top", "bg": "clear_bg", "view": "compact", "each": "separate"}
+        toggles = {"frame": "frameless", "pin": "on_top", "each": "separate"}
         if name in toggles:
             o[toggles[name]] = not o[toggles[name]]
         elif name == "alpha":
             o["alpha"] = _snap(o["alpha"] + d * ALPHA_STEP, ALPHA_MIN, 100, ALPHA_STEP)
         elif name == "nodes":
-            o["node_alpha"] = _snap(o["node_alpha"] + d * NODE_STEP, 0, 100, NODE_STEP)
+            o["node_alpha"] = _snap(o["node_alpha"] + d * OPACITY_STEP, ALPHA_MIN, 100, OPACITY_STEP)
         self._spin_until = time.time() + 0.6  # the cog turns a little on every change
         if name != "each":
             self._apply_options(changed=name)
@@ -412,8 +444,11 @@ class AgentNetworkWindow:
         except tk.TclError:
             pass
         bg = P["bg"]
+        # Background opacity: the graph's background colour is made see-through and repainted as a stipple pattern,
+        # so part of its pixels show what is behind (macOS can't stipple: see-through below half)
+        see_through = BG_OPACITY and dither(o["bg_alpha"]) != "" and not (IS_MAC and o["bg_alpha"] >= 50)
         want = {"topmost": bool(o["on_top"]), "alpha": o["alpha"] / 100,
-                "clear": (key_color(P["bg"]) if not IS_MAC else "mac") if o["clear_bg"] else ""}
+                "clear": (key_color(P["bg"]) if not IS_MAC else "mac") if see_through else ""}
         try:
             if self._applied.get("topmost") != want["topmost"]:
                 w.attributes("-topmost", want["topmost"])
@@ -427,7 +462,7 @@ class AgentNetworkWindow:
             self._applied = want
         except tk.TclError:
             pass
-        if o["clear_bg"]:
+        if see_through:
             bg = "systemTransparent" if IS_MAC else want["clear"] or P["bg"]
         if changed in (None, "frame") and not IS_MAC:
             try:
@@ -440,7 +475,7 @@ class AgentNetworkWindow:
                     w.focus_force()
             except tk.TclError:
                 pass
-        elif geo and changed in ("alpha", "bg", "pin", "nodes"):
+        elif geo and changed in ("alpha", "bg_alpha", "pin", "nodes"):
             try:  # keep the size, whatever the window manager did
                 w.after_idle(lambda g=geo: w.geometry(g) if w.geometry().split("+")[0] != g.split("+")[0] else None)
             except tk.TclError:
@@ -454,8 +489,6 @@ class AgentNetworkWindow:
             self.close_btn.pack(side="right", before=self.cog)
         else:
             self.close_btn.pack_forget()
-        if changed in (None, "view", "frame"):
-            self._apply_view()
         if frameless:
             self.grip.place(relx=1.0, rely=1.0, anchor="se")
             self.grip.lift()
@@ -465,36 +498,6 @@ class AgentNetworkWindow:
         self._graph_sig = self._tabs_sig = None
         self._draw_graph(force=True)
         self._draw_tabs()
-
-    def _apply_view(self):
-        """Full: graph, tabs, logs and the key bar. Compact: only the graph (and the prompt chip), in a window sized
-        to it; the full size comes back when switching back."""
-        compact = self.opts["compact"]
-        parts = (self.sep, self.tabs, self.log)
-        try:
-            shown = self.log.winfo_manager() == "pack"
-            if compact and shown:
-                self._full_size = (self.win.winfo_width(), self.win.winfo_height())
-                for wdg in parts:
-                    wdg.pack_forget()
-                self.footbar.pack_forget()
-                self._update_minsize()
-                w, h = self.needed()
-                self._fitting = True
-                self.win.geometry(f"{max(w, int(self.win.winfo_width() * 0.75))}x{h}")
-                self.win.after(200, lambda: setattr(self, "_fitting", False))
-            elif not compact and not shown:
-                self.footbar.pack(side="bottom", fill="x", before=self.body)
-                for wdg in parts:
-                    wdg.pack(fill="both" if wdg is self.log else "x", padx=self.px(6) if wdg is self.tabs else 0)
-                self._update_minsize()
-                need = self.needed()
-                w, h = getattr(self, "_full_size", (int(620 * self.s), int(480 * self.s)))
-                self._fitting = True
-                self.win.geometry(f"{max(w, need[0])}x{max(h, need[1])}")
-                self.win.after(200, lambda: setattr(self, "_fitting", False))
-        except tk.TclError:
-            pass
 
     def _on_resize(self, e=None):
         self._draw_graph(force=True)
@@ -527,10 +530,8 @@ class AgentNetworkWindow:
         w = self.win
         self.head = tk.Frame(w)
         self.head.pack(fill="x")
-        self.prompt_mark = tk.Label(self.head, text="▍", font=self.f_bold)
-        self.prompt_mark.pack(side="left")
-        self.title = tk.Label(self.head, font=self.f_main, anchor="w")
-        self.title.pack(side="left", fill="x", expand=True, pady=self.px(3))
+        # Packed right to left before the title, and the title asks for no width of its own: whatever the scale,
+        # the cogwheel and the session arrows keep their place and the title gets cut instead
         self.cog = tk.Canvas(self.head, highlightthickness=0, bd=0, cursor="hand2")
         self.cog.pack(side="right", padx=(self.px(6), self.px(6)))
         self.cog.bind("<Button-1>", lambda e: self.toggle_menu())
@@ -544,6 +545,10 @@ class AgentNetworkWindow:
         self.count.pack(side="right")
         self.prev_btn = tk.Label(self.head, text="‹", font=self.f_bold, cursor="hand2", padx=self.px(4))
         self.prev_btn.pack(side="right")
+        self.prompt_mark = tk.Label(self.head, text="▍", font=self.f_bold)
+        self.prompt_mark.pack(side="left")
+        self.title = tk.Label(self.head, font=self.f_main, anchor="w", width=1)
+        self.title.pack(side="left", fill="x", expand=True, pady=self.px(3))
         for wdg in (self.head, self.title, self.prompt_mark):  # drag the bar to move (needed without a title bar)
             wdg.bind("<Button-1>", self._drag_start)
             wdg.bind("<B1-Motion>", self._drag_move)
@@ -602,8 +607,6 @@ class AgentNetworkWindow:
         w.bind("<Up>", key(lambda: self.step_option(-1) if self.overlay_open else self.log.yview_scroll(-1, "units")))
         for k in ("a", "A"):
             w.bind(k, key(lambda: self.select(-1)))
-        for k in ("c", "C"):
-            w.bind(k, key(lambda: self.tool("view")))
         w.bind("<Prior>", key(lambda: self.step_session(-1), True))
         w.bind("<Next>", key(lambda: self.step_session(1), True))
         w.bind("<space>", key(lambda: self.open_overlay(not self.overlay_open)))
@@ -686,34 +689,35 @@ class AgentNetworkWindow:
         tk.Label(m, text="── settings ──", font=self.f_small, bg=P["bar"], fg=P["mu"], anchor="w").pack(
             fill="x", padx=pad, pady=(pad // 2, 0))
         o = self.opts
-        rows = [("pin", "on_top", "always on top")]
+        rows = [("pin", "on_top", "always on top", False)]
         if not IS_MAC:
-            rows.append(("frame", "frameless", "no title bar"))
-        if IS_MAC or sys.platform == "win32":
-            rows.append(("bg", "clear_bg", "see-through background"))
-        rows += [("view", "compact", "compact (c)"), ("each", "separate", "one window per session")]
-        for name, opt, text in rows:
-            lab = tk.Label(m, text=f"[{'x' if o[opt] else ' '}] {text}", font=self.f_main, bg=P["bar"],
-                           fg=P["blue"] if o[opt] else P["tx"], anchor="w", cursor="hand2")
+            rows.append(("frame", "frameless", "title bar", True))
+        rows.append(("each", "separate", "compact (one window for every session)", True))
+        for name, opt, text, inverted in rows:
+            on = bool(o[opt]) != inverted
+            lab = tk.Label(m, text=f"{'[on ]' if on else '[off]'} {text}", font=self.f_main, bg=P["bar"],
+                           fg=P["blue"] if on else P["tx"], anchor="w", cursor="hand2")
             lab.pack(fill="x", padx=pad)
             lab.bind("<Button-1>", lambda e, n=name: (self.tool(n), "break")[1])
         width = self.px(150)
         line = self.f_small.metrics("linespace")
         self._sliders = []
 
-        def slider(text, lo, hi, step, value, on_change):
+        def slider(text, lo, hi, step, value, on_change, live=True):
             row = tk.Frame(m, bg=P["bar"])
             row.pack(fill="x", padx=pad, pady=(self.px(2), 0))
             tk.Label(row, text=text.ljust(8), font=self.f_small, bg=P["bar"], fg=P["tx"]).pack(side="left")
-            sl = Slider(self, row, lo, hi, step, value, on_change)
+            sl = Slider(self, row, lo, hi, step, value, on_change, live=live)
             sl.c.pack(side="left", fill="x", expand=True)
             sl.size(width, line + self.px(4))
             self._sliders.append(sl)
             return sl
         slider("opacity", ALPHA_MIN, 100, ALPHA_STEP, o["alpha"], lambda v: self._slide("alpha", v))
-        slider("nodes", 0, 100, NODE_STEP, o["node_alpha"], lambda v: self._slide("node_alpha", v))
+        if BG_OPACITY:
+            slider("backgrnd", ALPHA_MIN, 100, OPACITY_STEP, o["bg_alpha"], lambda v: self._slide("bg_alpha", v))
+        slider("nodes", ALPHA_MIN, 100, OPACITY_STEP, o["node_alpha"], lambda v: self._slide("node_alpha", v))
         self.scale_slider = slider("scale", SCALE_MIN, SCALE_MAX, SCALE_STEP, o["scale"],
-                                   lambda v: self.set_scale(v / 100))
+                                   lambda v: self.set_scale(v / 100), live=False)
         tk.Label(m, text="esc fold · click outside", font=self.f_small, bg=P["bar"], fg=P["mu"], anchor="w").pack(
             fill="x", padx=pad, pady=(self.px(3), pad // 2))
         self._place_menu()
@@ -721,7 +725,7 @@ class AgentNetworkWindow:
     def _slide(self, key, value):
         self.opts[key] = value
         self._spin_until = time.time() + 0.4
-        self._apply_options(changed="alpha" if key == "alpha" else "nodes")
+        self._apply_options(changed=key)
         self._save(key, delay=400)
 
     def _place_menu(self):
@@ -897,7 +901,7 @@ class AgentNetworkWindow:
     def _draw_graph(self, force=False):
         c, P = self.canvas, self.P
         W, H = max(50, c.winfo_width()), max(50, c.winfo_height())
-        sig = (W, H, self.sel, self.theme, self.s, self.opts["node_alpha"], self.in_window,
+        sig = (W, H, self.sel, self.theme, self.s, self.opts["node_alpha"], self.opts["bg_alpha"], self.in_window,
                tuple((a["name"], a["state"], a["model_label"], a["effort"], a["ctx"], a["thought"])
                      for a in self.net["agents"]))
         if sig == self._graph_sig and not force:
@@ -905,6 +909,8 @@ class AgentNetworkWindow:
         self._graph_sig = sig
         c.delete("all")
         self.edges = []
+        if self._applied.get("clear") and not IS_MAC:  # background opacity: the background as a stipple pattern
+            c.create_rectangle(0, 0, W, H, fill=P["bg"], outline="", stipple=dither(self.opts["bg_alpha"]))
         ags = self.net["agents"]
         if not ags:
             c.create_text(W // 2, H // 2, text="$ waiting for a session in claude code or codex_",
@@ -929,9 +935,8 @@ class AgentNetworkWindow:
             if a["main"] and a["state"] == "waiting":
                 border = P["amb"]
             fill = P["sel"] if i == self.sel else P["node"]
-            na = self.opts["node_alpha"]
             tag = f"node{i}"
-            c.create_rectangle(x, y, x + w, y + h, fill=fill if na else "", stipple=STIPPLE.get(na, ""),
+            c.create_rectangle(x, y, x + w, y + h, fill=fill, stipple=dither(self.opts["node_alpha"]),
                                outline=border, width=max(1, self.px(1.3 if i == self.sel else 1)), tags=tag)
             img = self.robot(a["state"], max(6, int(lh * 1.15)))
             c.create_image(x + self.px(6), y + self.px(5), image=img, anchor="nw", tags=tag)
@@ -1116,12 +1121,6 @@ class AgentNetworkWindow:
             self._place_overlay()
         else:
             self.overlay.place_forget()
-            grown, self._grown = getattr(self, "_grown", None), None
-            if grown and self.opts["compact"]:
-                try:
-                    self.win.geometry(f"{self.win.winfo_width()}x{grown}")
-                except tk.TclError:
-                    pass
             self._prompt_sig = None  # the chip comes back on the next refresh
         return "break"
 
@@ -1133,8 +1132,7 @@ class AgentNetworkWindow:
                 lab.configure(wraplength=width - self.px(36))
             except tk.TclError:
                 pass
-        compact = self.opts["compact"]
-        bottom = (self.win.winfo_height() if compact else self.footbar.winfo_y()) - self.px(6)
+        bottom = self.footbar.winfo_y() - self.px(6)
         self._flow_options(width - self.px(20))
         highest = self.body.winfo_y() + self.px(6)
         top = self.body.winfo_y() + int(self.canvas.winfo_height() * 0.72)
@@ -1143,14 +1141,6 @@ class AgentNetworkWindow:
             need = self.overlay.winfo_reqheight() + self.px(4)
         except tk.TclError:
             need = 0
-        if compact and bottom - highest < need and not getattr(self, "_grown", None):
-            # the small window can't hold the prompt: grow it while the prompt is open
-            self._grown = self.win.winfo_height()
-            self._fitting = True
-            self.win.geometry(f"{self.win.winfo_width()}x{self._grown + need - (bottom - highest)}")
-            self.win.update_idletasks()
-            self.win.after(200, lambda: setattr(self, "_fitting", False))
-            bottom = self.win.winfo_height() - self.px(6)
         top = max(highest, min(top, bottom - need))
         self.overlay.place(x=self.px(10), y=top, width=width, height=max(self.px(60), bottom - top))
         self.overlay.lift()

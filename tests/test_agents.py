@@ -183,10 +183,11 @@ class WindowLogicTests(unittest.TestCase):
 class WindowOptionTests(unittest.TestCase):
     def test_options_load_and_snap(self):
         import aipet_agents_window as win
-        opts = win.load_options({"agent_window": {"alpha": 73, "node_alpha": 60, "on_top": "yes", "frameless": True,
-                                                  "scale": 400, "compact": 1}})
-        self.assertEqual((opts["alpha"], opts["node_alpha"], opts["on_top"], opts["frameless"], opts["scale"],
-                          opts["compact"]), (75, 50, False, True, 150, False))
+        opts = win.load_options({"agent_window": {"alpha": 73, "node_alpha": 0, "bg_alpha": 62, "on_top": "yes",
+                                                  "frameless": True, "scale": 400, "separate": 1}})
+        self.assertEqual((opts["alpha"], opts["node_alpha"], opts["bg_alpha"], opts["on_top"], opts["frameless"],
+                          opts["scale"], opts["separate"]), (75, 30, 60, False, True, 150, False))  # opacity >= 30%
+        self.assertEqual([win.dither(v) for v in (100, 90, 75, 50, 30)], ["", "", "gray75", "gray50", "gray25"])
         self.assertEqual(win.load_options({}), win.DEFAULT_OPTIONS)
         self.assertEqual(win.load_options({"agent_window": {"alpha": 5, "scale": 10}})["alpha"], 30)
         self.assertEqual(win.key_color("#fbfaf7"), "#fbfaf6")  # see-through key: one notch off the background
