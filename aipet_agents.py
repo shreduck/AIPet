@@ -97,6 +97,12 @@ def _script_arg(script):
     return short(text.strip().splitlines()[0] if text.strip() else "", 70)
 
 
+def full(text, limit=6000):
+    """A whole message for the log (what an agent said, its full result), trimmed only when huge."""
+    text = str(text or "").strip()
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
+
+
 def _read_tail(path, size):
     """The complete lines of the last `size` bytes of a file, parsed as JSON (bad lines skipped)."""
     with open(path, "rb") as f:
@@ -168,7 +174,7 @@ def parse_claude(entries):
             info["ctx"] = ctx or info["ctx"]
             for c in parts:
                 if c.get("type") == "text" and str(c.get("text", "")).strip():
-                    lines.append((t, "say", core._phrase(c["text"], 160)))
+                    lines.append((t, "say", full(c["text"])))
                 elif c.get("type") == "thinking" and str(c.get("thinking", "")).strip():
                     lines.append((t, "think", core._phrase(c["thinking"], 160)))
                 elif c.get("type") == "tool_use":
@@ -243,7 +249,7 @@ def parse_codex(entries):
                 if not text or text.startswith(SKIP_TEXT):
                     continue
                 if role == "assistant":
-                    lines.append((t, "say", core._phrase(text, 160)))
+                    lines.append((t, "say", full(text)))
                 elif role == "user":
                     lines.append((t, "you", short(text, 160)))
                     info["last_prompt_t"] = t
@@ -377,10 +383,11 @@ def read_network(item, now=None):
     agents = [main] + subs
     for a in agents:
         a["model_label"] = model_name(a["model"])
-        a["thought"] = next((text for _, kind, text in reversed(a["lines"]) if kind in ("think", "say", "tool",
-                                                                                        "spawn")), "")
-        if a["state"] == "done":
-            a["thought"] = next((text for _, kind, text in reversed(a["lines"]) if kind == "say"), a["thought"])
+        a["thought"] = next((core._phrase(text, 160) if kind == "say" else text for _, kind, text in reversed(a["lines"])
+                             if kind in ("think", "say", "tool", "spawn")), "")
+        if a["state"] == "done":  # its result: the last line of its final reply (the log has all of it)
+            a["thought"] = next((core._phrase(text, 160) for _, kind, text in reversed(a["lines"]) if kind == "say"),
+                                a["thought"])
     if main_state == "waiting":
         waiting_on = [s["name"] for s in subs if s["state"] in ("working", "needs_input")]
         main["thought"] = "waiting for " + ", ".join(waiting_on[:3]) if waiting_on else main["thought"]

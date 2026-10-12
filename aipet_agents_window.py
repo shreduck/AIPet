@@ -29,7 +29,7 @@ OPACITY_STEP = 5  # background and node opacity, % (30-100), drawn as Tk stipple
 SCALE_MIN, SCALE_MAX, SCALE_STEP = 50, 150, 5  # the window's text and drawing size, %
 OPTIONS_KEY = "agent_window"  # config.json
 DEFAULT_OPTIONS = {"on_top": False, "alpha": 100, "bg_alpha": 100, "node_alpha": 100, "frameless": False,
-                   "separate": False, "tabbed": True, "tidy": False, "scale": 100}
+                   "separate": False, "tabbed": True, "tidy": False, "scale": 100, "log_lines": 6}
 HINT = "tab/←→ agent · a all · pgup/pgdn session · space prompt · ctrl+wheel/+/- zoom · 0 reset · drag pan · esc close"
 BG_OPACITY = IS_MAC or sys.platform == "win32"  # a see-through background needs Windows' or macOS' window support
 
@@ -53,6 +53,7 @@ def load_options(cfg):
     opts["bg_alpha"] = _snap(opts["bg_alpha"], ALPHA_MIN, 100, OPACITY_STEP)
     opts["node_alpha"] = _snap(opts["node_alpha"], ALPHA_MIN, 100, OPACITY_STEP)
     opts["scale"] = _snap(opts["scale"], SCALE_MIN, SCALE_MAX, SCALE_STEP)
+    opts["log_lines"] = _snap(opts["log_lines"], 3, 80, 1)
     return opts
 
 
@@ -777,9 +778,18 @@ class AgentNetworkWindow:
         self.sep.pack(fill="x")
         self.tabs = tk.Frame(self.body)
         self.tabs.pack(fill="x", padx=self.px(6))
-        self.log = tk.Text(self.body, height=6, wrap="word", bd=0, highlightthickness=0, font=self.f_main,
-                           padx=self.px(8), pady=self.px(4), cursor="arrow", takefocus=0)
+        # the split between graph and logs: drag it (the logs get up to 80% of the window)
+        self.sep.configure(height=max(3, self.px(3)), cursor="sb_v_double_arrow")
+        self.sep.bind("<Button-1>", self._split_start)
+        self.sep.bind("<B1-Motion>", self._split_move)
+        self.sep.bind("<ButtonRelease-1>", lambda e: self._save("log_lines", delay=300))
+        self.log = tk.Text(self.body, height=self.opts.get("log_lines", 6), wrap="word", bd=0, highlightthickness=0,
+                           font=self.f_main, padx=self.px(8), pady=self.px(4), cursor="xterm", takefocus=0,
+                           exportselection=True)
         self.log.pack(fill="both", expand=False)
+        self.log.bind("<Control-c>", lambda e: self._copy(self.log))
+        self.log.bind("<Control-a>", lambda e: (self.log.tag_add("sel", "1.0", "end"), "break")[1])
+        self.log.bind("<Button-1>", lambda e: self.log.focus_set(), add="+")  # so Ctrl+C reaches it
         self.win.bind("<Configure>", self._on_window_resize, add="+")
         for seq in ("<FocusIn>", "<Map>", "<Unmap>"):  # brought to the front, minimised or restored
             self.win.bind(seq, self._window_event, add="+")
@@ -794,7 +804,9 @@ class AgentNetworkWindow:
         self.stathead.pack(fill="x", padx=self.px(6), pady=(self.px(3), 0))
         self.stathead.bind("<Button-1>", lambda e: self.toggle_stat(self.stat_open))
         self.stattext = tk.Text(self.statdrop, font=self.f_small, bd=0, highlightthickness=0, wrap="none",
-                                takefocus=0, cursor="arrow", padx=self.px(6), pady=self.px(3))
+                                takefocus=0, cursor="xterm", padx=self.px(6), pady=self.px(3))
+        self.stattext.bind("<Control-c>", lambda e: self._copy(self.stattext))
+        self.stattext.bind("<Button-1>", lambda e: self.stattext.focus_set(), add="+")
         self.stattext.pack(fill="both", expand=True)
         self.stat_open = None
         self.stats = agents.network_stats({"agents": []})
@@ -808,6 +820,9 @@ class AgentNetworkWindow:
             def handler(e):
                 if self._typing() and not typing_too:
                     return None  # the entry gets the key
+                if e.state & 0x4 and getattr(e, "keysym", "") not in ("plus", "minus", "equal", "KP_Add",
+                                                                     "KP_Subtract", "0"):
+                    return None  # Ctrl + a key: copying, selecting... not a shortcut of this window
                 fn()
                 return "break"
             return handler
@@ -865,6 +880,29 @@ class AgentNetworkWindow:
                 self.win.focus_force()
             except tk.TclError:
                 pass
+
+    def _copy(self, widget):
+        try:
+            text = widget.get("sel.first", "sel.last")
+        except tk.TclError:
+            return "break"
+        self.win.clipboard_clear()
+        self.win.clipboard_append(text)
+        return "break"
+
+    def _split_start(self, e):
+        self._split = (e.y_root, self.log.winfo_height())
+
+    def _split_move(self, e):
+        """Drag the split: the logs between 3 lines and 80% of the window."""
+        y0, h0 = getattr(self, "_split", (e.y_root, self.log.winfo_height()))
+        line = max(1, self.f_main.metrics("linespace"))
+        want = h0 + (y0 - e.y_root)
+        most = int(self.win.winfo_height() * 0.8) - self.tabs.winfo_height() - self.px(8)
+        lines = int(max(3, min(most // line, want // line)))
+        if lines != self.opts.get("log_lines"):
+            self.opts["log_lines"] = lines
+            self.log.configure(height=lines)
 
     def _typing(self):
         try:
@@ -991,8 +1029,8 @@ class AgentNetworkWindow:
             wdg.configure(fg=P["mu"])
         self.canvas.configure(bg=P["bg"])
         self.sep.configure(bg=P["line"])
-        self.log.configure(bg=P["bg"], fg=P["tx"], insertbackground=P["bg"], selectbackground=P["sel"],
-                           selectforeground=P["hi"])
+        self.log.configure(bg=P["bg"], fg=P["tx"], insertbackground=P["bg"], selectbackground=mix(P["blue"], P["bg"], 0.65),
+                           selectforeground=P["hi"], inactiveselectbackground=mix(P["blue"], P["bg"], 0.75))
         self.chip.configure(bg=P["redbg"], fg=P["red"], highlightbackground=P["red"])
         self.zoombar.configure(bg=P["bar"], highlightbackground=P["line"])
         for lab in self.zoom_btns:
@@ -1707,6 +1745,11 @@ class AgentNetworkWindow:
         if sig == self._log_sig:
             return
         switched = (self._log_sig or (None,))[0] != sig[0]
+        try:
+            if not switched and log.tag_ranges("sel"):
+                return  # you are selecting text: new lines wait until the selection is gone
+        except tk.TclError:
+            pass
         self._log_sig = sig
         at_end = log.yview()[1] > 0.98
         log.configure(state="normal")
@@ -1727,6 +1770,9 @@ class AgentNetworkWindow:
         if not rows:
             log.insert("end", "(nothing logged yet)", "mu")
         width = max((len(a["name"]) for a in ags), default=4)
+        # long and multi-line entries (a full reply) wrap under their text, not under the time stamp
+        hang = 9 + ((width + 3) if self.sel < 0 else 0)
+        log.tag_configure("hang", lmargin2=self.f_main.measure(" " * (hang + 2)))
         for t, i, kind, text in rows:
             log.insert("end", time.strftime("%H:%M:%S ", time.localtime(t)) if t else " " * 9, "mu")
             if self.sel < 0:
@@ -1735,7 +1781,7 @@ class AgentNetworkWindow:
             mark = KIND_MARK.get(kind, "")
             if mark:
                 log.insert("end", mark + " ", "mu" if kind in ("tool", "say") else kind)
-            log.insert("end", text + "\n", kind if kind in ("think", "you", "error", "spawn") else "")
+            log.insert("end", text + "\n", (kind if kind in ("think", "you", "error", "spawn") else "say", "hang"))
         log.configure(state="disabled")
         if at_end or switched:
             log.see("end")

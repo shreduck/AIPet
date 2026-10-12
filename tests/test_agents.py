@@ -229,6 +229,14 @@ class WindowOptionTests(unittest.TestCase):
         self.assertGreater(win.needed_size(8, 1, 18, 16)[0], win.needed_size(2, 1, 18, 16)[0])  # two columns
 
 
+class FullReplyTests(unittest.TestCase):
+    def test_log_keeps_the_whole_reply_and_the_label_its_last_line(self):
+        info = agents.parse_claude([claude_assistant(time.time(), [
+            {"type": "text", "text": "Summary: 3 callers.\n\nDetails below.\nTo retry, ask again."}])])
+        self.assertEqual(info["lines"][0][2], "Summary: 3 callers.\n\nDetails below.\nTo retry, ask again.")
+        self.assertEqual(agents.full("x" * 7000)[-1], "…")
+
+
 class HelperTests(unittest.TestCase):
     def test_model_names_and_tokens(self):
         self.assertEqual(agents.model_name("claude-haiku-4-5-20251001"), "haiku-4.5")
