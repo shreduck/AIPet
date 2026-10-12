@@ -315,7 +315,8 @@ A live map of one session: the main agent and every subagent it started, Claude 
   handed back its result. Next to each subagent: its latest thought or words.
 - **Logs** below the graph, or above, left or right of it (settings: *logs position*). Every other entry is shaded,
   and each agent's final reply (its result) is tinted green with a green mark before it. Drag the line between graph and logs to
-  resize them (up to 80% of the window); select text and Ctrl+C to
+  resize them (up to 80% of the window); *tail* (settings, or `[tail ▼]` at the end of the tabs) follows the newest
+  line, and unfolding an entry switches it off so what you opened stays in sight; select text and Ctrl+C to
   copy; what an agent said is there in full, its final reply being its result; long entries show their first line
   with `›`: click to unfold, `‹` to fold, right-click for expand / collapse, copy text and open in a window, a plain
   text window titled after the reply, with a copy button): *[all]* merges every agent's activity into one log (prompts, what each one said, tool calls,
@@ -333,7 +334,8 @@ A live map of one session: the main agent and every subagent it started, Claude 
   *Go to window* (on the card) and *Answer in Codex* (in the agent network) hand the prompt back, so Codex shows its own
   prompt with all its choices, like always allowing that tool. Claude Code shows its own prompt alongside the pet's
   anyway, so there it only jumps to the window.
-- **Settings** drop down from the cogwheel at the top right (it turns while open), kept in `config.json` under
+- **Settings** drop down from the cogwheel at the top right (it turns while open), in three parts (window, graph,
+  logs), kept in `config.json` under
   `agent_window` and applied to every open agent network window: `[on ]` / `[off]` always on top, title bar (off: drag
   the top bar to move; on Windows the window keeps its frame and taskbar button and resizes from its edges as usual,
   plus a wider frame to grab and the `◢` corner, as on Linux) and compact (like the pet's compact mode: one

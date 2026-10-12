@@ -30,7 +30,7 @@ SCALE_MIN, SCALE_MAX, SCALE_STEP = 50, 150, 5  # the window's text and drawing s
 OPTIONS_KEY = "agent_window"  # config.json
 DEFAULT_OPTIONS = {"on_top": False, "alpha": 100, "bg_alpha": 100, "node_alpha": 100, "frameless": False,
                    "separate": False, "tabbed": True, "tidy": False, "scale": 100, "log_lines": 6,
-                   "log_cols": 60, "log_side": "bottom"}
+                   "log_cols": 60, "log_side": "bottom", "log_tail": True}
 LOG_SIDES = ("bottom", "right", "top", "left")
 HINT = "tab/←→ agent · a all · pgup/pgdn session · space prompt · ctrl+wheel/+/- zoom · 0 reset · drag pan · esc close"
 BG_OPACITY = IS_MAC or sys.platform == "win32"  # a see-through background needs Windows' or macOS' window support
@@ -584,9 +584,14 @@ class AgentNetworkWindow:
         if name == "close":
             self.close()
             return "break"
-        toggles = {"frame": "frameless", "pin": "on_top", "each": "separate", "tabs": "tabbed", "tidy": "tidy"}
+        toggles = {"frame": "frameless", "pin": "on_top", "each": "separate", "tabs": "tabbed", "tidy": "tidy",
+                   "tail": "log_tail"}
         if name in toggles:
             o[toggles[name]] = not o[toggles[name]]
+            if name == "tail":
+                self._update_tailbtn()
+                if o["log_tail"]:
+                    self.log.see("end")
         elif name == "alpha":
             o["alpha"] = _snap(o["alpha"] + d * ALPHA_STEP, ALPHA_MIN, 100, ALPHA_STEP)
         elif name == "logs":
@@ -1175,30 +1180,21 @@ class AgentNetworkWindow:
             wdg.destroy()
         m.configure(bg=P["bar"], highlightbackground=P["line"], highlightcolor=P["line"])
         pad = self.px(8)
-        tk.Label(m, text="── settings ──", font=self.f_small, bg=P["bar"], fg=P["mu"], anchor="w").pack(
-            fill="x", padx=pad, pady=(pad // 2, 0))
         o = self.opts
-        rows = [("pin", "on_top", "always on top", False)]
-        if not IS_MAC:
-            rows.append(("frame", "frameless", "title bar", True))
-        rows.append(("each", "separate", "compact (one window for every session)", True))
-        if not o["separate"] and not self.pinned:
-            rows.append(("tabs", "tabbed", "  tabbed (one session at a time)", False))
-            if not o["tabbed"]:
-                rows.append(("tidy", "tidy", "    tidy (each session a titled group)", False))
-        for name, opt, text, inverted in rows:
+        width = self.px(150)
+        line = self.f_small.metrics("linespace")
+        self._sliders = []
+
+        def section(title, first=False):
+            tk.Label(m, text=f"── {title} " + "─" * 24, font=self.f_small, bg=P["bar"], fg=P["mu"], anchor="w").pack(
+                fill="x", padx=pad, pady=(pad // 2 if first else self.px(6), 0))
+
+        def toggle(name, opt, text, inverted=False):
             on = bool(o[opt]) != inverted
             lab = tk.Label(m, text=f"{'[on ]' if on else '[off]'} {text}", font=self.f_main, bg=P["bar"],
                            fg=P["blue"] if on else P["tx"], anchor="w", cursor="hand2")
             lab.pack(fill="x", padx=pad)
             lab.bind("<Button-1>", lambda e, n=name: (self.tool(n), "break")[1])
-        side = tk.Label(m, text=f"[{o['log_side']:^6}] logs position (click to move)", font=self.f_main, bg=P["bar"],
-                        fg=P["tx"], anchor="w", cursor="hand2")
-        side.pack(fill="x", padx=pad)
-        side.bind("<Button-1>", lambda e: (self.tool("logs"), "break")[1])
-        width = self.px(150)
-        line = self.f_small.metrics("linespace")
-        self._sliders = []
 
         def slider(text, lo, hi, step, value, on_change, live=True):
             row = tk.Frame(m, bg=P["bar"])
@@ -1209,14 +1205,33 @@ class AgentNetworkWindow:
             sl.size(width, line + self.px(4))
             self._sliders.append(sl)
             return sl
+
+        section("window", first=True)
+        toggle("pin", "on_top", "always on top")
+        if not IS_MAC:
+            toggle("frame", "frameless", "title bar", inverted=True)
+        toggle("each", "separate", "compact (one window for every session)", inverted=True)
+        if not o["separate"] and not self.pinned:
+            toggle("tabs", "tabbed", "  tabbed (one session at a time)")
         slider("opacity", ALPHA_MIN, 100, ALPHA_STEP, o["alpha"], lambda v: self._slide("alpha", v))
+        self.scale_slider = slider("scale", SCALE_MIN, SCALE_MAX, SCALE_STEP, o["scale"],
+                                   lambda v: self.set_scale(v / 100), live=False)
+
+        section("graph")
+        if not o["separate"] and not self.pinned and not o["tabbed"]:
+            toggle("tidy", "tidy", "tidy (each session a titled group)")
         if BG_OPACITY:
             slider("backgrnd", ALPHA_MIN, 100, OPACITY_STEP, o["bg_alpha"], lambda v: self._slide("bg_alpha", v))
         slider("nodes", ALPHA_MIN, 100, OPACITY_STEP, o["node_alpha"], lambda v: self._slide("node_alpha", v))
-        self.scale_slider = slider("scale", SCALE_MIN, SCALE_MAX, SCALE_STEP, o["scale"],
-                                   lambda v: self.set_scale(v / 100), live=False)
+
+        section("logs")
+        side = tk.Label(m, text=f"[{o['log_side']:^6}] position (click to move)", font=self.f_main, bg=P["bar"],
+                        fg=P["tx"], anchor="w", cursor="hand2")
+        side.pack(fill="x", padx=pad)
+        side.bind("<Button-1>", lambda e: (self.tool("logs"), "break")[1])
+        toggle("tail", "log_tail", "tail (follow the newest line)")
         tk.Label(m, text="esc fold · click outside", font=self.f_small, bg=P["bar"], fg=P["mu"], anchor="w").pack(
-            fill="x", padx=pad, pady=(self.px(3), pad // 2))
+            fill="x", padx=pad, pady=(self.px(6), pad // 2))
         self._place_menu()
 
     def _slide(self, key, value):
@@ -1989,6 +2004,10 @@ class AgentNetworkWindow:
         self._tabs_sig = sig
         for wdg in self.tabs.winfo_children():
             wdg.destroy()
+        self.tailbtn = tk.Label(self.tabs, font=self.f_small, cursor="hand2", padx=self.px(3))
+        self.tailbtn.pack(side="right")
+        self.tailbtn.bind("<Button-1>", lambda e: self.tool("tail"))
+        self._update_tailbtn()
         for k, name in enumerate(names):
             i = k - 1
             on = i == self.sel
@@ -1997,6 +2016,14 @@ class AgentNetworkWindow:
                            bg=col if on else P["bg"], fg=P["bg"] if on else col, padx=self.px(3), pady=self.px(1))
             lab.pack(side="left", padx=(0, self.px(3)), pady=self.px(2))
             lab.bind("<Button-1>", lambda e, i=i: self.select(i))
+
+    def _update_tailbtn(self):
+        P = self.P
+        try:
+            on = self.opts.get("log_tail", True)
+            self.tailbtn.configure(text="[tail ▼]" if on else "[tail —]", bg=P["bg"], fg=P["blue"] if on else P["mu"])
+        except (tk.TclError, AttributeError):
+            pass
 
     def _draw_log(self, keep=None):
         """keep: the scroll position to stay at (folding an entry), instead of following the newest line."""
@@ -2017,7 +2044,7 @@ class AgentNetworkWindow:
         except tk.TclError:
             pass
         self._log_sig = sig
-        at_end = log.yview()[1] > 0.98
+        top = log.yview()[0]
         log.configure(state="normal")
         log.delete("1.0", "end")
         for i in range(len(ags)):
@@ -2084,8 +2111,10 @@ class AgentNetworkWindow:
         log.configure(state="disabled")
         if keep is not None:
             log.yview_moveto(keep)
-        elif at_end or switched:
-            log.see("end")
+        elif self.opts.get("log_tail", True) or switched:
+            log.see("end")  # tail: follow the newest line
+        else:
+            log.yview_moveto(top)  # stays where you are reading
 
     # ---- log entries: fold / unfold, copy, open in a window
     def _entry_click(self, n):
@@ -2108,8 +2137,18 @@ class AgentNetworkWindow:
             self._expanded.discard(key)
         else:
             self._expanded.add(key)
+            if self.opts.get("log_tail", True):  # unfolding to read: stop following the tail
+                self.opts["log_tail"] = False
+                self._save("tail")
+                self._update_tailbtn()
+                if self.menu_open:
+                    self._build_menu()
         self._log_sig = None
         self._draw_log(keep=self.log.yview()[0])
+        try:
+            self.log.see(f"entry{n}.first")  # its first line stays in sight (unfolding near the end scrolls)
+        except tk.TclError:
+            pass
 
     def _entry_menu(self, e, n):
         if n >= len(self._entries):
