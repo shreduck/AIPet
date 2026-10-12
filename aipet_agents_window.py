@@ -2041,11 +2041,9 @@ class AgentNetworkWindow:
         log.tag_configure("hang", lmargin2=self.f_main.measure(" " * (hang + 2)))
         log.tag_configure("fold", foreground=P["blue"])
         log.tag_configure("odd", background=mix(P["bar"], P["bg"], 0.35))  # every other entry shaded
-        try:  # an agent's final reply (its result): a green stripe down its left side, on a green tint
-            log.tag_configure("final", background=mix(P["grn"], P["bg"], 0.9), lmargincolor=P["grn"],
-                              lmargin1=self.px(4), lmargin2=self.f_main.measure(" " * (hang + 2)) + self.px(4))
-        except tk.TclError:  # Tk before 8.6.6: no margin colour, the tint alone
-            log.tag_configure("final", background=mix(P["grn"], P["bg"], 0.88))
+        # an agent's final reply (its result): a light green tint, and a green mark before its time stamp
+        log.tag_configure("final", background=mix(P["grn"], P["bg"], 0.9))
+        log.tag_configure("finalmark", foreground=P["grn"])
         finals = set()
         for i, a in enumerate(ags):
             if a["state"] not in ("working", "needs_input", "waiting"):
@@ -2062,6 +2060,8 @@ class AgentNetworkWindow:
                                                                     else first)
             self._entries.append((key, text, ags[i]["name"], big))
             start = log.index("end-1c")
+            if n in finals:
+                log.insert("end", "▍", "finalmark")
             log.insert("end", time.strftime("%H:%M:%S ", time.localtime(t)) if t else " " * 9, "mu")
             if self.sel < 0:
                 log.insert("end", ags[i]["name"].ljust(width)[:width], f"a{i}")

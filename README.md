@@ -314,7 +314,7 @@ A live map of one session: the main agent and every subagent it started, Claude 
   flowing out while a subagent works, amber while the main agent waits on it, green with a dot flowing back once it
   handed back its result. Next to each subagent: its latest thought or words.
 - **Logs** below the graph, or above, left or right of it (settings: *logs position*). Every other entry is shaded,
-  and each agent's final reply (its result) has a green stripe down its side. Drag the line between graph and logs to
+  and each agent's final reply (its result) is tinted green with a green mark before it. Drag the line between graph and logs to
   resize them (up to 80% of the window); select text and Ctrl+C to
   copy; what an agent said is there in full, its final reply being its result; long entries show their first line
   with `›`: click to unfold, `‹` to fold, right-click for expand / collapse, copy text and open in a window, a plain
