@@ -273,6 +273,12 @@ class UsageTests(unittest.TestCase):
             script = Path(folder) / "aipet_hook.py"
             shutil.copyfile(aipet_hook.__file__, script)
             shutil.copyfile(Path(aipet_hook.__file__).with_name("aipet_codex.py"), Path(folder) / "aipet_codex.py")
+            # Required source components travel with the hook; usage modules remain optional.
+            components = Path(aipet_hook.__file__).parent / "aipetlib"
+            if components.is_dir():
+                (Path(folder) / "aipetlib").mkdir()
+                for name in ("__init__.py", "hook_events.py"):
+                    shutil.copyfile(components / name, Path(folder) / "aipetlib" / name)
             data = {"hook_event_name": "UserPromptSubmit", "session_id": "isolated", "cwd": folder, "prompt": "test"}
             result = subprocess.run([sys.executable, str(script)], input=json.dumps(data), text=True, capture_output=True,
                                     cwd=folder, env={**os.environ, "PYTHONPATH": "", "AIPET_DIR": folder}, timeout=10)

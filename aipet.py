@@ -17,6 +17,7 @@ Probe: python  aipet.py --probe-workbench   (prints what Workbench returns)
 
 Standard library only (tkinter, urllib, winsound).
 """
+import aipetlib.vscode as vscode
 import aipetlib.ui.appearance_controls as appearance_controls
 import aipetlib.ui.tooltips as tooltips
 import copy
@@ -46,6 +47,7 @@ import aipetlib.windows as windows
 import aipetlib.geometry as geometry
 import aipetlib.permissions as permissions
 import aipetlib.sessions as sessions
+from aipetlib.records import STATE_ORDER, first
 
 # Every AIPet window uses a console font, like the pet's own name tags and tooltips
 UI_FONT = "Consolas" if os.name == "nt" else ("Menlo" if sys.platform == "darwin" else "DejaVu Sans Mono")
@@ -112,7 +114,6 @@ def badge_dot(text):
 BADGE_NAMES = {"CC": "Claude", "CW": "Cowork", "CX": "Codex", "WSL": "WSL", "VS": "VS", "WB": "Workbench"}
 SOURCE_NAMES = {"CC": "Claude Code", "CW": "Cowork", "CX": "Codex", "WB": "Workbench"}
 BADGE_COLORS = {"CC": "#6b7280", "CW": "#c2410c", "CX": "#0f8a6a", "WSL": "#7c3aed", "VS": "#007acc", "WB": "#0f766e"}
-STATE_ORDER = ("needs_input", "error", "done", "working")
 PET_W, PET_H = 92, 122  # the drawing area of one pet, before the badge column and top trim below
 BADGE_GUTTER = 0  # extra width on the pet's left (badges now sit on the name tag's top edge, so none is needed)
 TAG_H = 19  # name tag height (one unit taller than it was, for the name + conversation title lines)
@@ -629,14 +630,6 @@ def save_setting(key, value):
     return ConfigStore(CONFIG_PATH, HOME_DIR, DEFAULT_CONFIG).save_setting(key, value, paused=SAVE_PAUSED["v"])
 
 
-def first(d, keys):
-    for k in keys:
-        v = d.get(k)
-        if v not in (None, ""):
-            return v
-    return None
-
-
 def ago(ts):
     s = max(0, int(time.time() - ts))
     if s < 60:
@@ -712,228 +705,7 @@ def read_claude_code_sessions(cfg):
 
 
 # --------------------------------------------------------------------------- Workbench source
-class McpHttpClient:
-    """Minimal MCP streamable-HTTP client: initialize + tools/call."""
-
-    def __init__(self, wcfg):
-        self.cfg = wcfg
-        self.session_id = None
-        self.protocol = None
-        self._next_id = 0
-
-    def _headers(self):
-        h = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
-        if self.session_id:
-            h["Mcp-Session-Id"] = self.session_id
-        if self.protocol:
-            h["MCP-Protocol-Version"] = self.protocol
-        key = os.environ.get(self.cfg.get("api_key_env") or "", "")
-        if key:  # key is read from the environment, never stored in config
-            scheme = self.cfg.get("auth_scheme") or ""
-            h[self.cfg.get("auth_header") or "Authorization"] = f"{scheme} {key}".strip()
-        return h
-
-    def _post(self, method, params=None, notify=False):
-        payload = {"jsonrpc": "2.0", "method": method}
-        if params is not None:
-            payload["params"] = params
-        if not notify:
-            self._next_id += 1
-            payload["id"] = self._next_id
-        req = urllib.request.Request(self.cfg["mcp_url"], data=json.dumps(payload).encode("utf-8"),
-                                     headers=self._headers(), method="POST")
-        with urllib.request.urlopen(req, timeout=self.cfg.get("timeout_seconds", 20)) as resp:
-            sid = resp.headers.get("Mcp-Session-Id")
-            if sid:
-                self.session_id = sid
-            if notify:
-                return None
-            ctype = resp.headers.get("Content-Type", "")
-            raw = resp.read().decode("utf-8", "replace")
-        msg = self._parse(raw, ctype, payload["id"])
-        if "error" in msg:
-            raise RuntimeError(f"MCP error: {msg['error']}")
-        return msg.get("result", {})
-
-    @staticmethod
-    def _parse(raw, ctype, want_id):
-        if "text/event-stream" in ctype:
-            for block in raw.replace("\r\n", "\n").split("\n\n"):
-                data = "\n".join(l[5:].lstrip() for l in block.split("\n") if l.startswith("data:"))
-                if not data:
-                    continue
-                try:
-                    msg = json.loads(data)
-                except ValueError:
-                    continue
-                if isinstance(msg, dict) and msg.get("id") == want_id:
-                    return msg
-            raise RuntimeError("no matching response in event stream")
-        return json.loads(raw)
-
-    def _ensure_session(self):
-        if self.protocol:
-            return
-        res = self._post("initialize", {
-            "protocolVersion": "2025-06-18",
-            "capabilities": {},
-            "clientInfo": {"name": "aipet", "version": "1.0"},
-        })
-        self.protocol = res.get("protocolVersion", "2025-06-18")
-        try:
-            self._post("notifications/initialized", notify=True)
-        except Exception:
-            pass
-
-    def call_tool(self, name, args):
-        self._ensure_session()
-        try:
-            return self._post("tools/call", {"name": name, "arguments": args})
-        except urllib.error.HTTPError as e:
-            if e.code in (400, 404):  # session expired -> re-initialize once
-                self.session_id = self.protocol = None
-                self._ensure_session()
-                return self._post("tools/call", {"name": name, "arguments": args})
-            raise
-
-
-def tool_result_to_obj(result):
-    texts = [c.get("text", "") for c in result.get("content", []) if c.get("type") == "text"]
-    joined = "\n".join(texts)
-    if result.get("isError"):
-        raise RuntimeError("tool error: " + joined[:200])
-    if isinstance(result.get("structuredContent"), (dict, list)):
-        return result["structuredContent"]
-    try:
-        return json.loads(joined)
-    except ValueError:
-        return {"text": joined}
-
-
-ID_KEYS = ("chatId", "id", "uuid")
-
-
-def find_chat_list(obj, depth=0):
-    """Find the first list of chat-like dicts anywhere in the response."""
-    if depth > 5:
-        return None
-    if isinstance(obj, list):
-        if not obj:
-            return []
-        if all(isinstance(x, dict) for x in obj) and any(k in obj[0] for k in ID_KEYS):
-            return obj
-        for x in obj:
-            r = find_chat_list(x, depth + 1)
-            if r:
-                return r
-        return None
-    if isinstance(obj, dict):
-        for k in ("items", "chats", "content", "results", "data", "rows"):
-            if k in obj:
-                r = find_chat_list(obj[k], depth + 1)
-                if r is not None:
-                    return r
-        for v in obj.values():
-            if isinstance(v, (list, dict)):
-                r = find_chat_list(v, depth + 1)
-                if r:
-                    return r
-    return None
-
-
-def normalize_state(raw, smap):
-    if isinstance(raw, dict):
-        raw = raw.get("state") or raw.get("status") or ""
-    s = str(raw or "").strip().lower().replace("-", "_").replace(" ", "_")
-    if not s:
-        return "idle"
-    for st in STATE_ORDER:
-        if s in smap.get(st, []):
-            return st
-    for st in STATE_ORDER:
-        if any(term in s for term in smap.get(st, [])):
-            return st
-    return "idle"
-
-
-def normalize_chat(c, wcfg):
-    cid = first(c, ID_KEYS)
-    raw_state = first(c, wcfg["state_fields"])
-    state = normalize_state(raw_state, wcfg["state_map"])
-    if c.get("needsInput") or c.get("awaitingInput") or c.get("pendingApproval"):
-        state = "needs_input"
-    return {
-        "key": f"wb:{cid}",
-        "source": "WB",
-        "badges": ["Workbench"],
-        "where": "Workbench",
-        "title": str(first(c, ("title", "name", "label", "summary")) or f"chat {cid}"),
-        "state": state,
-        "message": str(first(c, ("statusMessage", "lastMessagePreview", "preview", "message")) or ""),
-        "detail": f"chat {cid} · raw state: {raw_state}",
-        "changed": 0,
-    }
-
-
-class WorkbenchPoller(threading.Thread):
-    def __init__(self, cfg):
-        super().__init__(daemon=True)
-        self.wcfg = cfg["workbench"]
-        self.client = McpHttpClient(self.wcfg)
-        self.lock = threading.Lock()
-        self._items = []
-        self.seen = {}
-        self.dismissed = set()
-        self.first = True
-        self.status = "starting…"
-
-    def fetch(self):
-        res = self.client.call_tool(self.wcfg["tool_name"], self.wcfg.get("tool_arguments") or {})
-        obj = tool_result_to_obj(res)
-        chats = find_chat_list(obj)
-        if chats is None:
-            raise RuntimeError("no chat list in response (run --probe-workbench)")
-        return [normalize_chat(c, self.wcfg) for c in chats], obj
-
-    def run(self):
-        while True:
-            try:
-                chats, _ = self.fetch()
-                self._update(chats)
-                self.status = f"ok · {len(chats)} chats"
-            except Exception as e:
-                self.status = f"error: {e}"[:110]
-            time.sleep(max(2, self.wcfg.get("poll_seconds", 10)))
-
-    def _update(self, chats):
-        now = time.time()
-        out = []
-        with self.lock:
-            for c in chats:
-                key = c["key"]
-                prev = self.seen.get(key)
-                if prev is None:
-                    # Chats already finished when the pet started stay hidden.
-                    self.seen[key] = {"state": c["state"], "changed": 0 if self.first else now}
-                elif prev["state"] != c["state"]:
-                    prev["state"], prev["changed"] = c["state"], now
-                    self.dismissed.discard(key)
-                c["changed"] = self.seen[key]["changed"]
-                if key in self.dismissed:
-                    continue
-                if c["state"] in ("working", "needs_input", "error") or (c["state"] == "done" and c["changed"]):
-                    out.append(c)
-            self.first = False
-            self._items = out[: self.wcfg.get("max_chats", 8)]
-
-    def items(self):
-        with self.lock:
-            return [dict(i) for i in self._items]
-
-    def dismiss(self, key):
-        with self.lock:
-            self.dismissed.add(key)
-            self._items = [i for i in self._items if i["key"] != key]
+from aipetlib.workbench import ID_KEYS, McpHttpClient, WorkbenchPoller, tool_result_to_obj, find_chat_list, normalize_state, normalize_chat
 
 
 # --------------------------------------------------------------------------- the pet
@@ -1197,170 +969,35 @@ VSCODE_FLAVOURS = ("Code", "Code - Insiders", "VSCodium", "Cursor")
 
 
 def vscode_user_dirs():
-    if os.name == "nt":
-        base = os.environ.get("APPDATA", "")
-    elif IS_MAC:
-        base = os.path.expanduser("~/Library/Application Support")
-    else:
-        base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
-    return [os.path.join(base, f) for f in VSCODE_FLAVOURS if base and os.path.isdir(os.path.join(base, f))]
+    return vscode.vscode_user_dirs(sys.modules[__name__])
 
 
 def _uri_parts(uri):
-    """file:///c%3A/x -> ("", "c:/x"); vscode-remote://wsl%2Bubuntu/home/x -> ("wsl+ubuntu", "/home/x")."""
-    import urllib.parse
-    u = urllib.parse.urlparse(uri)
-    path = urllib.parse.unquote(u.path)
-    if u.scheme == "file":
-        if os.name == "nt" and len(path) > 2 and path[0] == "/" and path[2] == ":":
-            path = path[1:]
-        return "", path
-    if u.scheme == "vscode-remote":
-        return urllib.parse.unquote(u.netloc).lower(), path
-    return None, None
+    return vscode._uri_parts(sys.modules[__name__], uri)
 
 
 def _backup_uris(b):
-    """(uri, is_workspace_file) from VS Code's backup-workspaces record, in any of its formats."""
-    if not isinstance(b, dict):
-        return []
-    uris = [(x.get("folderUri"), False) for x in b.get("folders") or [] if isinstance(x, dict)]
-    uris += [(x, False) for x in b.get("folderURIWorkspaces") or [] if isinstance(x, str)]  # older format
-    for key in ("workspaces", "rootURIWorkspaces"):  # current format / older one
-        for x in b.get(key) or []:
-            if isinstance(x, dict):
-                ws = x.get("workspace") if isinstance(x.get("workspace"), dict) else x
-                uris.append((ws.get("configURIPath") or ws.get("configPath"), True))
-    return uris
+    return vscode._backup_uris(sys.modules[__name__], b)
 
 
 def vscode_open_folders(user_dirs=None, report=None):
-    """Folders and .code-workspace files open in VS Code windows: [(authority, path, is_workspace_file)].
-
-    Sources, freshest first: globalStorage/storage.json "backupWorkspaces" (current VS Code keeps the open windows
-    there, updated as they open and close), Backups/workspaces.json (older VS Code), then the window state saved in
-    storage.json (only written when VS Code quits or a window closes, so it can be stale: macOS keeps VS Code running
-    with its windows closed). report, if a list, receives one line per source (counts only, for diagnostics)."""
-    found = []
-    for d in user_dirs if user_dirs is not None else vscode_user_dirs():
-        uris, storage = [], {}
-        try:
-            with open(os.path.join(d, "User", "globalStorage", "storage.json"), encoding="utf-8") as f:
-                storage = json.load(f) or {}
-        except (OSError, ValueError):
-            pass
-        live = _backup_uris(storage.get("backupWorkspaces"))
-        legacy_file = []
-        try:
-            with open(os.path.join(d, "Backups", "workspaces.json"), encoding="utf-8") as f:
-                legacy_file = _backup_uris(json.load(f))
-        except (OSError, ValueError):
-            pass
-        uris = live + legacy_file
-        saved = []
-        try:
-            ws = storage.get("windowsState") or {}
-            for w in [ws.get("lastActiveWindow") or {}] + list(ws.get("openedWindows") or []):
-                if not isinstance(w, dict):
-                    continue
-                if w.get("folder"):
-                    saved.append((w["folder"], False))
-                elif isinstance(w.get("workspace"), dict) and w["workspace"].get("configPath"):
-                    saved.append((w["workspace"]["configPath"], True))
-        except AttributeError:
-            pass
-        if not uris:
-            uris = saved
-        if isinstance(report, list):
-            report.append(f"{os.path.basename(d)}: backupWorkspaces={len(live)} workspaces.json={len(legacy_file)} "
-                          f"windowsState={len(saved)}")
-        for uri, is_ws in uris:
-            if isinstance(uri, str):
-                auth, path = _uri_parts(uri)
-                if path:
-                    found.append((auth, path, is_ws))
-    return found
+    return vscode.vscode_open_folders(sys.modules[__name__], user_dirs, report)
 
 
 def _workspace_roots(ws_path):
-    """Folder paths listed in a local .code-workspace file (relative ones resolved against the file)."""
-    try:
-        with open(ws_path, encoding="utf-8") as f:
-            text = f.read()
-        import re
-        text = re.sub(r'("(?:\\.|[^"\\])*")|//[^\n]*|/\*.*?\*/', lambda m: m.group(1) or "", text,
-                      flags=re.S)  # .code-workspace allows // and /* */ comments (kept inside strings)
-        text = re.sub(r",(\s*[}\]])", r"\1", text)  # ... and trailing commas
-        data = json.loads(text)
-    except (OSError, ValueError):
-        return []
-    roots = []
-    for fo in data.get("folders") or []:
-        p = fo.get("path") if isinstance(fo, dict) else None
-        if p:
-            roots.append(os.path.normpath(os.path.join(os.path.dirname(ws_path), p)))
-    return roots
+    return vscode._workspace_roots(sys.modules[__name__], ws_path)
 
 
 def vscode_target(cwd, env="", distro="", user_dirs=None):
-    """What to pass to `code` so it raises the window that already holds cwd: the deepest open folder that is cwd or
-    one of its parents (so a session in a subfolder of an open workspace doesn't open a new window), or the
-    .code-workspace file whose folders contain it. Falls back to cwd itself. Returns (args, path)."""
-    wsl = env == "wsl"
-    want_auth = f"wsl+{(distro or 'ubuntu').lower()}" if wsl else ""
-    if wsl:
-        norm = lambda p: p.rstrip("/") or "/"  # noqa: E731
-    elif IS_MAC or sys.platform == "darwin":
-        # macOS: the default file system ignores case, and folders are often reached through symlinks (/var ->
-        # /private/var, a renamed or linked ~/Code); compare resolved, case-folded paths
-        norm = lambda p: os.path.normpath(os.path.realpath(p)).casefold()  # noqa: E731
-    else:
-        norm = lambda p: os.path.normcase(os.path.normpath(p))  # noqa: E731
-    target = norm(cwd)
-
-    def inside(root):
-        r = norm(root)
-        sep = "/" if wsl else os.sep
-        return target == r or target.startswith(r.rstrip(sep) + sep)
-    best = None  # (depth, path, is_workspace_file)
-    for auth, path, is_ws in vscode_open_folders(user_dirs):
-        if (auth or "") != want_auth:
-            continue
-        if is_ws:
-            if wsl:
-                continue
-            roots = [r for r in _workspace_roots(path) if inside(r)]
-            if roots:
-                depth = max(len(norm(r)) for r in roots)
-                if not best or depth > best[0]:
-                    best = (depth, path, True)
-        elif inside(path):
-            if not best or len(norm(path)) > best[0]:
-                best = (len(norm(path)), path, False)
-    path = best[1] if best else cwd
-    return (["--remote", f"wsl+{distro or 'Ubuntu'}", path] if wsl else [path]), path
+    return vscode.vscode_target(sys.modules[__name__], cwd, env, distro, user_dirs)
 
 
 def vscode_conversation_uri(d, code_path=""):
-    """vscode://anthropic.claude-code/open?session=<id>: the Claude Code extension (v2.1.72+) opens that conversation's
-    tab. Only for sessions that run in the extension (entry point claude-vscode), not the CLI in VS Code's terminal,
-    where it would open a second copy of the conversation in the extension."""
-    sid = d.get("session_id") or ""
-    if not sid or sid == "unknown" or "vscode" not in (d.get("entry") or "").lower():
-        return None
-    import urllib.parse
-    scheme = "vscode-insiders" if "insiders" in (code_path or "").lower() else "vscode"
-    return f"{scheme}://anthropic.claude-code/open?session={urllib.parse.quote(sid, safe='')}"
+    return vscode.vscode_conversation_uri(sys.modules[__name__], d, code_path)
 
 
 def open_uri(uri):
-    try:
-        if os.name == "nt":
-            os.startfile(uri)
-        else:
-            subprocess.Popen(["open" if IS_MAC else "xdg-open", uri])
-    except (AttributeError, OSError) as e:
-        log_error(f"couldn't open {uri.split('?')[0]}: {e!r}")
+    return vscode.open_uri(sys.modules[__name__], uri)
 
 
 class ClickThrough(ClickThroughController):

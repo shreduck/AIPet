@@ -1,11 +1,20 @@
 import tempfile
 import unittest
 import zipfile
+import shutil
 from pathlib import Path
 from unittest.mock import patch
 
 import hooks_installer as hi
 from tools.share_mac_runtime import share_runtime
+
+
+def add_source_hook_components(frameworks):
+    components = Path(hi.__file__).parent / 'aipetlib'
+    if components.is_dir():
+        (frameworks / 'aipetlib').mkdir(exist_ok=True)
+        for name in ('__init__.py', 'hook_events.py'):
+            shutil.copyfile(components / name, frameworks / 'aipetlib' / name)
 
 
 class MacRuntimeSharingTests(unittest.TestCase):
@@ -55,6 +64,7 @@ class MacRuntimeSharingTests(unittest.TestCase):
                 for name in ('aipet_hook.py', 'aipet_codex.py', 'aipet_usage.py', 'aipet_claude_usage.py'):
                     (frameworks / name).write_text('# test')
                 target = root / 'deployed'
+                add_source_hook_components(frameworks)
                 with patch.object(hi, 'resource_path', lambda *parts: str(frameworks.joinpath(*parts))), \
                         patch.object(hi, 'INSTALL_DIR', str(target)), patch.object(hi, 'PET_DIR', str(root / 'config')):
                     hi.deploy_files()
@@ -100,6 +110,7 @@ class MacRuntimeSharingTests(unittest.TestCase):
             for name in ('aipet_hook.py', 'aipet_codex.py', 'aipet_usage.py', 'aipet_claude_usage.py'):
                 (frameworks / name).write_text('# test')
             target = root / 'deployed'
+            add_source_hook_components(frameworks)
             with patch.object(hi, 'resource_path', lambda *parts: str(frameworks.joinpath(*parts))), \
                     patch.object(hi, 'INSTALL_DIR', str(target)), patch.object(hi, 'PET_DIR', str(root / 'config')):
                 hi.deploy_files()

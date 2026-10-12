@@ -384,6 +384,9 @@ def deploy_files(only_if_deployed=False):
     os.makedirs(INSTALL_DIR, exist_ok=True)
     os.makedirs(os.path.join(PET_DIR, "sessions"), exist_ok=True)
     _sync_file(resource_path("aipet_hook.py"), os.path.join(INSTALL_DIR, "aipet_hook.py"))
+    # The source hook fallback needs its toolkit-free event component too.
+    for name in ("__init__.py", "hook_events.py"):
+        _sync_file(resource_path("aipetlib", name), os.path.join(INSTALL_DIR, "aipetlib", name))
     _sync_file(resource_path("aipet_codex.py"), os.path.join(INSTALL_DIR, "aipet_codex.py"))
     _sync_file(resource_path("aipet_usage.py"), os.path.join(INSTALL_DIR, "aipet_usage.py"))
     _sync_file(resource_path("aipet_claude_usage.py"), os.path.join(INSTALL_DIR, "aipet_claude_usage.py"))
