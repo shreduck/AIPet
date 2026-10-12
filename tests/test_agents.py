@@ -181,15 +181,23 @@ class WindowLogicTests(unittest.TestCase):
 
 
 class WindowOptionTests(unittest.TestCase):
-    def test_options_load_snap_and_cycle(self):
+    def test_options_load_and_snap(self):
         import aipet_agents_window as win
-        opts = win.load_options({"agent_window": {"alpha": 73, "node_alpha": 60, "on_top": "yes", "frameless": True}})
-        self.assertEqual((opts["alpha"], opts["node_alpha"], opts["on_top"], opts["frameless"]), (70, 50, False, True))
+        opts = win.load_options({"agent_window": {"alpha": 73, "node_alpha": 60, "on_top": "yes", "frameless": True,
+                                                  "scale": 400, "compact": 1}})
+        self.assertEqual((opts["alpha"], opts["node_alpha"], opts["on_top"], opts["frameless"], opts["scale"],
+                          opts["compact"]), (75, 50, False, True, 150, False))
         self.assertEqual(win.load_options({}), win.DEFAULT_OPTIONS)
-        self.assertEqual(win.next_step(win.ALPHAS, 100, 1), 90)
-        self.assertEqual(win.next_step(win.ALPHAS, 30, 1), 100)  # wraps around
-        self.assertEqual(win.next_step(win.NODE_ALPHAS, 100, -1), 0)
+        self.assertEqual(win.load_options({"agent_window": {"alpha": 5, "scale": 10}})["alpha"], 30)
         self.assertEqual(win.key_color("#fbfaf7"), "#fbfaf6")  # see-through key: one notch off the background
+
+    def test_needed_size_follows_scale_agents_and_compact(self):
+        import aipet_agents_window as win
+        small, big = win.needed_size(2, 0.5, 9, 8), win.needed_size(2, 1.5, 27, 24)
+        self.assertLess(small[0], big[0])
+        self.assertLess(small[1], big[1])
+        self.assertLess(win.needed_size(2, 1, 18, 16, compact=True)[1], win.needed_size(2, 1, 18, 16)[1])
+        self.assertGreater(win.needed_size(8, 1, 18, 16)[0], win.needed_size(2, 1, 18, 16)[0])  # two columns
 
 
 class HelperTests(unittest.TestCase):

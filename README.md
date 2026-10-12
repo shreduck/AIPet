@@ -316,10 +316,13 @@ A live map of one session: the main agent and every subagent it started, Claude 
   *Go to window* (on the card) and *Answer in Codex* (in the agent network) hand the prompt back, so Codex shows its own
   prompt with all its choices, like always allowing that tool. Claude Code shows its own prompt alongside the pet's
   anyway, so there it only jumps to the window.
-- **Window options** (right of the session arrows, kept in `config.json` under `agent_window`): `▣` title bar on /
-  off (without it, drag the top bar to move and the `◢` corner to resize; Windows and Linux), `pin` always on top,
-  `α100%` window opacity, `bg` see-through graph background (Windows and macOS; clicks go through the empty parts),
-  `node100%` node opacity. Click to change, right-click or scroll to go the other way.
+- **Settings** drop down from the cogwheel at the top right (it turns while open), kept in `config.json` under
+  `agent_window`: `[x]` always on top, no title bar (drag the top bar to move, the `◢` corner to resize; Windows and
+  Linux), see-through background (Windows and macOS; clicks go through the empty parts), compact, one window per
+  session, and sliders for opacity (30-100%), node opacity and scale (50-150%). Toggles and sliders apply to every
+  open agent network window.
+- **Size**: the window can't get smaller than what everything needs at 50% scale. Shrinking it below what the current
+  scale needs turns the scale down with it; raising the scale grows the window to fit.
 - **One window per session** (toolbar `each`, or *One agent network window per session* in Live Management): every
   session gets its own window, titled after it and fanned out on screen, instead of one window you switch with
   PgUp / PgDn. Toolbar changes apply to all of them.
