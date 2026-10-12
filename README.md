@@ -330,10 +330,12 @@ A live map of one session: the main agent and every subagent it started, Claude 
   anyway, so there it only jumps to the window.
 - **Settings** drop down from the cogwheel at the top right (it turns while open), kept in `config.json` under
   `agent_window` and applied to every open agent network window: `[on ]` / `[off]` always on top, title bar (off: drag
-  the top bar to move, the edges or the `◢` corner to resize; Windows and Linux) and compact (like the pet's compact mode: one
+  the top bar to move; on Windows the window keeps its frame and taskbar button and resizes from its edges as usual,
+  on Linux from thin edge handles and the `◢` corner) and compact (like the pet's compact mode: one
   window for every session; off: each session gets its own window, titled after it and fanned out) with, in compact,
   tabbed (on: one session at a time, PgUp / PgDn switch; off: every session's graph in its own band, one under the
-  other; click a band to pick the session the logs and prompts follow; there, *tidy* draws each session as a group
+  other, each session's name a title bar on its main node; click a band to pick the session the logs and prompts
+  follow; there, *tidy* draws each session as a group
   with a title bar instead, its name scrolling like the pet's name tags when it doesn't fit). A session that clears
   fades out, then the ones below slide up into its place; sliders for window opacity, background opacity (the graph's background; Windows and macOS) and node
   opacity, 30-100%, and scale, 50-150% (applied when you let go of the mouse, so the window doesn't move under it).
@@ -350,6 +352,7 @@ A live map of one session: the main agent and every subagent it started, Claude 
   back and centres the open windows on the main screen; one window or one per session stays as it was.
 - **Size**: the window can't get smaller than what everything needs at 50% scale. Shrinking it below what the current
   scale needs turns the scale down with it; raising the scale grows the window to fit.
+- **Double-click the top bar** to maximise the window (and again to restore).
 - **Keys**: Tab / → next agent, Shift+Tab / ← previous, A shared log, ↑↓ scroll the log, PgUp / PgDn previous or
   next session, Space open / fold the prompt, Esc fold it or close the window. With the prompt open: 1-9
   pick and send an answer, arrows move between answers, Enter sends the highlighted one.

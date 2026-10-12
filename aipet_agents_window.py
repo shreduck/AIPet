@@ -567,7 +567,9 @@ class AgentNetworkWindow:
             pass
         if see_through:
             bg = "systemTransparent" if IS_MAC else want["clear"] or P["bg"]
-        if changed in (None, "frame") and not IS_MAC:
+        if sys.platform == "win32":
+            self._win_caption(not o["frameless"])
+        elif changed in (None, "frame") and not IS_MAC:
             try:
                 if bool(w.overrideredirect()) != o["frameless"]:
                     w.withdraw()
@@ -593,7 +595,7 @@ class AgentNetworkWindow:
             self.close_btn.pack(side="right", before=self.cog)
         else:
             self.close_btn.pack_forget()
-        if frameless:
+        if frameless and sys.platform != "win32":
             # no title bar, so no window frame to drag: thin handles along the edges, and the corner grip
             t = max(4, self.px(3))
             for side, h in self.handles.items():
@@ -615,6 +617,41 @@ class AgentNetworkWindow:
         self._draw_graph(force=True)
         self._draw_tabs()
 
+    def _win_caption(self, show):
+        """Windows: the title bar on or off. Only the caption goes: the window keeps its resizable frame and its
+        taskbar button (a borderless Tk window, overrideredirect, would lose both)."""
+        try:
+            import ctypes
+            u = ctypes.windll.user32
+            hwnd = int(self.win.wm_frame(), 16)
+            GWL_STYLE, WS_CAPTION, WS_THICKFRAME = -16, 0x00C00000, 0x00040000
+            style = u.GetWindowLongW(hwnd, GWL_STYLE)
+            new = ((style | WS_CAPTION) if show else (style & ~WS_CAPTION)) | WS_THICKFRAME
+            if new != style:
+                u.SetWindowLongW(hwnd, GWL_STYLE, ctypes.c_long(new & 0xFFFFFFFF).value if new > 0x7FFFFFFF else new)
+                u.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0004 | 0x0020)  # keep size / place / order
+        except Exception as e:
+            core.log_error(f"agent network title bar: {e!r}")
+
+    def toggle_maximize(self, e=None):
+        """Double-click the top bar: maximise, or back."""
+        w = self.win
+        try:
+            if sys.platform == "win32" or IS_MAC:
+                w.state("normal" if w.state() == "zoomed" else "zoomed")
+            elif not w.overrideredirect():
+                w.attributes("-zoomed", not w.attributes("-zoomed"))
+            else:  # a borderless window on Linux: by hand
+                if getattr(self, "_restore_geo", None):
+                    w.geometry(self._restore_geo)
+                    self._restore_geo = None
+                else:
+                    self._restore_geo = w.geometry()
+                    w.geometry(f"{w.winfo_screenwidth()}x{w.winfo_screenheight()}+0+0")
+        except tk.TclError:
+            pass
+        return "break"
+
     def _on_resize(self, e=None):
         if not getattr(self, "_user_moved", False):
             self._center_next = True  # until you pan or zoom, the graph stays centred as the window opens / resizes
@@ -631,6 +668,11 @@ class AgentNetworkWindow:
                       self.win.winfo_height())
 
     def _drag_move(self, e):
+        try:
+            if self.win.state() == "zoomed":
+                return  # maximised: stays put (double-click the bar to restore)
+        except tk.TclError:
+            pass
         if self._drag:
             x0, y0, wx, wy, _, _ = self._drag
             self.win.geometry(f"+{wx + e.x_root - x0}+{wy + e.y_root - y0}")
@@ -681,6 +723,7 @@ class AgentNetworkWindow:
         for wdg in (self.head, self.title, self.prompt_mark):  # drag the bar to move (needed without a title bar)
             wdg.bind("<Button-1>", self._drag_start)
             wdg.bind("<B1-Motion>", self._drag_move)
+            wdg.bind("<Double-Button-1>", self.toggle_maximize)
         self.prev_btn.bind("<Button-1>", lambda e: self.step_session(-1))
         self.next_btn.bind("<Button-1>", lambda e: self.step_session(1))
         self._size_cog()
@@ -1262,17 +1305,14 @@ class AgentNetworkWindow:
                      F(P["hi"] if on else P["tx"]), x0 + pad, x1 - x0 - 2 * pad, y + head / 2, tag)
             self._titles.append(entry)
             self._draw_title(entry, time.time())
-        else:  # bands: a line between sessions, the name at the top left
+        else:  # bands: a line between sessions; the name is a title bar on the session's main node
             c.create_rectangle(0, y, VW, y + bh, fill=P["sel"] if on else P["bg"], outline="",
                                stipple="gray25" if on else "", tags=tag)
             c.create_line(0, y, VW, y, fill=F(P["line"]))
-            c.create_text(pad, y + self.gpx(4), anchor="nw", tags=tag,
-                          text=("▍" if on else "  ") + title,
-                          fill=F(P["hi"] if on else P["mu"]), font=self.g_bold if on else self.g_small)
         if b >= 0:
             c.tag_bind(tag, "<ButtonRelease-1>", lambda e, k=key: self._pick_session(k))
         self._draw_block(b, key, net, pad if tidy else 0, y + head, VW - (2 * pad if tidy else 0), bh - head, None,
-                         fade=fade)
+                         fade=fade, title=None if tidy else (title, on, tag))
 
     def _draw_title(self, entry, now):
         """A group's title: as is when it fits, else scrolling round like the pet's name tags (characters drawn one
@@ -1298,7 +1338,7 @@ class AgentNetworkWindow:
                 cx += cw
         return True
 
-    def _draw_block(self, b, key, net, ox, oy, W, H, reserve, fade=0.0):
+    def _draw_block(self, b, key, net, ox, oy, W, H, reserve, fade=0.0, title=None):
         """One session's graph, at (ox, oy) in a W x H area. fade: 0 as is .. 1 gone (a session being cleared)."""
         c, P0 = self.canvas, self.P
         P = {k: (mix(v, P0["bg"], fade) if fade and isinstance(v, str) and v.startswith("#") else v)
@@ -1331,6 +1371,16 @@ class AgentNetworkWindow:
             tag = f"node{b}_{i}" if b >= 0 else "gone"
             c.create_rectangle(x, y, x + w, y + h, fill=fill, stipple=dither(self.opts["node_alpha"]),
                                outline=border, width=max(1, self.gpx(1.3 if picked else 1)), tags=tag)
+            if a["main"] and title:  # the session's name as a title bar on top of its main node
+                text, on, click = title
+                th = int(lh * 1.35)
+                c.create_rectangle(x, y - th, x + w, y, fill=P["sel"] if on else P["bar"],
+                                   outline=P["blue"] if on else border, tags=click)
+                entry = (f"mttl{b}_{abs(hash(key)) % 10000}", ("● " if on else "○ ") + text,
+                         self.g_bold if on else self.g_small, P["hi"] if on else P["tx"], x + self.gpx(5),
+                         w - self.gpx(10), y - th / 2, click)
+                self._titles.append(entry)
+                self._draw_title(entry, time.time())
             img = self.robot(a["state"], max(6, int(lh * 1.15)))
             if fade < 0.35:  # an image can't fade: it goes early
                 c.create_image(x + self.gpx(6), y + self.gpx(5), image=img, anchor="nw", tags=tag)
