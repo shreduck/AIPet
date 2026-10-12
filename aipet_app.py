@@ -1032,6 +1032,7 @@ class TrayApp:
         handlers = {
             "theme": lambda v: (pet.apply_theme(v), hasattr(self, "theme_var") and self.theme_var.set(v == "dark")),
             "size": lambda v: pet.set_size(float(v)),
+            "tooltip_text_scale": pet.set_tooltip_text_scale,
             "answer_wait_seconds": pet.set_answer_wait,
             "done_timeout_minutes": pet.set_done_timeout,
             "health_check_seconds": pet.set_health_interval,
@@ -1372,6 +1373,11 @@ class TrayApp:
                 item("Pet size...", self.pet.open_size_slider, help="Make the pet bigger or smaller.",
                      slider={"value": core.SCALE["v"] / core.SCALE_UNIT, "min": 0.3, "max": 3.0, "step": 0.05,
                              "set": self.pet.set_size, "format": lambda v: f"{int(round(v * 100))}%"}),
+                item("Tooltip text size...", self.pet.open_tooltip_text_slider,
+                     help="Text in both session and usage tooltips. 100% is the default.",
+                     slider={"value": max(0.5, min(2.5, float(cfg.get("tooltip_text_scale", 1.0)))),
+                             "min": 0.5, "max": 2.5, "step": 0.05,
+                             "set": self.pet.set_tooltip_text_scale, "format": lambda v: f"{int(round(v * 100))}%"}),
                 item("Reset pet size", self.pet.reset_scale, help="Back to the standard size."),
                 item("Reset agent network appearance", self.reset_agent_network,
                      help="The agent network window's default look again (opacity, background, nodes, scale, title "

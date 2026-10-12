@@ -9,6 +9,22 @@ import aipet_app
 class MenuTests(unittest.TestCase):
     @patch.object(aipet_app.hi, 'list_backups', return_value=[])
     @patch.object(aipet, 'auto_approve_rules', return_value={})
+    def test_tooltip_text_slider_is_beside_pet_size_in_both_menus(self, *_):
+        app = self.make_app()
+        for spec in (app._context_menu_spec(SimpleNamespace(key='_none', data={})),
+                     app._mac_menu_spec(settings=True)):
+            appearance = next(e for e in spec if e and e['label'] == 'Appearance')['submenu']
+            labels = [e['label'] for e in appearance if e]
+            self.assertEqual(labels[labels.index('Pet size...') + 1], 'Tooltip text size...')
+            entry = next(e for e in appearance if e and e['label'] == 'Tooltip text size...')
+            self.assertEqual(entry['slider']['value'], 1.0)
+            entry['action']()
+            app.pet.open_tooltip_text_slider.assert_called()
+            entry['slider']['set'](1.5)
+            app.pet.set_tooltip_text_scale.assert_called_with(1.5)
+
+    @patch.object(aipet_app.hi, 'list_backups', return_value=[])
+    @patch.object(aipet, 'auto_approve_rules', return_value={})
     def test_sound_choices_on_mac_and_windows(self, *_):
         app = self.make_app()
         for mac, name, system_label in ((True, 'posix', 'macOS sounds'), (False, 'nt', 'Windows sounds')):

@@ -472,9 +472,16 @@ class MacWindowTests(unittest.TestCase):
         native_app = mac.send(mac.cls("NSApplication"), "sharedApplication")
         key_before = mac.send(native_app, "keyWindow")
         try:
-            for detail in (None, {"agent": "codex"}, {"agent": "claude"}, None):
+            for detail, scale in ((None, 1.0), ({"agent": "codex"}, 1.5), ({"agent": "claude"}, 2.0), (None, 1.0)):
+                app.cfg["tooltip_text_scale"] = scale
                 app._show_tooltip(pet, "Hover details\nTest content", usage_detail=detail)
                 root.update()
+                tip_canvas = app.tip.winfo_children()[0]
+                text_items = [i for i in tip_canvas.find_all() if tip_canvas.type(i) == "text"]
+                for item, base_size in zip(text_items, (9, 8)):
+                    from tkinter import font
+                    rendered = font.Font(root=root, font=tip_canvas.itemcget(item, "font"))
+                    self.assertEqual(rendered.actual("size"), round(base_size * scale))
                 self.assertLessEqual(app.tip.winfo_rooty() + app.tip.winfo_height(), canvas.winfo_rooty() - 6)
                 window = mac.window_titled(app.tip.title())
                 self.assertTrue(window)
@@ -497,6 +504,80 @@ class MacWindowTests(unittest.TestCase):
                 self.assertTrue(root.winfo_exists())
         finally:
             root.destroy()
+
+    def test_hover_does_not_activate_app_or_raise_agent_window(self):
+        import tkinter as tk
+        from types import SimpleNamespace
+        import Quartz
+        import aipet
+        import mac_statusbar as mac
+        from aipet_agents_window import AgentNetworkWindow
+
+        workspace = mac.send(mac.cls("NSWorkspace"), "sharedWorkspace")
+        previous = mac.send(workspace, "frontmostApplication")
+        mac.send(previous, "retain")
+        apps = mac.send(mac.cls("NSRunningApplication"), "runningApplicationsWithBundleIdentifier:",
+                        mac.nsstr("com.apple.finder"), argtypes=[mac.c_void_p])
+        finder = mac.send(apps, "objectAtIndex:", 0, argtypes=[mac.c_ulong])
+        mac.send(finder, "retain")
+        finder_pid = mac.send(finder, "processIdentifier", restype=mac.c_long)
+        root = aipet.MacPetWindow()
+        root.title("AIPet hover stacking regression")
+        canvas = tk.Canvas(root, width=100, height=100)
+        canvas.pack()
+        app = object.__new__(aipet.PetApp)
+        app.root, app.tip, app._menu_open = root, None, False
+        app.cfg = {"all_spaces": True}
+        pet = SimpleNamespace(canvas=canvas, gutter=0, data={})
+        agent = None
+
+        def settle():
+            done = tk.BooleanVar(root, False)
+            root.after(200, lambda: done.set(True))
+            root.wait_variable(done)
+
+        def foreground_pid():
+            return mac.send(mac.send(workspace, "frontmostApplication"), "processIdentifier", restype=mac.c_long)
+
+        def windows_above(number):
+            windows = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly,
+                                                       Quartz.kCGNullWindowID)
+            ordered = [w["kCGWindowNumber"] for w in windows if w.get("kCGWindowLayer") == 0]
+            self.assertIn(number, ordered)
+            return set(ordered[:ordered.index(number)])
+
+        try:
+            agent = AgentNetworkWindow(root, SimpleNamespace(cfg={}, _last_items=[]))
+            root.update()
+            settle()
+            settle()  # initial option application can replace Tk's native window
+            number = mac.send(mac.window_titled(agent.win.title()), "windowNumber", restype=mac.c_long)
+            for _ in range(3):
+                mac.send(finder, "activateWithOptions:", 3, restype=mac.c_bool, argtypes=[mac.c_ulong])
+                settle()
+                if foreground_pid() == finder_pid:
+                    break
+            self.assertEqual(foreground_pid(), finder_pid)
+            above = windows_above(number)
+            for detail in (None, {"agent": "codex"}, {"agent": "claude"}):
+                app._show_tooltip(pet, "Hover details\nTest content", usage_detail=detail)
+                settle()
+                self.assertEqual(foreground_pid(), finder_pid)
+                self.assertTrue(above <= windows_above(number))
+                app.hide_tip()
+            # Deliberate opening still activates the app after the hover scope.
+            agent.raise_()
+            settle()
+            self.assertEqual(foreground_pid(), os.getpid())
+        finally:
+            app.hide_tip()
+            if agent:
+                agent.close()
+            root.update()
+            root.destroy()
+            mac.send(previous, "activateWithOptions:", 3, restype=mac.c_bool, argtypes=[mac.c_ulong])
+            mac.send(previous, "release", restype=None)
+            mac.send(finder, "release", restype=None)
 
     def test_panel_mouse_bridge_delivers_clicks_and_drag_outside_canvas(self):
         import tkinter as tk

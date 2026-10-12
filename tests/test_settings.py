@@ -31,6 +31,20 @@ def spec():
 
 
 class SettingsSpecTests(unittest.TestCase):
+    def test_tooltip_text_scale_is_independent_and_saved(self):
+        pet = object.__new__(aipet.PetApp)
+        pet.cfg, pet.tip = {"size": 1.35}, None
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(aipet, 'HOME_DIR', directory), \
+                patch.object(aipet, 'CONFIG_PATH', str(Path(directory) / 'config.json')):
+            self.assertEqual(pet.tooltip_text_scale(), 1.0)
+            pet.set_tooltip_text_scale(1.75)
+            self.assertEqual(pet.cfg['size'], 1.35)
+            self.assertEqual(aipet.load_config()['tooltip_text_scale'], 1.75)
+            self.assertEqual(pet.tooltip_text_scale(), 1.75)
+            pet.set_tooltip_text_scale(1.0)
+            self.assertEqual(aipet.load_config()['tooltip_text_scale'], 1.0)
+
     def test_wheel_stops_at_edges_and_consumes_events(self):
         window = object.__new__(settings.SettingsWindow)
         window.canvas = MagicMock()

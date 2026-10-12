@@ -20,6 +20,7 @@ CONFIG_KEYS = {
     "session_titles": ('"name" or "prompt"', "Extra title under a pet: the session's name or the latest prompt.", "live"),
     "session_tooltips": ("true / false", "Tooltip with title, state and last message when hovering a pet.", "live"),
     "usage_tooltips": ("true / false", "Tooltip with usage limits when hovering a usage badge.", "live"),
+    "tooltip_text_scale": ("0.5 - 2.5 (default 1.0)", "Text size in session and usage tooltips, independent of pet size.", "live"),
     "sounds": ("true / false", "Play sounds (false = muted).", "live"),
     "sound_on_done": ("true / false", "Play the 'done' chime when a working session finishes.", "live"),
     "sound_style": ('"chimes" or "system"', "AIPet's own chimes, or the system's sounds (Windows / macOS).", "live"),

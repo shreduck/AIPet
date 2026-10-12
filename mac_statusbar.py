@@ -14,6 +14,7 @@ import ctypes
 import ctypes.util
 import io
 import platform
+from contextlib import contextmanager
 from ctypes import c_bool, c_char_p, c_double, c_long, c_size_t, c_ulong, c_void_p
 
 _lib = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
@@ -53,6 +54,29 @@ def send(obj, name, *args, restype=c_void_p, argtypes=()):
 
 def nsstr(text):
     return send(cls("NSString"), "stringWithUTF8String:", str(text).encode("utf-8"), argtypes=[c_char_p])
+
+
+@contextmanager
+def passive_window_mapping():
+    """Suppress Tk's unconditional Cocoa activation while mapping a hover panel.
+
+    Tk's macOS XMapWindow activates NSApp even for non-activating NSPanels.
+    This scope runs synchronously on Tk's main thread and restores the original
+    implementation before normal clicks or explicit window-opening actions run.
+    """
+    _lib.class_getInstanceMethod.restype = c_void_p
+    _lib.class_getInstanceMethod.argtypes = [c_void_p, c_void_p]
+    _lib.method_setImplementation.restype = c_void_p
+    _lib.method_setImplementation.argtypes = [c_void_p, c_void_p]
+    app = send(cls("NSApplication"), "sharedApplication")
+    app_class = send(app, "class")
+    method = _lib.class_getInstanceMethod(app_class, sel("activateIgnoringOtherApps:"))
+    callback = ctypes.CFUNCTYPE(None, c_void_p, c_void_p, c_bool)(lambda obj, cmd, flag: None)
+    original = _lib.method_setImplementation(method, ctypes.cast(callback, c_void_p))
+    try:
+        yield
+    finally:
+        _lib.method_setImplementation(method, original)
 
 
 def nsimage(pil_image, height_pt=18.0, template=False):

@@ -68,6 +68,7 @@ DEFAULT_CONFIG = {
     "click_to_focus": True,  # clicking a pet (or a badge) brings its session's window to the front
     "session_tooltips": True,
     "usage_tooltips": True,
+    "tooltip_text_scale": 1.0,
     "claude_oauth_usage": False,  # experimental credential-based quota requests require explicit consent
     "all_spaces": True,  # show the pet on every virtual desktop / macOS Space
     "session_titles": "name",  # extra title for same-folder sessions: "name" (the harness's name) or "prompt" (latest prompt)
@@ -3903,6 +3904,7 @@ class PetApp:
         self.dismiss_menu_index = m.index("Dismiss this pet")
         m.add_command(label="Size...", command=self.open_size_slider)
         self.size_menu_index = m.index("end")
+        m.add_command(label="Tooltip text size...", command=self.open_tooltip_text_slider)
         m.add_command(label="Reset size", command=self.reset_scale)
         m.add_command(label="Answer timeout...", command=self.open_answer_slider)
         m.add_command(label="Clear finished after...", command=self.open_done_slider)
@@ -4225,6 +4227,14 @@ class PetApp:
         self.cfg["size"] = round(SCALE["v"] / SCALE_UNIT, 2)
         save_setting("size", self.cfg["size"])
 
+    def tooltip_text_scale(self):
+        return max(0.5, min(2.5, float(self.cfg.get("tooltip_text_scale", 1.0))))
+
+    def set_tooltip_text_scale(self, scale):
+        self.cfg["tooltip_text_scale"] = round(max(0.5, min(2.5, float(scale))), 2)
+        save_setting("tooltip_text_scale", self.cfg["tooltip_text_scale"])
+        self.hide_tip()
+
     def set_answer_wait(self, seconds):
         ANSWER_WAIT["v"] = clamp_wait(round(float(seconds) / 15) * 15)
         self.cfg["answer_wait_seconds"] = ANSWER_WAIT["v"]
@@ -4311,6 +4321,57 @@ class PetApp:
         w.protocol("WM_DELETE_WINDOW", close)
         w.bind("<Escape>", lambda e: close())
         apply()
+        theme_window(w)
+        self._place_above_pet(w)
+
+    def open_tooltip_text_slider(self):
+        """The context menu's text-size slider; settings embeds the same control."""
+        existing = getattr(self, "tooltip_text_win", None)
+        if existing is not None:
+            try:
+                existing.lift()
+                return
+            except tk.TclError:
+                self.tooltip_text_win = None
+        from tkinter import ttk
+        w = self.tooltip_text_win = tk.Toplevel(self.root)
+        w.title("Tooltip text size")
+        w.attributes("-topmost", True)
+        w.resizable(False, False)
+        var = tk.DoubleVar(w, value=self.tooltip_text_scale())
+        pct = tk.Label(w, width=6, font=(UI_FONT, 12, "bold"))
+
+        def preview(_v=None):
+            pct.config(text=f"{round(var.get() * 100)}%")
+
+        def commit(_e=None):
+            self.set_tooltip_text_scale(var.get())
+
+        def reset():
+            var.set(1.0)
+            preview()
+            commit()
+
+        def close():
+            commit()
+            self.tooltip_text_win = None
+            w.destroy()
+
+        tk.Label(w, text="Tooltip text size", font=(UI_FONT, 10, "bold")).grid(
+            row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
+        slider = ttk.Scale(w, from_=0.5, to=2.5, orient="horizontal", length=260,
+                           variable=var, command=preview)
+        slider.grid(row=1, column=0, padx=(14, 6), pady=8)
+        slider.bind("<ButtonRelease-1>", commit)
+        slider.bind("<KeyRelease>", commit)
+        pct.grid(row=1, column=1, padx=(0, 14))
+        row = tk.Frame(w)
+        row.grid(row=2, column=0, columnspan=2, sticky="e", padx=14, pady=(0, 12))
+        tk.Button(row, text="100%", width=8, command=reset).pack(side="left", padx=(0, 6))
+        tk.Button(row, text="Done", width=8, command=close, default="active").pack(side="left")
+        w.protocol("WM_DELETE_WINDOW", close)
+        w.bind("<Escape>", lambda e: close())
+        preview()
         theme_window(w)
         self._place_above_pet(w)
 
@@ -5113,10 +5174,20 @@ class PetApp:
     def _show_tooltip(self, pet, text, usage_detail=None):
         if getattr(self, "_menu_open", False):
             return
+        if IS_MAC:
+            import mac_statusbar as mac
+            with mac.passive_window_mapping():
+                self._build_tooltip(pet, text, usage_detail)
+        else:
+            self._build_tooltip(pet, text, usage_detail)
+
+    def _build_tooltip(self, pet, text, usage_detail):
         tip = self.tip = MacOverlayWindow(self.root) if IS_MAC else tk.Toplevel(self.root)
         # Configure the native panel and position it before it becomes visible.
         tip.withdraw()
-        tip.title("AIPet tooltip")
+        # Cocoa can retain a closed panel through the next event cycle. A unique
+        # title keeps native configuration from finding an earlier hover panel.
+        tip.title(f"AIPet tooltip {time.monotonic_ns()}")
         if IS_MAC:
             tip.attributes("-alpha", 0.0)
         tip.overrideredirect(True)
@@ -5133,11 +5204,15 @@ class PetApp:
         data = usage_detail if usage_detail is not None else getattr(pet, "data", {})
         agent = data.get("agent")
         accent = "#5b8def" if agent == "codex" else "#d98960" if agent == "claude" or data.get("source") == "CC" else T["tag_fg"]
-        head = c.create_text(12, 10, text=title, font=(MONO_FAMILY, 9, "bold"), fill=accent, anchor="nw", width=320)
+        text_scale = self.tooltip_text_scale()
+        wrap_width = round(320 * text_scale)
+        head = c.create_text(12, 10, text=title, font=(MONO_FAMILY, round(9 * text_scale), "bold"),
+                             fill=accent, anchor="nw", width=wrap_width)
         header_box = c.bbox(head)
         w, h = header_box[2] + 12, header_box[3] + 10
         if body.strip():
-            content = c.create_text(12, header_box[3] + 6, text=body, font=(MONO_FAMILY, 8), fill=T["tag_fg"], anchor="nw", width=320)
+            content = c.create_text(12, header_box[3] + 6, text=body, font=(MONO_FAMILY, round(8 * text_scale)),
+                                    fill=T["tag_fg"], anchor="nw", width=wrap_width)
             box = c.bbox(content)
             w, h = max(header_box[2], box[2]) + 12, box[3] + 10
         border = c.create_polygon(6, 1, w - 6, 1, w - 6, 3, w - 3, 3, w - 3, 6, w - 1, 6,
