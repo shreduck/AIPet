@@ -33,6 +33,10 @@ import urllib.error
 import urllib.request
 import tkinter as tk
 import aipet_usage as usage
+from aipetlib.mac_panels import MacOverlayWindow, MacPetWindow
+from aipetlib.click_through import ClickThroughController
+import aipetlib.windows as windows
+import aipetlib.geometry as geometry
 import aipetlib.permissions as permissions
 import aipetlib.sessions as sessions
 
@@ -2256,75 +2260,22 @@ def diagnostics_report(app=None):
 
 # --------------------------------------------------------------------------- multi-monitor placement
 def work_area(x, y, widget):
-    """(left, top, right, bottom) of the monitor nearest to screen point (x, y) (the whole monitor, taskbar included,
-    so a pet parked over the taskbar stays there).
-    Windows asks the OS (monitors left of / above the main one have negative coordinates). macOS returns None: Tk
-    gives no per-monitor geometry there, so callers don't clamp and trust positions that came from a drag.
-    Elsewhere (X11) the root window spans every monitor."""
-    if os.name == "nt":
-        try:
-            import ctypes
-            from ctypes import wintypes
-
-            class MONITORINFO(ctypes.Structure):
-                _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
-                            ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
-            u = ctypes.windll.user32
-            u.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
-            u.MonitorFromPoint.restype = wintypes.HMONITOR
-            u.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MONITORINFO)]
-            mon = u.MonitorFromPoint(wintypes.POINT(int(x), int(y)), 2)  # MONITOR_DEFAULTTONEAREST
-            mi = MONITORINFO()
-            mi.cbSize = ctypes.sizeof(MONITORINFO)
-            if mon and u.GetMonitorInfoW(mon, ctypes.byref(mi)):
-                r = mi.rcMonitor
-                return r.left, r.top, r.right, r.bottom
-        except Exception:
-            pass
-    if IS_MAC:
-        return mac_screen_at(x, y)
-    return 0, 0, widget.winfo_screenwidth(), widget.winfo_screenheight()
+    return geometry.work_area(sys.modules[__name__], x, y, widget)
 
 
 _MAC_SCREENS = {"t": 0.0, "v": []}
 
 
 def mac_screen_at(x, y):
-    """macOS: (left, top, right, bottom) in Tk coordinates of the visible part of the screen holding (x, y) (without
-    the menu bar and the Dock, which covers windows), else the nearest one; None if the screens can't be read
-    (callers then don't clamp). Read from NSScreen (cached for 3 s)."""
-    now = time.time()
-    if now - _MAC_SCREENS["t"] > 3:
-        try:
-            import mac_statusbar
-            _MAC_SCREENS["v"] = mac_statusbar.screen_rects()
-        except Exception as e:
-            _MAC_SCREENS["v"] = []
-            log_error(f"mac screens: {e!r}")
-        _MAC_SCREENS["t"] = now
-    rects = _MAC_SCREENS["v"]
-    if not rects:
-        return None
-
-    def dist(r):
-        dx = max(r[0] - x, 0, x - r[2])
-        dy = max(r[1] - y, 0, y - r[3])
-        return dx * dx + dy * dy
-    return min(rects, key=dist)
+    return geometry.mac_screen_at(sys.modules[__name__], x, y)
 
 
 def fit_on_screen(x, y, w, h, ref, widget, margin=0):
-    """Clamp a w x h window at (x, y) into the monitor holding screen point ref (on macOS: unchanged)."""
-    r = work_area(ref[0], ref[1], widget)
-    if not r:
-        return int(x), int(y)
-    left, top, right, bottom = r
-    return (int(max(left, min(x, right - w - margin))), int(max(top, min(y, bottom - h - margin))))
+    return geometry.fit_on_screen(sys.modules[__name__], x, y, w, h, ref, widget, margin)
 
 
 def geo(x, y):
-    """Tk geometry offset that also works for negative coordinates (monitors left of / above the main one)."""
-    return f"+{int(x)}+{int(y)}"
+    return geometry.geo(sys.modules[__name__], x, y)
 
 
 # --------------------------------------------------------------------------- VS Code: which open window holds a folder
@@ -2498,255 +2449,45 @@ def open_uri(uri):
         log_error(f"couldn't open {uri.split('?')[0]}: {e!r}")
 
 
-class ClickThrough:
-    """Lets mouse clicks pass through the pet window to whatever is behind it, or not. Windows: the WS_EX_TRANSPARENT
-    style on the (already layered) window. macOS: NSWindow.ignoresMouseEvents through the Objective-C runtime (no
-    extra packages). Elsewhere: does nothing."""
+class ClickThrough(ClickThroughController):
+    """Compatibility constructor for the desktop runtime."""
+    services = sys.modules[__name__]
 
     def __init__(self, root):
-        self.root = root
-        self._win = None
-
-    def set(self, through):
-        if os.name == "nt":
-            self._set_windows(through)
-        elif IS_MAC:
-            self._set_mac(through)
-
-    def _set_windows(self, through):
-        import ctypes
-        u = ctypes.windll.user32
-        hwnd = int(self.root.wm_frame(), 16)
-        u.GetWindowLongW.restype = ctypes.c_long
-        ex = u.GetWindowLongW(hwnd, -20)  # GWL_EXSTYLE
-        new = (ex | 0x20 | 0x80000) if through else (ex & ~0x20)  # WS_EX_TRANSPARENT (+ WS_EX_LAYERED)
-        if new != ex:
-            u.SetWindowLongW(hwnd, -20, ctypes.c_long(new))
-
-    def _objc(self):
-        import ctypes
-        import ctypes.util
-        if not hasattr(self, "_lib"):
-            self._lib = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
-            self._lib.objc_getClass.restype = ctypes.c_void_p
-            self._lib.sel_registerName.restype = ctypes.c_void_p
-        return self._lib
-
-    def _send(self, obj, sel, *args, restype=None, argtypes=()):
-        import ctypes
-        lib = self._objc()
-        f = lib.objc_msgSend
-        f.restype = restype
-        f.argtypes = [ctypes.c_void_p, ctypes.c_void_p] + list(argtypes)
-        return f(obj, lib.sel_registerName(sel.encode()), *args)
-
-    def _set_mac(self, through):
-        import ctypes
-        if not self._win:
-            app = self._send(self._objc().objc_getClass(b"NSApplication"), "sharedApplication", restype=ctypes.c_void_p)
-            wins = self._send(app, "windows", restype=ctypes.c_void_p)
-            n = self._send(wins, "count", restype=ctypes.c_ulong)
-            title = self.root.title()
-            for i in range(n):
-                w = self._send(wins, "objectAtIndex:", i, restype=ctypes.c_void_p, argtypes=[ctypes.c_ulong])
-                t = self._send(w, "title", restype=ctypes.c_void_p)
-                name = self._send(t, "UTF8String", restype=ctypes.c_char_p) if t else None
-                if name and name.decode("utf-8", "replace") == title:
-                    self._win = w
-                    break
-            if not self._win:
-                raise RuntimeError("pet window not found")
-        self._send(self._win, "setIgnoresMouseEvents:", bool(through), argtypes=[ctypes.c_bool])
+        super().__init__(self.services, root)
 
 
 # --------------------------------------------------------------------------- window focus (Windows)
 def _user32():
-    import ctypes
-    from ctypes import wintypes
-    u = ctypes.windll.user32
-    u.IsWindow.argtypes = u.IsIconic.argtypes = u.IsWindowVisible.argtypes = [wintypes.HWND]
-    u.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
-    u.SetForegroundWindow.argtypes = [wintypes.HWND]
-    u.GetForegroundWindow.restype = wintypes.HWND
-    u.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
-    u.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
-    u.EnumWindows.argtypes = [ctypes.c_void_p, wintypes.LPARAM]
-    return u
+    return windows._user32(sys.modules[__name__])
 
 
 def _go_to_desktop_of(hwnd):
-    """Windows 10/11 virtual desktops: switch to the desktop the window is on. SetForegroundWindow alone often
-    leaves you where you are when the window lives on another desktop (the pet is on every desktop, so this happens)."""
-    try:
-        from pyvda import AppView, VirtualDesktop
-        view = AppView(hwnd=int(hwnd))
-        if view.is_pinned():
-            return
-        target = view.desktop
-        if target.number != VirtualDesktop.current().number:
-            target.go()
-            time.sleep(0.15)  # let the switch animation hand over before activating the window
-    except Exception:
-        pass  # pyvda missing or this Windows build unsupported: focusing still works on the current desktop
+    return windows._go_to_desktop_of(sys.modules[__name__], hwnd)
 
 
 def focus_hwnd(hwnd):
-    """Bring a window to the front, on whatever virtual desktop it is. True if it really came to the front."""
-    if os.name != "nt" or not hwnd:
-        return False
-    try:
-        import ctypes
-        from ctypes import wintypes
-        u, k32 = _user32(), ctypes.windll.kernel32
-        h = int(hwnd)
-        if not u.IsWindow(h):
-            return False
-        _go_to_desktop_of(h)
-        if u.IsIconic(h):
-            u.ShowWindow(h, 9)  # SW_RESTORE
-        u.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.c_void_p]
-        u.GetWindowThreadProcessId.restype = wintypes.DWORD
-        u.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
-        u.BringWindowToTop.argtypes = [wintypes.HWND]
-
-        def front():
-            return u.GetForegroundWindow() == h
-
-        u.SetForegroundWindow(h)
-        if not front():
-            # Windows only lets the foreground app hand the foreground on. Borrow it: attach to the thread that
-            # owns the current foreground window for the call, then detach again.
-            mine = k32.GetCurrentThreadId()
-            theirs = u.GetWindowThreadProcessId(u.GetForegroundWindow(), None)
-            attached = bool(theirs and theirs != mine and u.AttachThreadInput(mine, theirs, True))
-            try:
-                u.BringWindowToTop(h)
-                u.SetForegroundWindow(h)
-            finally:
-                if attached:
-                    u.AttachThreadInput(mine, theirs, False)
-        if not front():  # last resort: a tap of ALT unlocks SetForegroundWindow
-            u.keybd_event(0x12, 0, 0, 0)
-            u.keybd_event(0x12, 0, 2, 0)
-            u.SetForegroundWindow(h)
-        if not front():
-            log_error(f"go to window: couldn't bring {h:#x} to the front")
-        return front()
-    except Exception as e:
-        log_error(f"go to window: {e!r}")
-        return False
+    return windows.focus_hwnd(sys.modules[__name__], hwnd)
 
 
 def terminal_windows():
-    """Visible Windows Terminal windows as [(hwnd, title)], frontmost first."""
-    if os.name != "nt":
-        return []
-    import ctypes
-    from ctypes import wintypes
-    u, out = _user32(), []
-
-    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-    def visit(hwnd, _):
-        if u.IsWindowVisible(hwnd):
-            cls = ctypes.create_unicode_buffer(128)
-            u.GetClassNameW(hwnd, cls, 128)
-            if cls.value == "CASCADIA_HOSTING_WINDOW_CLASS":
-                title = ctypes.create_unicode_buffer(512)
-                u.GetWindowTextW(hwnd, title, 512)
-                out.append((int(hwnd), title.value))
-        return True
-
-    u.EnumWindows(visit, 0)
-    return out
+    return windows.terminal_windows(sys.modules[__name__])
 
 
 def claude_app_windows(exe_name="claude.exe"):
-    """Visible top-level windows of a desktop app (the Claude app: claude.exe; the Codex app: codex.exe), frontmost
-    first. The CLIs of the same names own no window (their terminal does), so they never show up here."""
-    if os.name != "nt":
-        return []
-    import ctypes
-    from ctypes import wintypes
-    u, k32, out = _user32(), ctypes.windll.kernel32, []
-    u.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
-    u.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
-    u.GetWindowTextLengthW.argtypes = [wintypes.HWND]
-    k32.OpenProcess.restype = wintypes.HANDLE
-    k32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
-                                               ctypes.POINTER(wintypes.DWORD)]
-    k32.CloseHandle.argtypes = [wintypes.HANDLE]
-    names = {}
-
-    def exe(pid):
-        if pid not in names:
-            names[pid] = ""
-            h = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
-            if h:
-                buf, n = ctypes.create_unicode_buffer(1024), wintypes.DWORD(1024)
-                if k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(n)):
-                    names[pid] = os.path.basename(buf.value).lower()
-                k32.CloseHandle(h)
-        return names[pid]
-
-    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-    def visit(hwnd, _):
-        if u.IsWindowVisible(hwnd) and not u.GetWindow(hwnd, 4) and u.GetWindowTextLengthW(hwnd) > 0:
-            pid = wintypes.DWORD()
-            u.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-            if exe(pid.value) == exe_name:
-                out.append(int(hwnd))
-        return True
-
-    u.EnumWindows(visit, 0)
-    return out
+    return windows.claude_app_windows(sys.modules[__name__], exe_name)
 
 
 def _folder(d):
-    return os.path.basename(str(d.get("cwd") or "").replace("\\", "/").rstrip("/")).lower()
+    return windows._folder(sys.modules[__name__], d)
 
 
 def terminal_agent(title):
-    """Which agent a terminal title looks like: "claude" (Claude Code puts ✳ or a braille spinner in front of its
-    title), "codex", or "" when it doesn't say."""
-    t = (title or "").lstrip()
-    low = t.lower()
-    if "codex" in low:
-        return "codex"
-    if "claude" in low or (t and (t[0] in "\u2733\u2736\u273b\u273d\u2722" or 0x2800 <= ord(t[0]) <= 0x28ff)):
-        return "claude"
-    return ""
+    return windows.terminal_agent(sys.modules[__name__], title)
 
 
 def focus_wsl_terminal(d, others=()):
-    """Best effort for sessions without a recorded window (WSL hooks can't see Windows process ids). Never picks a
-    window another session recorded as its own (a Codex terminal, say), and keeps Claude and Codex apart: a terminal
-    whose title says it runs the other agent is skipped, one that says it runs this agent is preferred. In order:
-    a terminal whose title mentions the distro or project folder; for sessions run by the desktop app, that app's
-    window; a terminal of this agent, else one that doesn't say; the agent's desktop app."""
-    agent = "codex" if d.get("agent") == "codex" else "claude"
-    if agent == "claude" and ("desktop" in (d.get("entry") or "").lower() or d.get("app") == "cowork"):
-        # Run by the Claude desktop app (its Code tab, here in WSL): that app's window, always. Not a terminal that
-        # happens to mention the distro or folder, and not "claimed": one app window hosts all of its sessions, so
-        # a Cowork session having recorded it doesn't make it someone else's.
-        app = claude_app_windows("claude.exe")
-        if app:
-            return focus_hwnd(app[0])
-    claimed = {int(o["hwnd"]) for o in others if o.get("hwnd")}
-    folder = _folder(d)
-    needles = [n.lower() for n in (d.get("distro"), folder, d.get("raw_title")) if n]
-    foreign = {f for f in (_folder(o) for o in others) if f and f != folder}
-    wins = [(h, t, terminal_agent(t)) for h, t in terminal_windows() if h not in claimed]
-    wins = [w for w in wins if w[2] in ("", agent)]  # never the other agent's terminal
-    named = [w for w in wins if any(n in w[1].lower() for n in needles)]
-    if named:  # this agent's own terminal first, then one that doesn't say
-        return focus_hwnd(sorted(named, key=lambda w: w[2] != agent)[0][0])
-    wins = [w for w in wins if not any(f in w[1].lower() for f in foreign)]
-    app = [h for h in claude_app_windows(agent + ".exe") if h not in claimed]
-    if app and (agent == "claude" and "desktop" in (d.get("entry") or "").lower() or not wins):
-        return focus_hwnd(app[0])
-    if wins:
-        return focus_hwnd(sorted(wins, key=lambda w: w[2] != agent)[0][0])
-    return bool(app) and focus_hwnd(app[0])
+    return windows.focus_wsl_terminal(sys.modules[__name__], d, others)
 
 
 # --------------------------------------------------------------------------- app
@@ -3339,31 +3080,6 @@ class Detail:
 
 
 # --------------------------------------------------------------------------- app
-class MacOverlayWindow(tk.Toplevel):
-    """Create passive overlays as panels before Tk realizes their native windows."""
-    def __init__(self, master):
-        super().__init__(master, takefocus=False)
-        # Tk's main window is already an NSWindow by the time Tk() returns.
-        # Changing MacWindowStyle later cannot turn it into an NSPanel. A fresh
-        # toplevel lets Tk allocate a non-activating panel for full-screen Spaces.
-        self.tk.call("::tk::unsupported::MacWindowStyle", "style", self._w, "utility",
-                     ("noTitleBar", "nonActivating", "doesNotHide", "doesNotCycle"))
-
-
-class MacPetWindow(MacOverlayWindow):
-    """The pet panel owns the hidden Tk root that runs its event loop."""
-    def __init__(self):
-        self._owner = tk.Tk()
-        self._owner.withdraw()
-        self._destroying = False
-        super().__init__(self._owner)
-
-    def destroy(self):
-        if self._destroying:
-            return
-        self._destroying = True
-        super().destroy()
-        self._owner.destroy()  # also end mainloop; never leave the hidden root alive
 
 
 class PetApp:
