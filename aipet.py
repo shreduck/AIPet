@@ -49,66 +49,7 @@ SESSIONS_DIR = os.path.join(HOME_DIR, "sessions")
 LEGACY_SESSIONS_DIR = os.path.join(os.path.expanduser("~"), ".claude-pet", "sessions")  # LEGACY
 CONFIG_PATH = os.path.join(HOME_DIR, "config.json")
 
-DEFAULT_CONFIG = {
-    "poll_ms": 700,
-    "max_pets": 10,
-    "sounds": True,
-    "sound_on_done": True,
-    "sound_style": "chimes",  # AIPet's own sounds by default; "system" uses the host OS sounds
-    "notifications": False,  # Windows toast notifications; off by default (toggle in the tray menu)
-    "theme": "light",  # "light" (default) or "dark"; toggle in the tray / right-click menu
-    "answer_wait_seconds": 180,
-    "timed_approve_minutes": 10,  # length of "Auto approve for N min" (Live Management / prompt card): 1 - 120  # how long a permission prompt can be answered from the pet: 0 (no limit) - 1800
-    "pet_style": "robot",  # "robot" (default), "mole" or "cat"
-    # "size": 1.0 is written when you use the Size slider (1.0 = 100%, range 0.3 - 3.0); deliberately not a default
-    # here, so an old absolute "scale" value in config.json can still be migrated once.
-    "remind_seconds": 90,
-    "compact": False,
-    "update_check": True,  # look for a new AIPet release on GitHub once a day (tells you; never installs anything)
-    "click_to_focus": True,  # clicking a pet (or a badge) brings its session's window to the front
-    "session_tooltips": True,
-    "usage_tooltips": True,
-    "tooltip_text_scale": 1.0,
-    "claude_oauth_usage": False,  # experimental credential-based quota requests require explicit consent
-    "all_spaces": True,  # show the pet on every virtual desktop / macOS Space
-    "session_titles": "name",  # extra title for same-folder sessions: "name" (the harness's name) or "prompt" (latest prompt)
-    "codex_answers": True,  # answer Codex permission prompts in the pet's prompt window
-    "claude_answers": True,  # preserve existing Claude Code answering behavior
-    "click_through": True,  # only the robot and its "needs you" bubble take clicks; the rest of the window lets them through
-    # clicking a session of the VS Code extension also opens its conversation tab (vscode://anthropic.claude-code/open)
-    "vscode_open_conversation": True,
-    "done_timeout_minutes": 3,
-    "health_check_seconds": 15,  # how often a working session's process is checked (0 = off); "Health check every..."  # finished sessions disappear after this: 0 (never) - 30; "Clear finished after..." slider
-    "stale_hours": 12,
-    "claude_code": {
-        "enabled": True,
-        # Extra folders to watch, e.g. a WSL distro if the hook can't reach Windows:
-        # (in config.json: "\\\\wsl.localhost\\Ubuntu\\home\\<you>\\.aipet\\sessions")
-        "extra_session_dirs": [],
-    },
-    "workbench": {
-        "enabled": False,
-        "mcp_url": "http://localhost:8080/mcp",
-        "tool_name": "listAgentChats",
-        "tool_arguments": {"limit": 50},
-        "api_key_env": "WORKBENCH_MCP_KEY",
-        "auth_header": "Authorization",
-        "auth_scheme": "Bearer",
-        "poll_seconds": 10,
-        "timeout_seconds": 20,
-        "max_chats": 8,
-        "state_fields": ["state", "status", "runState", "runStatus", "agentState", "lastRunState", "phase"],
-        "state_map": {
-            "needs_input": ["waiting", "awaiting", "awaiting_input", "needs_input", "input_required",
-                            "pending_approval", "approval", "paused", "blocked", "waiting_for_user"],
-            "error": ["error", "failed", "failure", "cancelled", "canceled", "timeout", "timed_out"],
-            "done": ["completed", "complete", "done", "finished", "succeeded", "success", "idle",
-                     "stopped", "ended", "inactive", "closed"],
-            "working": ["running", "processing", "in_progress", "streaming", "active", "busy",
-                        "executing", "thinking", "started", "queued"],
-        },
-    },
-}
+from aipetlib.config import DEFAULT_CONFIG, ConfigStore, deep_merge
 
 IS_MAC = sys.platform == "darwin"
 TRANSPARENT = "systemTransparent" if IS_MAC else "#ff00fe"
@@ -1024,50 +965,16 @@ HEAD_LAYOUTS = {
 
 
 # --------------------------------------------------------------------------- config
-def deep_merge(base, override):
-    out = copy.deepcopy(base)
-    for k, v in (override or {}).items():
-        if isinstance(v, dict) and isinstance(out.get(k), dict):
-            out[k] = deep_merge(out[k], v)
-        else:
-            out[k] = v
-    return out
+# Compatibility entry points keep paths and pause state controlled by the app.
+SAVE_PAUSED = {"v": False}
 
 
 def load_config():
-    try:
-        with open(CONFIG_PATH, encoding="utf-8") as f:
-            return deep_merge(DEFAULT_CONFIG, json.load(f))
-    except FileNotFoundError:
-        return copy.deepcopy(DEFAULT_CONFIG)
-    except Exception as e:
-        print(f"[aipet] config.json unreadable, using defaults: {e}", file=sys.stderr)
-        return copy.deepcopy(DEFAULT_CONFIG)
-
-
-SAVE_PAUSED = {"v": False}  # True while changes read FROM config.json are applied: don't write them straight back
+    return ConfigStore(CONFIG_PATH, HOME_DIR, DEFAULT_CONFIG).load()
 
 
 def save_setting(key, value):
-    """Persist one top-level key in config.json, leaving everything else as the user wrote it."""
-    if SAVE_PAUSED["v"]:
-        return True
-    try:
-        try:
-            with open(CONFIG_PATH, encoding="utf-8") as f:
-                data = json.load(f)
-        except FileNotFoundError:
-            data = {}
-        data[key] = value
-        os.makedirs(HOME_DIR, exist_ok=True)
-        tmp = CONFIG_PATH + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        os.replace(tmp, CONFIG_PATH)
-        return True
-    except Exception as e:  # unreadable/hand-edited config: don't clobber it
-        print(f"[aipet] couldn't save {key}: {e}", file=sys.stderr)
-        return False
+    return ConfigStore(CONFIG_PATH, HOME_DIR, DEFAULT_CONFIG).save_setting(key, value, paused=SAVE_PAUSED["v"])
 
 
 def first(d, keys):
