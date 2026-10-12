@@ -38,6 +38,25 @@ class InterruptTests(unittest.TestCase):
         else:
             self.assertEqual(aipet.transcript_file(rec), rec["transcript_path"])
 
+    def said(self, *lines):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "t.jsonl")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+            return aipet.last_said({"transcript_path": path})
+
+    def test_last_thing_said(self):
+        self.assertEqual(self.said(line("user", "fix the build"), line("assistant", "Looking now.\n\nThe build is green.")),
+                         ("ai", "The build is green."))
+        self.assertEqual(self.said(line("assistant", "Done."), line("user", "now the tests please")),
+                         ("you", "now the tests please"))  # your prompt is fresher
+        tool = json.dumps({"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "content": "x"}]}})
+        self.assertEqual(self.said(line("assistant", "Running it."), tool), ("ai", "Running it."))  # tool output skipped
+        codex = json.dumps({"type": "response_item", "payload": {"type": "message", "role": "assistant",
+                                                                 "content": [{"type": "output_text", "text": "Patched."}]}})
+        self.assertEqual(self.said(codex), ("ai", "Patched."))
+        self.assertEqual(self.said(line("assistant", "x" * 300))[1][-1], "\u2026")  # shortened
+
 
 if __name__ == "__main__":
     unittest.main()

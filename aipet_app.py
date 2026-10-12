@@ -1537,8 +1537,14 @@ class TrayApp:
             entries += [None, item(f"Subagents running: {len(agents)}" if agents else "No subagents running",
                                    enabled=False)]
             entries += [item(f"• {a}", enabled=False) for a in agents]
+            said = core.last_said(d)  # the newest reply phrase or your latest prompt, from the transcript
+            who = "Codex" if d.get("agent") == "codex" else "Claude"
+            said_text = (f"{who if said[0] == 'ai' else 'You'}: “{said[1]}”" if said else "")
+            if said_text:
+                entries = [item(said_text, enabled=False), None] + entries
             spec.append(item(f"{name}  ({state})" + (f"  ⏱ {left(grant)}" if grant else ""), submenu=entries,
-                             icon="check" if grant else None, help=d.get("where") or None))
+                             icon="check" if grant else None,
+                             help="\n".join(x for x in (d.get("where"), said_text) if x) or None))
         if not sessions:
             spec.append(item("No sessions right now", enabled=False))
         return spec

@@ -1066,45 +1066,102 @@ def transcript_file(rec):
     return path
 
 
-def turn_interrupted(rec, max_bytes=65536):
+def turn_interrupted(rec):
     """True when the newest message in the session's transcript is Claude Code's "[Request interrupted by user]":
-    the turn was stopped and nothing has happened since. Only the tail is read, and only when the file changed."""
-    path = transcript_file(rec)
-    if not path or time.time() - rec.get("updated", 0) < 1.5:
+    the turn was stopped and nothing has happened since."""
+    if time.time() - rec.get("updated", 0) < 1.5:
         return False
+    return transcript_tail(rec)["interrupted"]
+
+
+def last_said(rec):
+    """("ai" | "you", text): the newest thing said in the session, the agent's latest reply phrase or your latest
+    prompt, whichever came last; None when the transcript can't be read."""
+    return transcript_tail(rec)["said"]
+
+
+def _phrase(text, limit=140):
+    """The last sentence-ish bit of a message, on one line."""
+    lines = [ln.strip(" #>*-`") for ln in str(text).strip().splitlines() if ln.strip(" #>*-`")]
+    phrase = " ".join((lines[-1] if lines else "").split())
+    return phrase if len(phrase) <= limit else phrase[:limit - 1].rstrip() + "…"
+
+
+def _transcript_message(entry):
+    """(role, [texts], has_tool_result) for a chat message line of a Claude Code transcript or a Codex rollout,
+    else None (bookkeeping lines: attachments, modes, summaries, tool calls...)."""
+    if not isinstance(entry, dict):
+        return None
+    if entry.get("type") in ("user", "assistant") and isinstance(entry.get("message"), dict):
+        content = entry["message"].get("content")
+        parts = content if isinstance(content, list) else []
+        texts = [content] if isinstance(content, str) else [
+            c.get("text", "") for c in parts if isinstance(c, dict) and c.get("type") == "text"]
+        return entry["type"], texts, any(isinstance(c, dict) and c.get("type") == "tool_result" for c in parts)
+    payload = entry.get("payload")
+    if entry.get("type") == "response_item" and isinstance(payload, dict) and payload.get("type") == "message":
+        texts = [c.get("text", "") for c in payload.get("content") or []
+                 if isinstance(c, dict) and c.get("type") in ("input_text", "output_text")]
+        return payload.get("role"), texts, False
+    return None
+
+
+def transcript_tail(rec, max_bytes=(65536, 1048576)):
+    """What the end of the session's transcript says: {"interrupted": the newest message is Claude Code's stop
+    marker, "said": the newest reply phrase or typed prompt}. Only the tail is read, and only when the file changed."""
+    empty = {"interrupted": False, "said": None}
+    path = transcript_file(rec)
+    if not path:
+        return empty
     try:
         st = os.stat(path)
     except OSError:
-        return False
+        return empty
     stamp = (st.st_mtime_ns, st.st_size)
     cached = _TRANSCRIPT_TAILS.get(path)
     if cached and cached[0] == stamp:
         return cached[1]
-    interrupted = False
+    result = {"interrupted": False, "said": None}
     try:
-        with open(path, "rb") as f:
-            f.seek(max(0, st.st_size - max_bytes))
-            lines = f.read().decode("utf-8", "replace").splitlines()
-        for line in reversed(lines):
-            try:
-                entry = json.loads(line)
-            except ValueError:
-                continue
-            message = entry.get("message") if isinstance(entry, dict) else None
-            if entry.get("type") not in ("user", "assistant") or not isinstance(message, dict):
-                continue  # bookkeeping lines (attachments, modes, summaries...)
-            content = message.get("content")
-            texts = [content] if isinstance(content, str) else [
-                c.get("text", "") for c in content or [] if isinstance(c, dict) and c.get("type") == "text"]
-            interrupted = entry.get("type") == "user" and any(
-                str(t).strip().startswith(INTERRUPT_MARKERS) for t in texts)
-            break  # only the newest message counts
+        for window in max_bytes:  # usually the last 64 KB; long tool output can push the last words further back
+            result = {"interrupted": False, "said": None}
+            with open(path, "rb") as f:
+                f.seek(max(0, st.st_size - window))
+                lines = f.read().decode("utf-8", "replace").splitlines()
+            _scan_tail(lines, result)
+            if result["said"] or window >= st.st_size:
+                break
     except OSError:
-        return False
+        return empty
     if len(_TRANSCRIPT_TAILS) > 64:
         _TRANSCRIPT_TAILS.clear()
-    _TRANSCRIPT_TAILS[path] = (stamp, interrupted)
-    return interrupted
+    _TRANSCRIPT_TAILS[path] = (stamp, result)
+    return result
+
+
+def _scan_tail(lines, result):
+    """Fill result from transcript lines, newest first: is the newest message the stop marker, and what was
+    said last (the newest reply text or typed prompt)."""
+    newest = True
+    for line in reversed(lines):
+        try:
+            found = _transcript_message(json.loads(line))
+        except ValueError:
+            continue
+        if not found:
+            continue
+        role, texts, tool_result = found
+        if newest:
+            result["interrupted"] = role == "user" and any(
+                str(t).strip().startswith(INTERRUPT_MARKERS) for t in texts)
+            newest = False
+        # skip tool output, injected context (<...>), stop markers and image placeholders ([Image: ...])
+        text = next((t for t in reversed(texts) if str(t).strip()
+                     and not str(t).lstrip().startswith(("<", "[Request interrupted", "[Image"))), "")
+        if tool_result or not text:
+            continue  # nothing said in this one: keep looking
+        result["said"] = ("ai" if role == "assistant" else "you", _phrase(text))
+        break
 
 
 def pid_alive(pid, max_age=5.0):
@@ -1272,6 +1329,7 @@ def read_claude_code_sessions(cfg):
             "app": rec.get("app", ""),
             "hwnd": rec.get("hwnd"),
             "subagents": _active_agents(rec),
+            "transcript_path": rec.get("transcript_path", ""),
             "agent_types": [((rec.get("agent_types") or {}).get(a) or "subagent")
                             for a, ts in (rec.get("agents") or {}).items() if time.time() - ts < 900]
             if rec.get("state") in ("working", "needs_input") else [],

@@ -503,10 +503,12 @@ class SettingsWindow:
             c = tk.Canvas(f, width=icon_size(self.px), height=icon_size(self.px), bg=self.bg, highlightthickness=0, bd=0)
             c.pack(side="left", padx=(0, 8))
             draw_icon(c, e["icon"], px=self.px)
-        tk.Label(f, text=page_name(clean(e["label"])).upper(), bg=self.bg, fg=T["muted"], font=self.font(9, "bold"),
+        # the section title in the window's main text colour and its note in the softer message colour (both a step
+        # darker than before), so sections stand apart from the rows' grey explanations
+        tk.Label(f, text=page_name(clean(e["label"])).upper(), bg=self.bg, fg=T["win_fg"], font=self.font(9, "bold"),
                  anchor="w").pack(side="left")
         if e.get("help"):
-            lab = tk.Label(parent, text=e["help"], bg=self.bg, fg=T["muted"], font=self.font(9), anchor="w",
+            lab = tk.Label(parent, text=e["help"], bg=self.bg, fg=T["bubble_msg"], font=self.font(9), anchor="w",
                            justify="left")
             lab.pack(fill="x", padx=28, pady=(0, 6))
             self._wrap.append((lab, 60))
