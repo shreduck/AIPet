@@ -464,7 +464,11 @@ class AgentNetworkWindow:
         self._entries, self._expanded = [], set()  # log entries shown / unfolded
         self.u = self.opts["scale"] / 100
         self.s = 1.5 * self.u
-        self._applied = {}  # window attributes last set (only touched when they change)
+        # window attributes as set (only touched when they change). Starts at Tk's own defaults: setting -alpha or
+        # -transparentcolor at all makes a Windows window "layered", which Tk then repaints badly while it is
+        # dragged or resized, so a window that never needs them never gets them
+        self._applied = {"topmost": False, "alpha": 1.0, "clear": ""}
+        self._moving_until = 0.0
         self._drag = None
         self._fitting = False
         self._spin, self._spin_until = 0.0, 0.0
@@ -702,6 +706,8 @@ class AgentNetworkWindow:
 
     def _on_window_resize(self, e):
         """Shrinking the window below what the current scale needs makes the scale follow it (down to 50%)."""
+        if e.widget is self.win:
+            self._moving_until = time.time() + 0.3  # moved or resized: animations pause until it settles
         if e.widget is self.win and getattr(self, "backdrop", None) is not None:
             self.win.after_idle(self._sync_backdrop)  # moved or resized: the backdrop follows
         if e.widget is not self.win or self._fitting or self.u <= SCALE_MIN / 100 + 1e-6:
@@ -1200,7 +1206,8 @@ class AgentNetworkWindow:
             pass
         self._robots.clear()
         self._log_sig = self._graph_sig = self._prompt_sig = None
-        self._applied.pop("clear", None)  # the see-through key colour follows the theme
+        if self._applied.get("clear"):
+            self._applied["clear"] = None  # the see-through key colour follows the theme
         self._apply_options()
         self._draw_cog()
 
@@ -1229,6 +1236,9 @@ class AgentNetworkWindow:
 
     def _tick(self):
         if not self.alive():
+            return
+        if time.time() < self._moving_until:  # being dragged / resized: catch up once it settles
+            self._after = self.win.after(150, self._tick)
             return
         try:
             self._refresh()
@@ -1869,6 +1879,9 @@ class AgentNetworkWindow:
 
     def _animate(self):
         if not self.alive():
+            return
+        if time.time() < self._moving_until:  # being dragged / resized: drawing now leaves trails on Windows
+            self._anim = self.win.after(FRAME_MS, self._animate)
             return
         try:
             t = time.time() - self.t0
