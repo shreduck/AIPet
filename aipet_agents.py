@@ -132,6 +132,7 @@ def _cached(path, size, parse):
     except OSError:
         return None
     parsed["mtime"] = st.st_mtime
+    parsed["cut"] = st.st_size > size  # only the file's tail was read
     if len(_TAILS) > 128:
         _TAILS.clear()
     _TAILS[path] = (stamp, parsed)
@@ -325,12 +326,15 @@ def read_network(item, now=None):
     files = (codex_subagent_files(transcript, item.get("session_id")) if codex
              else claude_subagent_files(transcript))
     turn_start = main_info["last_prompt_t"] or (now - 1800)
+    # the task started before the part of a transcript that was read: the stats can miss its older entries
+    missing = bool(main_info.get("cut") and not main_info["last_prompt_t"])
     for aid, path, meta in files:
         info = _cached(path, SUB_TAIL, parse)
         if not info:
             continue
         if aid not in running and info["mtime"] < turn_start - 1:
             continue  # from an earlier turn
+        missing = missing or bool(info.get("cut") and (info["first_t"] or 0) > turn_start + 1)
         if codex:
             nick, task = meta.get("agent_nickname") or "", str(meta.get("agent_path") or "").rsplit("/", 1)[-1]
             name = f"{nick} ({task})" if nick and task else (nick or task or "agent")
@@ -382,7 +386,7 @@ def read_network(item, now=None):
         main["thought"] = "waiting for " + ", ".join(waiting_on[:3]) if waiting_on else main["thought"]
     log = sorted(((t, i, kind, text) for i, a in enumerate(agents) for t, kind, text in a["lines"]),
                  key=lambda x: x[0])[-MAX_LOG:]
-    return {"agents": agents, "log": log, "turn_start": turn_start}
+    return {"agents": agents, "log": log, "turn_start": turn_start, "missing": missing}
 
 
 def network_stats(net):
@@ -411,4 +415,4 @@ def network_stats(net):
                 skills[skill] = skills.get(skill, 0) + 1
     order = lambda d: sorted(d.items(), key=lambda kv: (-kv[1], kv[0].lower()))  # noqa: E731
     return {"subagents": order(types), "calls": calls, "ctx_total": sum(c[2] for c in calls),
-            "tools": order(tools), "skills": order(skills)}
+            "tools": order(tools), "skills": order(skills), "missing": bool(net.get("missing"))}

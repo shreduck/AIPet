@@ -109,6 +109,18 @@ class ClaudeNetworkTests(unittest.TestCase):
         self.assertEqual(dict(stats["tools"]), {"Agent": 1, "Grep": 1, "Bash": 1})
         self.assertEqual(stats["skills"], [])
 
+    def test_stats_warn_only_when_the_task_starts_before_what_was_read(self):
+        from unittest.mock import patch
+        self.assertFalse(agents.network_stats(agents.read_network(self.item(), now=self.now))["missing"])
+        with open(self.transcript, "a", encoding="utf-8") as f:  # a long task: its prompt falls out of the tail
+            for k in range(40):
+                f.write(json.dumps(claude_assistant(self.now - 40 + k, [{"type": "tool_use", "name": "Read",
+                                                                         "input": {"file_path": "x" * 200}}])) + "\n")
+        agents._TAILS.clear()
+        with patch.object(agents, "MAIN_TAIL", 4000):
+            self.assertTrue(agents.network_stats(agents.read_network(self.item(), now=self.now))["missing"])
+        agents._TAILS.clear()
+
     def test_running_agent_without_transcript_still_shows(self):
         net = agents.read_network(self.item(agent_ids={"zzz": "tester"}, wait_agent="", state="working"), now=self.now)
         tester = next(a for a in net["agents"] if a["id"] == "zzz")

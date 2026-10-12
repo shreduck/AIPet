@@ -29,8 +29,8 @@ OPACITY_STEP = 5  # background and node opacity, % (30-100), drawn as Tk stipple
 SCALE_MIN, SCALE_MAX, SCALE_STEP = 50, 150, 5  # the window's text and drawing size, %
 OPTIONS_KEY = "agent_window"  # config.json
 DEFAULT_OPTIONS = {"on_top": False, "alpha": 100, "bg_alpha": 100, "node_alpha": 100, "frameless": False,
-                   "separate": False, "scale": 100}
-HINT = "tab/←→ agent · a all · pgup/pgdn session · space prompt · esc close"
+                   "separate": False, "tabbed": True, "scale": 100}
+HINT = "tab/←→ agent · a all · pgup/pgdn session · space prompt · ctrl+wheel/+/- zoom · 0 reset · drag pan · esc close"
 BG_OPACITY = IS_MAC or sys.platform == "win32"  # a see-through background needs Windows' or macOS' window support
 
 
@@ -251,6 +251,9 @@ class AgentNetworkWindow:
         self.t0 = time.time()
         self.theme = None
         self.opts = load_options(getattr(pet, "cfg", {}))
+        self.gz = 1.0  # the graph's own zoom (zoom buttons, ctrl + wheel, + / -)
+        self.blocks = []  # (key, item, net) of every session the graph shows (several when compact and not tabbed)
+        self._content, self._center_next, self._panned = None, True, False
         self.u = self.opts["scale"] / 100
         self.s = 1.5 * self.u
         self._applied = {}  # window attributes last set (only touched when they change)
@@ -336,7 +339,7 @@ class AgentNetworkWindow:
         if name == "close":
             self.close()
             return "break"
-        toggles = {"frame": "frameless", "pin": "on_top", "each": "separate"}
+        toggles = {"frame": "frameless", "pin": "on_top", "each": "separate", "tabs": "tabbed"}
         if name in toggles:
             o[toggles[name]] = not o[toggles[name]]
         elif name == "alpha":
@@ -344,6 +347,9 @@ class AgentNetworkWindow:
         elif name == "nodes":
             o["node_alpha"] = _snap(o["node_alpha"] + d * OPACITY_STEP, ALPHA_MIN, 100, OPACITY_STEP)
         self._spin_until = time.time() + 0.6  # the cog turns a little on every change
+        if name == "tabs":
+            self._center_next = True
+            self._refresh()
         if name != "each":
             self._apply_options(changed=name)
             if self.menu_open:
@@ -376,6 +382,8 @@ class AgentNetworkWindow:
         """The same settings as another agent network window (changed there)."""
         old = self.opts
         self.opts = dict(opts)
+        if self.opts.get("tabbed") != old.get("tabbed"):
+            self._center_next = True
         if self.opts["scale"] != old.get("scale"):
             self.set_scale(self.opts["scale"] / 100, save=False)
         self._apply_options()
@@ -600,6 +608,9 @@ class AgentNetworkWindow:
         self.f_main = tkfont.Font(root=self.win, family=core.UI_FONT, size=max(5, int(round(8 * s))))
         self.f_bold = tkfont.Font(root=self.win, family=core.UI_FONT, size=max(5, int(round(8 * s))), weight="bold")
         self.f_small = tkfont.Font(root=self.win, family=core.UI_FONT, size=max(5, int(round(7 * s))))
+        self.g_main = tkfont.Font(root=self.win, family=core.UI_FONT, size=max(5, int(round(8 * s))))
+        self.g_bold = tkfont.Font(root=self.win, family=core.UI_FONT, size=max(5, int(round(8 * s))), weight="bold")
+        self.g_small = tkfont.Font(root=self.win, family=core.UI_FONT, size=max(5, int(round(7 * s))))
         w = self.win
         self.head = tk.Frame(w)
         self.head.pack(fill="x")
@@ -652,6 +663,28 @@ class AgentNetworkWindow:
         self.canvas = tk.Canvas(self.body, highlightthickness=0, bd=0, height=self.px(150))
         self.canvas.pack(fill="both", expand=True)
         self.canvas.bind("<Configure>", self._on_resize)
+        self.canvas.bind("<ButtonPress-1>", self._pan_start)
+        self.canvas.bind("<B1-Motion>", self._pan_move)
+        self.canvas.bind("<ButtonRelease-1>", self._pan_end, add="+")
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self.canvas.bind(seq, self._wheel)
+        # zoom controls (top left of the graph) and the stats node (bottom right): fixed, outside the zoom
+        self.zoombar = tk.Frame(self.canvas, bd=0, highlightthickness=1)
+        self.zoom_btns = []
+        for text, fn in (("[-]", lambda: self.zoom(1 / 1.25)), (None, None), ("[+]", lambda: self.zoom(1.25)),
+                         ("[reset]", lambda: self.zoom(reset=True)), ("[center]", self.center_view)):
+            lab = tk.Label(self.zoombar, text=text or "100%", font=self.f_small, cursor="" if fn is None else "hand2",
+                           padx=self.px(2))
+            lab.pack(side="left")
+            if fn:
+                lab.bind("<Button-1>", lambda e, fn=fn: fn())
+            else:
+                self.zoom_label = lab
+            self.zoom_btns.append(lab)
+        self.zoombar.place(x=self.px(4), y=self.px(4), anchor="nw")
+        self.statc = tk.Canvas(self.canvas, bd=0, highlightthickness=1)
+        self.statc.place(relx=1.0, rely=1.0, x=-self.px(6), y=-self.px(6), anchor="se")
+        self.tip = tk.Label(w, font=self.f_small, justify="left", anchor="w", padx=self.px(6), pady=self.px(3))
         self.sep = tk.Frame(self.body, height=1)
         self.sep.pack(fill="x")
         self.tabs = tk.Frame(self.body)
@@ -702,6 +735,11 @@ class AgentNetworkWindow:
         w.bind("<Up>", key(lambda: self.step_option(-1) if self.overlay_open else self.log.yview_scroll(-1, "units")))
         for k in ("a", "A"):
             w.bind(k, key(lambda: self.select(-1)))
+        for k in ("plus", "equal", "KP_Add"):
+            w.bind(f"<{k}>", key(lambda: self.zoom(1.25)))
+        for k in ("minus", "KP_Subtract"):
+            w.bind(f"<{k}>", key(lambda: self.zoom(1 / 1.25)))
+        w.bind("0", key(lambda: self.zoom(reset=True) if not self.overlay_open else None))
         w.bind("<Prior>", key(lambda: self.step_session(-1), True))
         w.bind("<Next>", key(lambda: self.step_session(1), True))
         w.bind("<space>", key(lambda: self.open_overlay(not self.overlay_open)))
@@ -729,9 +767,7 @@ class AgentNetworkWindow:
         if self.menu_open and not inside:
             self.toggle_menu(False)
         try:
-            in_stats = str(e.widget).startswith(str(self.statdrop)) or (
-                e.widget is self.canvas and "current" in self.canvas.gettags("current") and any(
-                    t.startswith("stat_") for t in self.canvas.gettags("current")))
+            in_stats = str(e.widget).startswith(str(self.statdrop)) or str(e.widget).startswith(str(self.statc))
         except (tk.TclError, AttributeError):
             in_stats = True
         if self.stat_open and not in_stats:
@@ -798,6 +834,8 @@ class AgentNetworkWindow:
         if not IS_MAC:
             rows.append(("frame", "frameless", "title bar", True))
         rows.append(("each", "separate", "compact (one window for every session)", True))
+        if not o["separate"] and not self.pinned:
+            rows.append(("tabs", "tabbed", "  tabbed (one session at a time)", False))
         for name, opt, text, inverted in rows:
             on = bool(o[opt]) != inverted
             lab = tk.Label(m, text=f"{'[on ]' if on else '[off]'} {text}", font=self.f_main, bg=P["bar"],
@@ -866,6 +904,10 @@ class AgentNetworkWindow:
         self.log.configure(bg=P["bg"], fg=P["tx"], insertbackground=P["bg"], selectbackground=P["sel"],
                            selectforeground=P["hi"])
         self.chip.configure(bg=P["redbg"], fg=P["red"], highlightbackground=P["red"])
+        self.zoombar.configure(bg=P["bar"], highlightbackground=P["line"])
+        for lab in self.zoom_btns:
+            lab.configure(bg=P["bar"], fg=P["mu"] if lab is self.zoom_label else P["tx"])
+        self._statc_sig = None
         self.overlay.configure(bg=P["node"], highlightbackground=P["red"], highlightthickness=1, bd=0)
         try:
             core.titlebar_theme(self.win)
@@ -937,6 +979,11 @@ class AgentNetworkWindow:
             self.net = agents.read_network(self.item)
         if len(self.net["agents"]) != n_before:
             self._update_minsize()
+        self.blocks = [(self.key, self.item, self.net)] if self.item else []
+        if not self.pinned and not self.opts["separate"] and not self.opts["tabbed"]:
+            # compact, not tabbed: every session's graph, one under the other
+            self.blocks = [(i["key"], i, self.net if i["key"] == self.key else agents.read_network(i))
+                           for i in sessions]
         self.stats = agents.network_stats(self.net)
         if self.stat_open:
             self._fill_stat()
@@ -983,35 +1030,50 @@ class AgentNetworkWindow:
             self._robots[key] = core._to_photo(im)
         return self._robots[key]
 
-    def _stats_box(self, W, H):
-        """The stats node's box: bottom right of the graph."""
-        sl = self.f_small.metrics("linespace")
-        w, h = self.px(150), sl * 4 + self.px(10)
-        return (W - w - self.px(8), H - h - self.px(8), w, h)
+    # The graph is drawn at its own zoom (self.gz) on top of the window's scale: gpx() for sizes, g_* fonts.
+    # Panning moves the canvas view over it (scan_mark / scan_dragto); everything else stays put.
+    def gpx(self, n):
+        return int(round(n * self.s * self.gz))
 
-    def _layout(self, W, H):
-        """Node boxes: main on the left, subagents in one column (two when there are many), clear of the stats
-        node at the bottom right."""
-        n = len(self.net["agents"]) - 1
-        lh = self.f_main.metrics("linespace")
-        pad = self.px(10)
-        main_w, main_h = self.px(150), lh * 4 + pad
+    def _graph_fonts(self):
+        size = max(4, int(round(8 * self.s * self.gz)))
+        small = max(4, int(round(7 * self.s * self.gz)))
+        for f, sz in ((self.g_main, size), (self.g_bold, size), (self.g_small, small)):
+            if f.cget("size") != sz:
+                f.configure(size=sz)
+
+    def _block_height(self, net, H):
+        """Height one session's graph needs (tabbed off: the sessions are stacked)."""
+        n = max(0, len(net["agents"]) - 1)
+        lh = self.g_main.metrics("linespace")
+        cols = 1 if n <= 4 else 2
+        rows = n if cols == 1 else math.ceil(n / 2)
+        main_h = lh * 4 + self.gpx(10)
+        sub_h = lh * (4 if cols == 1 else 5) + self.gpx(8)
+        return int(max(main_h, rows * (sub_h + self.gpx(6))) + 2 * self.gpx(10) + lh * 1.6)
+
+    def _layout(self, net, W, H, reserve=None):
+        """Node boxes: main on the left, subagents in one column (two when there are many). reserve: (x, y) of a box
+        at the bottom right that the column should stay above."""
+        n = len(net["agents"]) - 1
+        lh = self.g_main.metrics("linespace")
+        pad = self.gpx(10)
+        main_w, main_h = self.gpx(150), lh * 4 + pad
         boxes = [(pad, max(pad, (H - main_h) // 2), main_w, main_h)]
         if n <= 0:
             return boxes, False
         cols = 1 if n <= 4 else 2
-        sub_w = self.px(140)
-        sub_h = lh * (4 if cols == 1 else 5) + self.px(8)
+        sub_w = self.gpx(140)
+        sub_h = lh * (4 if cols == 1 else 5) + self.gpx(8)
         per_col = math.ceil(n / cols)
-        x0 = pad + main_w + self.px(70)
-        gap_x = sub_w + self.px(40)
-        sx, sy, _, _ = self._stats_box(W, H)
-        if x0 + (cols - 1) * gap_x + sub_w > sx - pad:  # the column would run into the stats node: stay above it
-            H = max(sub_h + 2 * pad, sy)
+        x0 = pad + main_w + self.gpx(70)
+        gap_x = sub_w + self.gpx(40)
+        if reserve and x0 + (cols - 1) * gap_x + sub_w > reserve[0] - pad:
+            H = max(sub_h + 2 * pad, reserve[1])
         for k in range(n):
             col, row = divmod(k, per_col)
             rows = min(per_col, n - col * per_col)
-            step = max(sub_h + self.px(6), (H - 2 * pad) / max(1, rows))
+            step = max(sub_h + self.gpx(6), (H - 2 * pad) / max(1, rows))
             top = pad + (H - 2 * pad - step * rows) / 2 + row * step + (step - sub_h) / 2
             boxes.append((x0 + col * gap_x, int(max(pad // 2, top)), sub_w, sub_h))
         return boxes, cols == 1
@@ -1019,23 +1081,74 @@ class AgentNetworkWindow:
     def _draw_graph(self, force=False):
         c, P = self.canvas, self.P
         W, H = max(50, c.winfo_width()), max(50, c.winfo_height())
-        sig = (W, H, self.sel, self.theme, self.s, self.opts["node_alpha"], self.opts["bg_alpha"], self.in_window,
-               repr(self.stats), self.stat_open,
-               tuple((a["name"], a["state"], a["model_label"], a["effort"], a["ctx"], a["thought"])
-                     for a in self.net["agents"]))
+        blocks = self.blocks
+        sig = (W, H, self.gz, self.sel, self.key, self.theme, self.s, self.opts["node_alpha"], self.in_window,
+               tuple((k, tuple((a["name"], a["state"], a["model_label"], a["effort"], a["ctx"], a["thought"])
+                               for a in net["agents"])) for k, _, net in blocks))
         if sig == self._graph_sig and not force:
+            self._draw_stats()
             return
         self._graph_sig = sig
+        self._graph_fonts()
+        # keep the view where it was (as a fraction of the drawing) unless a centre was asked for
+        old = getattr(self, "_content", None)
+        view = (c.canvasx(0), c.canvasy(0)) if old else None
         c.delete("all")
         self.edges = []
-        ags = self.net["agents"]
-        if not ags:
+        if not blocks or not any(net["agents"] for _, _, net in blocks):
+            c.configure(scrollregion=(0, 0, W, H))
+            c.xview_moveto(0)
+            c.yview_moveto(0)
             c.create_text(W // 2, H // 2, text="$ waiting for a session in claude code or codex_",
                           fill=P["mu"], font=self.f_main)
-            self._dots = []
+            self._dots, self._content = [], None
+            self._draw_stats()
             return
-        boxes, beside = self._layout(W, H)
-        lh = self.f_main.metrics("linespace")
+        VW = max(W * self.gz, self.gpx(420))
+        stacked = len(blocks) > 1
+        sbox = self._stats_size()
+        y0 = 0
+        for b, (key, item, net) in enumerate(blocks):
+            bh = self._block_height(net, H) if stacked else max(H * self.gz, self._block_height(net, H))
+            head = 0
+            if stacked:  # each session its own band, with its name
+                head = int(self.g_main.metrics("linespace") * 1.6)
+                on = key == self.key
+                tag = f"band{b}"
+                c.create_rectangle(0, y0, VW, y0 + bh, fill=P["sel"] if on else P["bg"], outline="",
+                                   stipple="gray25" if on else "", tags=tag)
+                c.create_line(0, y0, VW, y0, fill=P["line"])
+                c.create_text(self.gpx(8), y0 + self.gpx(4), anchor="nw", tags=tag,
+                              text=("▍" if on else "  ") + session_label(item).replace("agent-network ▸ ", ""),
+                              fill=P["hi"] if on else P["mu"], font=self.g_bold if on else self.g_small)
+                c.tag_bind(tag, "<Button-1>", lambda e, k=key: self._pick_session(k))
+            reserve = None if stacked else (VW - sbox[0] - self.gpx(8), bh - sbox[1] - self.gpx(8))
+            self._draw_block(b, key, net, 0, y0 + head, VW, bh - head, reserve)
+            y0 += bh
+        x1, y1 = VW, y0
+        self._content = (x1, y1)
+        # scroll region: the drawing plus a view's worth around it, so it can be panned anywhere
+        c.configure(scrollregion=(-W, -H, x1 + W, y1 + H))
+        if self._center_next or not old:
+            self._center_next = False
+            self.center_view()
+        elif view:
+            fx, fy = (view[0] + W / 2) / max(1, old[0]), (view[1] + H / 2) / max(1, old[1])
+            self._scroll_to(fx * x1 - W / 2, fy * y1 - H / 2)
+        self._dots = [c.create_oval(0, 0, 0, 0, fill=col, outline="", state="hidden")
+                      for pts, st, col in self.edges for _ in range(2)]
+        self._draw_stats()
+
+    def _draw_block(self, b, key, net, ox, oy, W, H, reserve):
+        """One session's graph, at (ox, oy) in a W x H area."""
+        c, P = self.canvas, self.P
+        ags = net["agents"]
+        if not ags:
+            return
+        current = key == self.key
+        boxes, beside = self._layout(net, W, H, reserve)
+        boxes = [(x + ox, y + oy, w, h) for x, y, w, h in boxes]
+        lh = self.g_main.metrics("linespace")
         mx, my, mw, mh = boxes[0]
         for i, (a, (x, y, w, h)) in enumerate(zip(ags[1:], boxes[1:]), 1):  # edges first, under the nodes
             p0, p3 = (mx + mw, my + mh / 2), (x, y + h / 2)
@@ -1044,95 +1157,214 @@ class AgentNetworkWindow:
             col = {"working": P["blue"], "needs_input": P["red"], "done": P["grn"]}.get(a["state"], P["line"])
             dash = () if a["state"] == "done" else (3, 4)
             line = [coord for t in range(0, 21) for coord in bezier(*pts, t / 20)]
-            c.create_line(*line, fill=col, width=max(1, self.px(1)), dash=dash, smooth=True)
+            c.create_line(*line, fill=col, width=max(1, self.gpx(1)), dash=dash, smooth=True)
             self.edges.append((pts, a["state"], col))
         for i, (a, (x, y, w, h)) in enumerate(zip(ags, boxes)):
             status_col, status = STATUS.get(a["state"], STATUS["idle"])
             border = P[status_col] if a["state"] != "idle" else P["line"]
             if a["main"] and a["state"] == "waiting":
                 border = P["amb"]
-            fill = P["sel"] if i == self.sel else P["node"]
-            tag = f"node{i}"
+            picked = current and i == self.sel
+            fill = P["sel"] if picked else P["node"]
+            tag = f"node{b}_{i}"
             c.create_rectangle(x, y, x + w, y + h, fill=fill, stipple=dither(self.opts["node_alpha"]),
-                               outline=border, width=max(1, self.px(1.3 if i == self.sel else 1)), tags=tag)
+                               outline=border, width=max(1, self.gpx(1.3 if picked else 1)), tags=tag)
             img = self.robot(a["state"], max(6, int(lh * 1.15)))
-            c.create_image(x + self.px(6), y + self.px(5), image=img, anchor="nw", tags=tag)
-            tx = x + self.px(6) + img.width() + self.px(5)
-            inner = x + w - tx - self.px(4)
-            c.create_text(tx, y + self.px(5), text=self._fit(a["name"], inner, self.f_bold), anchor="nw",
-                          fill=self.color(i), font=self.f_bold, tags=tag)
+            c.create_image(x + self.gpx(6), y + self.gpx(5), image=img, anchor="nw", tags=tag)
+            tx = x + self.gpx(6) + img.width() + self.gpx(5)
+            inner = x + w - tx - self.gpx(4)
+            c.create_text(tx, y + self.gpx(5), text=self._fit(a["name"], inner, self.g_bold), anchor="nw",
+                          fill=self.color(i), font=self.g_bold, tags=tag)
             info = " · ".join(v for v in (a["model_label"], a["effort"]) if v)
             ctx = agents.fmt_tokens(a["ctx"])
             ctx_line = (f"ctx {ctx}" + (f"/{agents.fmt_tokens(a['ctx_max'])}" if a["ctx_max"] else "")) if ctx else ""
             rows = [info, ctx_line]  # the context always on a line of its own
             if not a["main"] and not beside:
                 rows.append(a["thought"])
-            ly = y + self.px(5) + lh
+            ly = y + self.gpx(5) + lh
             for row in rows:
                 if row:
-                    c.create_text(x + self.px(8), ly, text=self._fit(row, w - self.px(14), self.f_small), anchor="nw",
-                                  fill=P["mu"], font=self.f_small, tags=tag)
+                    c.create_text(x + self.gpx(8), ly, text=self._fit(row, w - self.gpx(14), self.g_small),
+                                  anchor="nw", fill=P["mu"], font=self.g_small, tags=tag)
                 ly += lh
             label = status
-            if i == self.in_window:
+            if current and i == self.in_window:
                 label = "! answer in the window"
             if a["main"] and a["state"] == "waiting" and a["thought"]:
                 label = "… " + a["thought"]
-            c.create_text(x + self.px(8), y + h - self.px(4), text=self._fit(label, w - self.px(14), self.f_small),
-                          anchor="sw", fill=P[status_col], font=self.f_small, tags=tag)
+            c.create_text(x + self.gpx(8), y + h - self.gpx(4), text=self._fit(label, w - self.gpx(14), self.g_small),
+                          anchor="sw", fill=P[status_col], font=self.g_small, tags=tag)
             if not a["main"] and beside and a["thought"]:
-                sx, sy, _, _ = self._stats_box(W, H)
-                right = sx - self.px(8) if y + h / 2 > sy - self.px(4) else W  # not under the stats node
-                room = right - (x + w) - self.px(18)
-                if room > self.px(40):
-                    c.create_text(x + w + self.px(10), y + h / 2, text=self._fit(f"› {a['thought']}", room,
-                                                                                 self.f_small),
-                                  anchor="w", fill=P[status_col] if a["state"] != "done" else P["grn"],
-                                  font=self.f_small, tags=tag)
-            c.tag_bind(tag, "<Button-1>", lambda e, i=i: self.select(i))
+                right = ox + W
+                if reserve and y + h / 2 > oy + reserve[1] - self.gpx(4):
+                    right = ox + reserve[0] - self.gpx(8)  # not under the stats node
+                room = right - (x + w) - self.gpx(18)
+                if room > self.gpx(40):
+                    c.create_text(x + w + self.gpx(10), y + h / 2,
+                                  text=self._fit(f"› {a['thought']}", room, self.g_small), anchor="w",
+                                  fill=P[status_col] if a["state"] != "done" else P["grn"], font=self.g_small,
+                                  tags=tag)
+            c.tag_bind(tag, "<ButtonRelease-1>", lambda e, k=key, i=i: self._click_node(e, k, i))
             c.tag_bind(tag, "<Enter>", lambda e: c.configure(cursor="hand2"))
             c.tag_bind(tag, "<Leave>", lambda e: c.configure(cursor=""))
-        self._draw_stats(W, H)
-        self._dots = [c.create_oval(0, 0, 0, 0, fill=col, outline="", state="hidden")
-                      for pts, st, col in self.edges for _ in range(2)]
 
-    # ---- the stats node and its drop-downs
-    def _draw_stats(self, W, H):
-        c, P, st = self.canvas, self.P, self.stats
-        x, y, w, h = self._stats_box(W, H)
+    def _click_node(self, e, key, i):
+        if self._panned:
+            return  # that was a drag
+        if key != self.key:
+            self._pick_session(key)
+        self.select(i)
+
+    def _pick_session(self, key):
+        if self._panned or key == self.key:
+            return
+        self.key, self.sel = key, -1
+        self.open_overlay(False)
+        self._log_sig = self._graph_sig = self._prompt_sig = self._tabs_sig = None
+        self._refresh()
+
+    # ---- zoom and pan
+    def zoom(self, factor=None, at=None, reset=False):
+        """Zoom the graph (0.4x - 3x) around a point of the view (default: its middle)."""
+        c = self.canvas
+        old = self.gz
+        new = 1.0 if reset else min(3.0, max(0.4, round(old * factor, 2)))
+        if abs(new - old) < 1e-3 and not reset:
+            return "break"
+        W, H = c.winfo_width(), c.winfo_height()
+        mx, my = at if at else (W / 2, H / 2)
+        content = getattr(self, "_content", None)
+        frac = None
+        if content:
+            frac = (c.canvasx(mx) / max(1, content[0]), c.canvasy(my) / max(1, content[1]))
+        self.gz = new
+        self._robots.clear()
+        self._center_next = reset
+        self._draw_graph(force=True)
+        if frac and not reset and self._content:
+            self._scroll_to(frac[0] * self._content[0] - mx, frac[1] * self._content[1] - my)
+        self._update_zoombar()
+        return "break"
+
+    def center_view(self):
+        """The drawing in the middle of the view (its top first when it's taller than the view)."""
+        c = self.canvas
+        W, H = c.winfo_width(), c.winfo_height()
+        x1, y1 = getattr(self, "_content", None) or (W, H)
+        self._scroll_to((x1 - W) / 2, (y1 - H) / 2 if y1 <= H else 0)
+        return "break"
+
+    def _scroll_to(self, left, top):
+        c = self.canvas
+        try:
+            x0, y0, x1, y1 = (float(v) for v in str(c.cget("scrollregion")).split())
+        except ValueError:
+            return
+        c.xview_moveto((left - x0) / max(1, x1 - x0))
+        c.yview_moveto((top - y0) / max(1, y1 - y0))
+
+    def _pan_start(self, e):
+        self._panned = False
+        self._pan_from = (e.x, e.y)
+        self.canvas.scan_mark(e.x, e.y)
+
+    def _pan_move(self, e):
+        fx, fy = getattr(self, "_pan_from", (e.x, e.y))
+        if self._panned or abs(e.x - fx) + abs(e.y - fy) > 4:
+            self._panned = True
+            self.canvas.configure(cursor="fleur")
+            self.canvas.scan_dragto(e.x, e.y, gain=1)
+
+    def _pan_end(self, e):
+        if self._panned:
+            self.canvas.configure(cursor="")
+            self.win.after_idle(lambda: setattr(self, "_panned", False))
+
+    def _wheel(self, e):
+        """Ctrl + wheel zooms at the pointer; the wheel alone scrolls (shift: sideways)."""
+        up = (getattr(e, "delta", 0) > 0) or getattr(e, "num", 0) == 4
+        if e.state & 0x4 or (IS_MAC and e.state & 0x8):
+            return self.zoom(1.15 if up else 1 / 1.15, at=(e.x, e.y))
+        if e.state & 0x1:
+            self.canvas.xview_scroll(-2 if up else 2, "units")
+        else:
+            self.canvas.yview_scroll(-2 if up else 2, "units")
+        return "break"
+
+    def _update_zoombar(self):
+        try:
+            self.zoom_label.configure(text=f"{int(round(self.gz * 100))}%")
+        except (tk.TclError, AttributeError):
+            pass
+
+    # ---- the stats node and its drop-downs (fixed at the bottom right of the graph, outside the zoom)
+    def _stats_size(self):
         sl = self.f_small.metrics("linespace")
-        c.create_rectangle(x, y, x + w, y + h, fill=P["node"], stipple=dither(self.opts["node_alpha"]),
-                           outline=P["line"], width=max(1, self.px(1)))
-        c.create_text(x + self.px(6), y + self.px(4), text="≡ this task", anchor="nw", fill=P["hi"],
-                      font=self.f_bold)
+        return self.px(150), sl * 4 + self.px(10)
+
+    def _draw_stats(self):
+        sc, P, st = self.statc, self.P, self.stats
+        w, h = self._stats_size()
+        sig = (w, h, self.theme, repr(st), self.stat_open, self.opts["node_alpha"])
+        if sig == getattr(self, "_statc_sig", None):
+            return
+        self._statc_sig = sig
+        sl = self.f_small.metrics("linespace")
+        try:
+            sc.configure(width=w, height=h, bg=P["node"], highlightbackground=P["line"], highlightthickness=1)
+            sc.delete("all")
+        except tk.TclError:
+            return
+        sc.create_text(self.px(6), self.px(4), text="≡ this task", anchor="nw", fill=P["hi"], font=self.f_bold)
+        if st.get("missing"):  # the task began before the part of a transcript that was read
+            sc.create_text(w - self.px(6), self.px(4), text="⚠", anchor="ne", fill=P["amb"], font=self.f_bold,
+                           tags="warn")
+            sc.tag_bind("warn", "<Enter>", lambda e: self._show_tip(
+                "This task started a long way back: AIPet reads only the last part of each transcript (about 256 KB "
+                "for the main agent, 128 KB for a subagent), so older subagents, tool calls and skills may be "
+                "missing from these lists.", sc, w))
+            sc.tag_bind("warn", "<Leave>", lambda e: self._hide_tip())
         n_calls = sum(n for _, n in st["subagents"])
         tool_calls = sum(n for _, n in st["tools"])
         rows = (("subs", f"subagents {n_calls} ▾"), ("ctx", f"context {agents.fmt_tokens(st['ctx_total']) or 0} ▾"),
                 ("tools", f"tools {len(st['tools'])} · {tool_calls} calls ▾"))
         for k, (kind, text) in enumerate(rows):
             tag = f"stat_{kind}"
-            on = getattr(self, "stat_open", None) == kind
-            c.create_text(x + self.px(8), y + self.px(6) + sl * (k + 1), text=self._fit(text, w - self.px(12),
-                                                                                        self.f_small),
-                          anchor="nw", fill=P["blue"] if on else P["tx"], font=self.f_small, tags=tag)
-            c.tag_bind(tag, "<Button-1>", lambda e, k=kind: self.toggle_stat(k))
-            c.tag_bind(tag, "<Enter>", lambda e: c.configure(cursor="hand2"))
-            c.tag_bind(tag, "<Leave>", lambda e: c.configure(cursor=""))
-        self._stats_xy = (x, y, w, h)
+            on = self.stat_open == kind
+            sc.create_text(self.px(8), self.px(6) + sl * (k + 1), text=self._fit(text, w - self.px(12), self.f_small),
+                           anchor="nw", fill=P["blue"] if on else P["tx"], font=self.f_small, tags=tag)
+            sc.tag_bind(tag, "<Button-1>", lambda e, k=kind: self.toggle_stat(k))
+            sc.tag_bind(tag, "<Enter>", lambda e: sc.configure(cursor="hand2"))
+            sc.tag_bind(tag, "<Leave>", lambda e: sc.configure(cursor=""))
+
+    def _show_tip(self, text, near, width):
+        P = self.P
+        try:
+            self.tip.configure(text=text, bg=P["bar"], fg=P["tx"], wraplength=self.px(260),
+                               highlightbackground=P["amb"], highlightthickness=1)
+            self.tip.place(in_=near, x=width, y=0, anchor="se")
+            self.tip.lift()
+        except tk.TclError:
+            pass
+
+    def _hide_tip(self):
+        try:
+            self.tip.place_forget()
+        except tk.TclError:
+            pass
 
     def toggle_stat(self, kind):
         """Open (or fold) a read-only drop-down of the stats node: subagents, every context, tools and skills."""
-        if getattr(self, "stat_open", None) == kind:
+        if self.stat_open == kind:
             kind = None
         self.stat_open = kind
-        self._graph_sig = None
         if kind is None:
             self.statdrop.place_forget()
         else:
             if self.menu_open:
                 self.toggle_menu(False)
             self._fill_stat()
-        self._draw_graph(force=True)
+        self._draw_stats()
         return "break"
 
     def _stat_lines(self, kind):
@@ -1150,6 +1382,8 @@ class AgentNetworkWindow:
         lines = [(f"{name:<26} ×{n}", "") for name, n in st["tools"]] or [("# no tool calls in this task", "mu")]
         lines.append(("── skills ──", "mu"))
         lines += [(f"{name:<26} ×{n}", "") for name, n in st["skills"]] or [("# no skills used", "mu")]
+        if st.get("missing"):
+            lines.append(("⚠ older entries may be missing (long task)", "warn"))
         return lines
 
     def _fill_stat(self):
@@ -1166,11 +1400,11 @@ class AgentNetworkWindow:
                     height=min(14, len(lines)))
         t.delete("1.0", "end")
         t.tag_configure("mu", foreground=P["mu"])
+        t.tag_configure("warn", foreground=P["amb"])
         for text, tag in lines:
             t.insert("end", text + "\n", tag)
         t.configure(state="disabled")
-        x, y, w, h = getattr(self, "_stats_xy", (0, 0, 0, 0))
-        self.statdrop.place(in_=self.canvas, x=x + w, y=y - self.px(4), anchor="se")
+        self.statdrop.place(in_=self.statc, relx=1.0, x=0, y=-self.px(4), anchor="se")
         self.statdrop.lift()
 
     @staticmethod
@@ -1189,7 +1423,7 @@ class AgentNetworkWindow:
             return
         try:
             t = time.time() - self.t0
-            r = max(2, self.px(2.2))
+            r = max(2, self.gpx(2.2))
             for k, (pts, state, col) in enumerate(self.edges):
                 for j in range(2):
                     if 2 * k + j >= len(self._dots):
