@@ -771,15 +771,15 @@ class AgentNetworkWindow:
             self.close_btn.pack(side="right", before=self.cog)
         else:
             self.close_btn.pack_forget()
-        if frameless and sys.platform != "win32":
+        if frameless:  # (Windows' own edges are only a few pixels wide: these give more to grab)
             # no title bar, so no window frame to drag: thin handles along the edges, and the corner grip
-            t = max(4, self.px(3))
+            t = max(6, self.px(4))  # a frame wide enough to grab
             for side, h in self.handles.items():
                 spot = {"e": dict(relx=1.0, y=0, anchor="ne", width=t, relheight=1.0),
                         "w": dict(x=0, y=0, anchor="nw", width=t, relheight=1.0),
                         "s": dict(x=0, rely=1.0, anchor="sw", height=t, relwidth=1.0),
                         "sw": dict(x=0, rely=1.0, anchor="sw", width=3 * t, height=3 * t)}[side]
-                h.configure(bg=self.P["line"])
+                h.configure(bg=self.P["bar"], highlightthickness=0)
                 h.place(**spot)
                 h.lift()
             self.grip.place(relx=1.0, rely=1.0, anchor="se")
@@ -801,6 +801,16 @@ class AgentNetworkWindow:
         return toggle_maximize(self.win, self)
 
     def _on_resize(self, e=None):
+        """The graph is redrawn once the size has settled (redrawing on every step of a resize drag flickers)."""
+        if getattr(self, "_resize_job", None):
+            try:
+                self.win.after_cancel(self._resize_job)
+            except tk.TclError:
+                pass
+        self._resize_job = self.win.after(70, self._resized)
+
+    def _resized(self):
+        self._resize_job = None
         if not getattr(self, "_user_moved", False):
             self._center_next = True  # until you pan or zoom, the graph stays centred as the window opens / resizes
         self._draw_graph(force=True)
@@ -1230,7 +1240,7 @@ class AgentNetworkWindow:
         self._apply_theme()
         items = getattr(self.pet, "_last_items", [])
         self.item = next((i for i in candidate_sessions(items) if i.get("key") == self.key), None)
-        if self.item is None and self.key is None and not self.pinned:
+        if self.item is None and not self.pinned:  # nothing picked yet, or the picked session is gone
             self.item = pick_session(items)
             self.key = self.item.get("key") if self.item else None
         sessions = candidate_sessions(items)
@@ -1369,7 +1379,7 @@ class AgentNetworkWindow:
         old = getattr(self, "_content", None)
         view = (c.canvasx(0), c.canvasy(0)) if old else None
         c.delete("all")
-        self.edges = []
+        self.edges, self._node_rects = [], []
         fading = self._stacked_mode() and (self._leaving or any(
             b.get("net", {}).get("agents") for b in self._bands.values()))  # the last session still fading out
         if (not blocks or not any(net["agents"] for _, _, net in blocks)) and not fading:
@@ -1428,6 +1438,8 @@ class AgentNetworkWindow:
             fx, fy = (view[0] + W / 2) / max(1, old[0]), (view[1] + H / 2) / max(1, old[1])
             self._scroll_to(fx * x1 - W / 2, fy * y1 - H / 2)
         self._was_animating = animating
+        if not self._center_next and not self._shift_into_view(margin=0.0, check_only=True):
+            self.center_view()  # nothing of the graph in sight (say, its only session moved): show it again
         self._dots = [c.create_oval(0, 0, 0, 0, fill=col, outline="", state="hidden")
                       for pts, st, col in self.edges for _ in range(2)]
         self._draw_stats()
@@ -1555,6 +1567,8 @@ class AgentNetworkWindow:
             picked = current and i == self.sel
             fill = P["sel"] if picked else P["node"]
             tag = f"node{b}_{i}" if b >= 0 else "gone"
+            if b >= 0:
+                self._node_rects.append((x, y, x + w, y + h))
             c.create_rectangle(x, y, x + w, y + h, fill=fill, stipple=dither(self.opts["node_alpha"]),
                                outline=border, width=max(1, self.gpx(1.3 if picked else 1)), tags=tag)
             if a["main"] and title:  # the session's name as a title bar on top of its main node
@@ -1648,6 +1662,7 @@ class AgentNetworkWindow:
         self._draw_graph(force=True)
         if frac and not reset and self._content:
             self._scroll_to(frac[0] * self._content[0] - mx, frac[1] * self._content[1] - my)
+            self._shift_into_view()
         self._update_zoombar()
         return "break"
 
@@ -1681,6 +1696,31 @@ class AgentNetworkWindow:
             self._panned = self._user_moved = True
             self.canvas.configure(cursor="fleur")
             self.canvas.scan_dragto(e.x, e.y, gain=1)
+            if self._shift_into_view():  # held at the edge: re-anchor, so the drag goes on from here
+                self.canvas.scan_mark(e.x, e.y)
+
+    def _shift_into_view(self, margin=0.1, check_only=False):
+        """Keep at least one node at least partly inside the view (less a 10% margin all round): panning, scrolling or
+        zooming stops there. Returns True when the view had to be moved (check_only: whether a node is in sight)."""
+        c = self.canvas
+        rects = getattr(self, "_node_rects", [])
+        if not rects:
+            return True if check_only else False
+        W, H = c.winfo_width(), c.winfo_height()
+        vx0, vy0 = c.canvasx(0) + W * margin, c.canvasy(0) + H * margin
+        vx1, vy1 = c.canvasx(0) + W * (1 - margin), c.canvasy(0) + H * (1 - margin)
+        best = None
+        for x0, y0, x1, y1 in rects:
+            dx = (x1 - vx0 - 1) if x1 < vx0 else ((x0 - vx1 + 1) if x0 > vx1 else 0)
+            dy = (y1 - vy0 - 1) if y1 < vy0 else ((y0 - vy1 + 1) if y0 > vy1 else 0)
+            if not dx and not dy:
+                return True if check_only else False
+            if best is None or abs(dx) + abs(dy) < abs(best[0]) + abs(best[1]):
+                best = (dx, dy)
+        if check_only:
+            return False
+        self._scroll_to(c.canvasx(0) + best[0], c.canvasy(0) + best[1])
+        return True
 
     def _pan_end(self, e):
         if self._panned:
@@ -1697,6 +1737,7 @@ class AgentNetworkWindow:
             self.canvas.xview_scroll(-2 if up else 2, "units")
         else:
             self.canvas.yview_scroll(-2 if up else 2, "units")
+        self._shift_into_view()
         return "break"
 
     def _update_zoombar(self):

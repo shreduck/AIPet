@@ -334,7 +334,7 @@ A live map of one session: the main agent and every subagent it started, Claude 
 - **Settings** drop down from the cogwheel at the top right (it turns while open), kept in `config.json` under
   `agent_window` and applied to every open agent network window: `[on ]` / `[off]` always on top, title bar (off: drag
   the top bar to move; on Windows the window keeps its frame and taskbar button and resizes from its edges as usual,
-  on Linux from thin edge handles and the `◢` corner) and compact (like the pet's compact mode: one
+  plus a wider frame to grab and the `◢` corner, as on Linux) and compact (like the pet's compact mode: one
   window for every session; off: each session gets its own window, titled after it and fanned out) with, in compact,
   tabbed (on: one session at a time, PgUp / PgDn switch; off: every session's graph in its own band, one under the
   other, each session's name a title bar on its main node; click a band to pick the session the logs and prompts
@@ -350,7 +350,9 @@ A live map of one session: the main agent and every subagent it started, Claude 
   drop-down; Esc or a click elsewhere folds it. A small `ⓘ` (hover it) shows when the task began before the part of a
   transcript AIPet reads (its last 256 KB, 128 KB for a subagent): older entries may be missing then.
 - **Zoom and pan** the graph: `[-] 100% [+] [reset] [center]` at its top left, Ctrl + mouse wheel (at the pointer),
-  + / - and 0; drag to pan, the wheel scrolls (Shift: sideways). The stats node and zoom controls stay put.
+  + / - and 0; drag to pan, the wheel scrolls (Shift: sideways). The stats node and zoom controls stay put. Panning,
+  scrolling and zooming stop where at least one node is still in sight (inside a 10% margin), and a view with no
+  node in it re-centres by itself.
 - **Reset agent network appearance** (Appearance, next to Reset pet size, in every menu and the AIPet menu window) puts the default look
   back and centres the open windows on the main screen; one window or one per session stays as it was.
 - **Size**: the window can't get smaller than what everything needs at 50% scale. Shrinking it below what the current
