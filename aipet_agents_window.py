@@ -12,6 +12,11 @@ opacity and for the scale.
 Keys: Tab / Right next agent, Shift+Tab / Left previous, A shared log, PgUp / PgDn other sessions, Space prompt,
 1-9 answer, Esc fold the prompt / settings (or close).
 """
+import aipetlib.ui.agent_shell as agent_shell
+import aipetlib.ui.agent_controls as agent_controls
+import aipetlib.ui.agent_prompts as agent_prompts
+import aipetlib.ui.agent_logs as agent_logs
+import aipetlib.ui.agent_graph as agent_graph
 import json
 import math
 import sys
@@ -648,488 +653,69 @@ class AgentNetworkWindow:
 
     # ---- settings (the cogwheel's drop-down)
     def tool(self, name, d=1):
-        o = self.opts
-        if name == "close":
-            self.close()
-            return "break"
-        toggles = {"frame": "frameless", "pin": "on_top", "each": "separate", "tabs": "tabbed", "tidy": "tidy",
-                   "tail": "log_tail", "tools": "tools", "auto_fit": "auto_fit"}
-        if name in toggles:
-            o[toggles[name]] = not o[toggles[name]]
-            if name == "tail":
-                self._update_tailbtn()
-                if o["log_tail"]:
-                    self.log.see("end")
-        elif name == "alpha":
-            o["alpha"] = _snap(o["alpha"] + d * ALPHA_STEP, ALPHA_MIN, 100, ALPHA_STEP)
-        elif name == "logs":
-            o["log_side"] = LOG_SIDES[(LOG_SIDES.index(o.get("log_side", "bottom")) + d) % len(LOG_SIDES)]
-            self._arrange()
-            self._center_next = True
-        elif name == "nodes":
-            o["node_alpha"] = _snap(o["node_alpha"] + d * OPACITY_STEP, ALPHA_MIN, 100, OPACITY_STEP)
-        self._spin_until = time.time() + 0.6  # the cog turns a little on every change
-        if name in ("tabs", "tools"):
-            self._center_next = True
-            self._refresh()
-        if name != "each":
-            self._apply_options(changed=name)
-            if self.menu_open:
-                self._build_menu()
-        if name == "auto_fit":
-            self._update_auto_fit()
-            self._maybe_auto_fit(force=o["auto_fit"])
-        self._save(name)
-        return "break"
+        return agent_controls.tool(self, sys.modules[__name__], name, d)
 
     def _save(self, name, delay=0):
-        def save():
-            self._save_job = None
-            try:
-                self.pet.cfg[OPTIONS_KEY] = dict(self.opts)
-                core.save_setting(OPTIONS_KEY, dict(self.opts))
-            except Exception as e:
-                core.log_error(f"agent network options: {e!r}")
-            if self.on_options:
-                self.on_options(dict(self.opts), self, name)
-        if self._save_job:
-            try:
-                self.win.after_cancel(self._save_job)
-            except tk.TclError:
-                pass
-            self._save_job = None
-        if delay:
-            self._save_job = self.win.after(delay, save)
-        else:
-            save()
+        return agent_controls._save(self, sys.modules[__name__], name, delay)
 
     def set_options(self, opts):
-        """The same settings as another agent network window (changed there)."""
-        old = self.opts
-        self.opts = dict(opts)
-        if self.opts.get("tabbed") != old.get("tabbed"):
-            self._center_next = True
-        if any(self.opts.get(k) != old.get(k) for k in ("scale", "text_scale")):
-            self._apply_scale()
-        if any(self.opts.get(k) != old.get(k) for k in ("log_side", "log_lines", "log_cols")):
-            self._arrange()
-        if self.opts.get("tools") != old.get("tools"):
-            self._refresh()
-        self._apply_options()
-        self._update_auto_fit()
-        if self.opts.get("auto_fit") != old.get("auto_fit"):
-            self._maybe_auto_fit(force=self.opts.get("auto_fit", False))
+        return agent_controls.set_options(self, sys.modules[__name__], opts)
 
     def reset_appearance(self, opts, cascade=0):
-        """Default look again, centred on the main screen (the AIPet menu's Reset agent network appearance)."""
-        self.toggle_menu(False)
-        self.opts = dict(opts)
-        self._arrange()
-        self._apply_scale(grow=False)
-        self._apply_options()
-        self.cascade, self.at = cascade, None
-        self._place()
-        self.raise_()
-        self._user_moved = False
-        self.win.after(150, self._settle)  # and the graph at 100%, centred
+        return agent_controls.reset_appearance(self, sys.modules[__name__], opts, cascade)
 
     def set_scale(self, u, save=True, grow=True):
-        """Resize every font and drawing. grow: make the window big enough for the new scale."""
-        u = _snap(u * 100, SCALE_MIN, SCALE_MAX, SCALE_STEP) / 100
-        if abs(u - self.u) < 1e-6:
-            return
-        self.opts["scale"] = int(round(u * 100))
-        self._apply_scale(grow=grow)
-        if save:
-            self._save("scale", delay=500)
+        return agent_controls.set_scale(self, sys.modules[__name__], u, save, grow)
 
     def set_text_scale(self, value, save=True):
-        value = _snap(value, TEXT_SCALE_MIN, TEXT_SCALE_MAX, TEXT_SCALE_STEP)
-        if value == self.opts["text_scale"]:
-            return
-        self.opts["text_scale"] = value
-        self._apply_scale(grow=False)
-        if save:
-            self._save("text_scale", delay=500)
+        return agent_controls.set_text_scale(self, sys.modules[__name__], value, save)
 
     def _font_scale(self):
-        return self.s * self.opts.get("text_scale", 100) / 100
+        return agent_controls._font_scale(self, sys.modules[__name__])
 
     def _apply_scale(self, grow=True):
-        self.u = self.opts["scale"] / 100
-        self.s = 1.5 * self.u
-        fs = self._font_scale()
-        self.f_main.configure(size=max(5, int(round(8 * fs))))
-        self.f_bold.configure(size=max(5, int(round(8 * fs))))
-        self.f_small.configure(size=max(5, int(round(7 * fs))))
-        self._robots.clear()
-        self._graph_sig = self._tabs_sig = self._prompt_sig = self._log_sig = None
-        self._update_minsize()
-        if grow:
-            try:
-                w, h = self.needed()
-                cw, ch = self.win.winfo_width(), self.win.winfo_height()
-                if cw < w or ch < h:
-                    self._fitting = True
-                    self.win.geometry(f"{max(cw, w)}x{max(ch, h)}")
-                    self.win.after(200, lambda: setattr(self, "_fitting", False))
-            except tk.TclError:
-                pass
-        self._size_cog()
-        if self.menu_open:  # resize the drop-down in place (rebuilding it would drop a slider being dragged)
-            for sl in getattr(self, "_sliders", []):
-                sl.size(self.px(150), self.f_small.metrics("linespace") + self.px(4))
-            if getattr(self, "scale_slider", None):
-                self.scale_slider.set(self.opts["scale"], notify=False)
-            if getattr(self, "text_scale_slider", None):
-                self.text_scale_slider.set(self.opts["text_scale"], notify=False)
-            self._place_menu()
-        self._refresh()
+        return agent_controls._apply_scale(self, sys.modules[__name__], grow)
 
     # ---- the backdrop behind a see-through graph background
     def _sync_backdrop(self):
-        """Show / move / restyle the backdrop window: exactly under the graph, right below this window."""
-        want = bool(self._applied.get("clear"))
-        b = getattr(self, "backdrop", None)
-        try:
-            if not want:
-                if b is not None:
-                    b.destroy()
-                self.backdrop = None
-                return
-            if b is None or not b.winfo_exists():
-                b = self.backdrop = tk.Toplevel(self.win)
-                b.withdraw()
-                b.overrideredirect(True)
-                for seq in ("<Button-1>", "<Button-3>"):
-                    b.bind(seq, lambda e: self._restack(focus=True))
-            P, o = self.P, self.opts
-            b.configure(bg=P["bg"])
-            b.attributes("-alpha", max(0.05, o["alpha"] * o["bg_alpha"] / 10000))
-            b.attributes("-topmost", bool(o["on_top"]))
-            c = self.canvas
-            x, y, w, h = c.winfo_rootx(), c.winfo_rooty(), c.winfo_width(), c.winfo_height()
-            if w > 1 and h > 1 and self.win.winfo_viewable():
-                b.geometry(f"{w}x{h}+{x}+{y}")
-                if b.state() != "normal":
-                    b.deiconify()
-                self._restack()
-            elif b.state() == "normal":
-                b.withdraw()
-        except tk.TclError:
-            pass
+        return agent_controls._sync_backdrop(self, sys.modules[__name__])
 
     def _restack(self, focus=False):
-        """The backdrop right below this window (after this window was brought to the front, for instance)."""
-        b = getattr(self, "backdrop", None)
-        try:
-            if b is not None and b.winfo_exists() and b.state() == "normal":
-                b.lower(self.win)
-            if focus:
-                self.win.lift()
-                self.win.focus_force()
-        except tk.TclError:
-            pass
+        return agent_controls._restack(self, sys.modules[__name__], focus)
 
     def _window_event(self, e):
-        if e.widget is self.win:
-            self.win.after_idle(self._sync_backdrop)
+        return agent_controls._window_event(self, sys.modules[__name__], e)
 
     def _on_window_resize(self, e):
-        """Resize the viewport without silently shrinking and saving the user's UI scale."""
-        if e.widget is self.win:
-            self._moving_until = time.time() + 0.3  # moved or resized: animations pause until it settles
-        if e.widget is self.win and getattr(self, "backdrop", None) is not None:
-            self.win.after_idle(self._sync_backdrop)  # moved or resized: the backdrop follows
+        return agent_controls._on_window_resize(self, sys.modules[__name__], e)
 
     def _apply_options(self, changed=None):
-        o, P, w = self.opts, self.P, self.win
-        # Window attributes only when they change: re-setting -alpha / -transparentcolor on Windows makes Tk redo
-        # the layered window, which could resize it
-        geo = None
-        try:
-            geo = w.geometry()
-        except tk.TclError:
-            pass
-        bg = P["bg"]
-        # Background opacity: the graph's background colour is made see-through, and a backdrop window of our own
-        # sits right under it at the chosen opacity. Through the hole you see the backdrop (and, faintly, what is
-        # behind it), and the backdrop takes the clicks, so nothing behind the window can be clicked by accident.
-        see_through = BG_OPACITY and o["bg_alpha"] < 100
-        want = {"topmost": bool(o["on_top"]), "alpha": o["alpha"] / 100,
-                "clear": (key_color(P["bg"]) if not IS_MAC else "mac") if see_through else ""}
-        try:
-            if self._applied.get("topmost") != want["topmost"]:
-                w.attributes("-topmost", want["topmost"])
-            if self._applied.get("alpha") != want["alpha"]:
-                w.attributes("-alpha", want["alpha"])
-            if self._applied.get("clear") != want["clear"]:
-                if IS_MAC:
-                    w.attributes("-transparent", bool(want["clear"]))
-                elif sys.platform == "win32":
-                    w.attributes("-transparentcolor", want["clear"])
-            self._applied = want
-        except tk.TclError:
-            pass
-        if see_through:
-            bg = "systemTransparent" if IS_MAC else want["clear"] or P["bg"]
-        if sys.platform == "win32":
-            self._win_caption(not o["frameless"])
-        elif changed in (None, "frame") and not IS_MAC:
-            try:
-                if bool(w.overrideredirect()) != o["frameless"]:
-                    w.withdraw()
-                    w.overrideredirect(o["frameless"])
-                    if geo:
-                        w.geometry(geo)
-                    w.deiconify()
-                    w.focus_force()
-            except tk.TclError:
-                pass
-        elif geo and changed in ("alpha", "bg_alpha", "pin", "nodes"):
-            try:  # keep the size, whatever the window manager did
-                w.after_idle(lambda g=geo: w.geometry(g) if w.geometry().split("+")[0] != g.split("+")[0] else None)
-            except tk.TclError:
-                pass
-        try:
-            self.canvas.configure(bg=bg)  # only the graph goes see-through: the logs stay readable
-        except tk.TclError:
-            pass
-        self._sync_backdrop()
-        frameless = o["frameless"] and not IS_MAC
-        if frameless:
-            self.close_btn.pack(side="right", before=self.cog)
-        else:
-            self.close_btn.pack_forget()
-        if frameless:  # (Windows' own edges are only a few pixels wide: these give more to grab)
-            # no title bar, so no window frame to drag: thin handles along the edges, and the corner grip
-            t = max(6, self.px(4))  # a frame wide enough to grab
-            for side, h in self.handles.items():
-                spot = {"e": dict(relx=1.0, y=0, anchor="ne", width=t, relheight=1.0),
-                        "w": dict(x=0, y=0, anchor="nw", width=t, relheight=1.0),
-                        "s": dict(x=0, rely=1.0, anchor="sw", height=t, relwidth=1.0),
-                        "sw": dict(x=0, rely=1.0, anchor="sw", width=3 * t, height=3 * t)}[side]
-                h.configure(bg=self.P["bar"], highlightthickness=0)
-                h.place(**spot)
-                h.lift()
-            self.grip.place(relx=1.0, rely=1.0, anchor="se")
-            self.grip.lift()
-        else:
-            self.grip.place_forget()
-            for h in self.handles.values():
-                h.place_forget()
-        self._update_minsize()
-        self._graph_sig = self._tabs_sig = None
-        self._draw_graph(force=True)
-        self._draw_tabs()
-        self._update_auto_fit()
+        return agent_controls._apply_options(self, sys.modules[__name__], changed)
 
     def _win_caption(self, show):
-        set_caption(self.win, show)
+        return agent_controls._win_caption(self, sys.modules[__name__], show)
 
     def toggle_maximize(self, e=None):
-        """Double-click the top bar: maximise (leaving the taskbar / Dock alone), or back."""
-        return toggle_maximize(self.win, self)
+        return agent_controls.toggle_maximize(self, sys.modules[__name__], e)
 
     def _on_resize(self, e=None):
-        """The graph is redrawn once the size has settled (redrawing on every step of a resize drag flickers)."""
-        if getattr(self, "_resize_job", None):
-            try:
-                self.win.after_cancel(self._resize_job)
-            except tk.TclError:
-                pass
-        self._resize_job = self.win.after(70, self._resized)
+        return agent_controls._on_resize(self, sys.modules[__name__], e)
 
     def _resized(self):
-        self._resize_job = None
-        if not getattr(self, "_user_moved", False):
-            self._center_next = True  # until you pan or zoom, the graph stays centred as the window opens / resizes
-        self._draw_graph(force=True)
-        if getattr(self, "backdrop", None) is not None:
-            self.win.after_idle(self._sync_backdrop)
-        if self.overlay_open:
-            self._place_overlay()
-        if self.menu_open:
-            self._place_menu()
-        self._maybe_auto_fit(force=True)  # the viewport changed even when the nodes did not
+        return agent_controls._resized(self, sys.modules[__name__])
 
     def _drag_start(self, e):
-        self._drag = (e.x_root, e.y_root, self.win.winfo_x(), self.win.winfo_y(), self.win.winfo_width(),
-                      self.win.winfo_height())
+        return agent_controls._drag_start(self, sys.modules[__name__], e)
 
     def _drag_move(self, e):
-        try:
-            if self.win.state() == "zoomed" or getattr(self, "_restore_geo", None):
-                return  # maximised: stays put (double-click the bar to restore)
-        except tk.TclError:
-            pass
-        if self._drag:
-            x0, y0, wx, wy, _, _ = self._drag
-            self.win.geometry(f"+{wx + e.x_root - x0}+{wy + e.y_root - y0}")
+        return agent_controls._drag_move(self, sys.modules[__name__], e)
 
     def _resize_move(self, e, side="se"):
-        """Resize a window without a title bar from its edges (the left ones move it too)."""
-        if self._drag:
-            x0, y0, wx, wy, ww, wh = self._drag
-            mw, mh = self.needed(SCALE_MIN / 100)
-            dx, dy = e.x_root - x0, e.y_root - y0
-            w = ww + dx if "e" in side else (ww - dx if "w" in side else ww)
-            h = wh + dy if "s" in side else wh
-            w, h = max(mw, w), max(mh, h)
-            x = wx + (ww - w) if "w" in side else wx
-            self.win.geometry(f"{w}x{h}+{x}+{wy}")
+        return agent_controls._resize_move(self, sys.modules[__name__], e, side)
 
     # ---- building
     def _build(self):
-        s = self._font_scale()
-        self.f_main = tkfont.Font(root=self.win, family=core.UI_FONT, size=max(5, int(round(8 * s))))
-        self.f_bold = tkfont.Font(root=self.win, family=core.UI_FONT, size=max(5, int(round(8 * s))), weight="bold")
-        self.f_small = tkfont.Font(root=self.win, family=core.UI_FONT, size=max(5, int(round(7 * s))))
-        self.g_main = tkfont.Font(root=self.win, family=core.UI_FONT, size=max(5, int(round(8 * s))))
-        self.g_bold = tkfont.Font(root=self.win, family=core.UI_FONT, size=max(5, int(round(8 * s))), weight="bold")
-        self.g_small = tkfont.Font(root=self.win, family=core.UI_FONT, size=max(5, int(round(7 * s))))
-        w = self.win
-        self.head = tk.Frame(w)
-        self.head.pack(fill="x")
-        # Packed right to left before the title, and the title asks for no width of its own: whatever the scale,
-        # the cogwheel and the session arrows keep their place and the title gets cut instead
-        self.cog = tk.Canvas(self.head, highlightthickness=0, bd=0, cursor="hand2")
-        self.cog.pack(side="right", padx=(self.px(6), self.px(6)))
-        self.cog.bind("<Button-1>", lambda e: self.toggle_menu())
-        self.cog.bind("<Enter>", lambda e: setattr(self, "_cog_hover", True))
-        self.cog.bind("<Leave>", lambda e: setattr(self, "_cog_hover", False))
-        self.close_btn = tk.Label(self.head, text="✕", font=self.f_small, cursor="hand2", padx=self.px(4))
-        self.close_btn.bind("<Button-1>", lambda e: self.close())
-        self.next_btn = tk.Label(self.head, text="›", font=self.f_bold, cursor="hand2", padx=self.px(4))
-        self.next_btn.pack(side="right")
-        self.count = tk.Label(self.head, font=self.f_small)
-        self.count.pack(side="right")
-        self.prev_btn = tk.Label(self.head, text="‹", font=self.f_bold, cursor="hand2", padx=self.px(4))
-        self.prev_btn.pack(side="right")
-        self.prompt_mark = tk.Label(self.head, text="▍", font=self.f_bold)
-        self.prompt_mark.pack(side="left")
-        self.title = tk.Label(self.head, font=self.f_main, anchor="w", width=1)
-        self.title.pack(side="left", fill="x", expand=True, pady=self.px(3))
-        for wdg in (self.head, self.title, self.prompt_mark):  # drag the bar to move (needed without a title bar)
-            wdg.bind("<Button-1>", self._drag_start)
-            wdg.bind("<B1-Motion>", self._drag_move)
-            wdg.bind("<Double-Button-1>", self.toggle_maximize)
-        self.prev_btn.bind("<Button-1>", lambda e: self.step_session(-1))
-        self.next_btn.bind("<Button-1>", lambda e: self.step_session(1))
-        self._size_cog()
-
-        self.footbar = tk.Frame(w)
-        self.footbar.pack(side="bottom", fill="x")
-        self.foot = tk.Label(self.footbar, font=self.f_small, anchor="w", padx=self.px(8), pady=self.px(3), text=HINT)
-        self.foot.pack(side="left", fill="x", expand=True)
-        resize_cursor = "size_nw_se" if sys.platform == "win32" else "bottom_right_corner"
-        self.grip = tk.Label(w, text="◢", font=self.f_small, cursor=resize_cursor, padx=self.px(2), pady=0)
-        self.grip.bind("<Button-1>", self._drag_start)
-        self.grip.bind("<B1-Motion>", self._resize_move)
-        cursors = {"e": "sb_h_double_arrow", "w": "sb_h_double_arrow", "s": "sb_v_double_arrow",
-                   "sw": "size_ne_sw" if sys.platform == "win32" else "bottom_left_corner"}
-        self.handles = {}
-        for side, cur in cursors.items():
-            try:
-                h = tk.Frame(w, cursor=cur, bd=0, highlightthickness=0)
-            except tk.TclError:
-                h = tk.Frame(w, bd=0, highlightthickness=0)
-            h.bind("<Button-1>", self._drag_start)
-            h.bind("<B1-Motion>", lambda e, side=side: self._resize_move(e, side))
-            self.handles[side] = h
-        self.body = tk.Frame(w)
-        self.body.pack(fill="both", expand=True)
-        self.canvas = tk.Canvas(self.body, highlightthickness=0, bd=0, height=self.px(150), width=self.px(200))
-        self.canvas.bind("<Configure>", self._on_resize)
-        self.canvas.bind("<ButtonPress-1>", self._pan_start)
-        self.canvas.bind("<B1-Motion>", self._pan_move)
-        self.canvas.bind("<ButtonRelease-1>", self._pan_end, add="+")
-        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
-            self.canvas.bind(seq, self._wheel)
-        # zoom controls (top left of the graph) and the stats node (bottom right): fixed, outside the zoom
-        self.zoombar = tk.Frame(self.canvas, bd=0, highlightthickness=1)
-        self.zoom_btns = []
-        for text, fn in (("[-]", lambda: self.zoom(1 / 1.25)), (None, None), ("[+]", lambda: self.zoom(1.25)),
-                         ("[reset]", lambda: self.zoom(reset=True)), ("[center]", lambda: self.center_view(by_user=True)),
-                         ("[fit all]", self.fit_all)):
-            lab = tk.Label(self.zoombar, text=text or "100%", font=self.f_small, cursor="" if fn is None else "hand2",
-                           padx=self.px(2))
-            lab.pack(side="left")
-            if fn:
-                lab.bind("<Button-1>", lambda e, fn=fn: fn())
-            else:
-                self.zoom_label = lab
-            self.zoom_btns.append(lab)
-        self.auto_fit_var = tk.BooleanVar(master=self.win, value=self.opts.get("auto_fit", False))
-        self.auto_fit_btn = tk.Checkbutton(self.zoombar, text="auto", font=self.f_small,
-                                          variable=self.auto_fit_var, command=lambda: self.tool("auto_fit"),
-                                          bd=0, highlightthickness=0, padx=self.px(2), pady=0, cursor="hand2")
-        self.auto_fit_btn.pack(side="left")
-        self.zoombar.place(x=self.px(4), y=self.px(4), anchor="nw")
-        self.statc = tk.Canvas(self.canvas, bd=0, highlightthickness=1)
-        self.statc.place(relx=1.0, rely=1.0, x=-self.px(6), y=-self.px(6), anchor="se")
-        self.tip = tk.Label(w, font=self.f_small, justify="left", anchor="w", padx=self.px(6), pady=self.px(3))
-        # the split between graph and logs: drag it (the logs get up to 80% of the window)
-        self.sep = tk.Frame(self.body, height=max(3, self.px(3)), width=max(3, self.px(3)))
-        self.sep.bind("<Button-1>", self._split_start)
-        self.sep.bind("<B1-Motion>", self._split_move)
-        self.sep.bind("<ButtonRelease-1>", lambda e: self._save("log_lines", delay=300))
-        self.logbox = tk.Frame(self.body)
-        self.tabs = tk.Frame(self.logbox)
-        self.tabs.pack(fill="x", padx=self.px(6))
-        self.filterbar = tk.Frame(self.logbox)
-        self.filterbar.pack(fill="x", padx=self.px(6), pady=(0, self.px(3)))
-        def filter_button(text, action):
-            button = tk.Label(self.filterbar, text=text, font=self.f_small, cursor="hand2",
-                              padx=self.px(3), pady=self.px(1), takefocus=1, highlightthickness=1)
-            def activate(event):
-                action()
-                return "break"
-            for event in ("<Button-1>", "<space>", "<Return>"):
-                button.bind(event, activate)
-            return button
-        self.show_tools_btn = filter_button("[x] show tools", lambda: self.set_log_filter(
-            "show_tools", not self._log_filters["show_tools"]))
-        self.primary_btn = filter_button("[ ] primary", lambda: self.set_log_filter(
-            "primary", not self._log_filters["primary"]))
-        self.tool_filter_btn = filter_button("[tools ▾]", lambda: self.open_tool_filters(False))
-        self.mcp_filter_btn = filter_button("[MCP ▾]", lambda: self.open_tool_filters(True))
-        self.clear_filters_btn = filter_button("[clear filters]", self.clear_log_filters)
-        self._filter_buttons = (self.show_tools_btn, self.primary_btn, self.tool_filter_btn,
-                                self.mcp_filter_btn, self.clear_filters_btn)
-        self.filterbar.bind("<Configure>", self._layout_log_filters)
-        self.log = tk.Text(self.logbox, height=6, width=40, wrap="word", bd=0, highlightthickness=0,
-                           font=self.f_main, padx=self.px(8), pady=self.px(4), cursor="xterm", takefocus=0,
-                           exportselection=True)
-        self._log_borders = {}
-        self.log.configure(yscrollcommand=self._position_log_borders)
-        self.log.pack(fill="both", expand=True)
-        self._arrange()
-        self.log.bind("<Control-c>", lambda e: self._copy(self.log))
-        self.log.bind("<Control-a>", lambda e: (self.log.tag_add("sel", "1.0", "end"), "break")[1])
-        self.log.bind("<Button-1>", lambda e: self.log.focus_set(), add="+")  # so Ctrl+C reaches it
-        self.log.bind("<Configure>", lambda e: self._draw_log(keep=self.log.yview()[0])
-                      if self.theme is not None else None)
-        self.win.bind("<Configure>", self._on_window_resize, add="+")
-        for seq in ("<FocusIn>", "<Map>", "<Unmap>"):  # brought to the front, minimised or restored
-            self.win.bind(seq, self._window_event, add="+")
-
-        self.chip = tk.Label(w, font=self.f_main, cursor="hand2", padx=self.px(6), pady=self.px(1), bd=1,
-                             relief="solid")
-        self.chip.bind("<Button-1>", lambda e: self.open_overlay(True))
-        self.overlay = tk.Frame(w, bd=1, relief="solid")
-        self.menu = tk.Frame(w, bd=0, highlightthickness=1)
-        self.statdrop = tk.Frame(w, bd=0, highlightthickness=1)
-        self.stathead = tk.Label(self.statdrop, font=self.f_small, anchor="w", cursor="hand2")
-        self.stathead.pack(fill="x", padx=self.px(6), pady=(self.px(3), 0))
-        self.stathead.bind("<Button-1>", lambda e: self.toggle_stat(self.stat_open))
-        self.stattext = tk.Text(self.statdrop, font=self.f_small, bd=0, highlightthickness=0, wrap="none",
-                                takefocus=0, cursor="xterm", padx=self.px(6), pady=self.px(3))
-        self.stattext.bind("<Control-c>", lambda e: self._copy(self.stattext))
-        self.stattext.bind("<Button-1>", lambda e: self.stattext.focus_set(), add="+")
-        self.stattext.pack(fill="both", expand=True)
-        self.stat_open = None
-        self.stats = agents.network_stats({"agents": []})
+        return agent_shell._build(self, sys.modules[__name__])
 
     def _bind_keys(self):
         """Keys work wherever the focus is in the window, except while typing your own answer."""
@@ -1211,47 +797,16 @@ class AgentNetworkWindow:
         return "break"
 
     def _arrange(self):
-        """The logs below, above, left or right of the graph (settings: logs position), split by a draggable line."""
-        side = self.opts.get("log_side", "bottom")
-        across = side in ("left", "right")
-        for wdg in (self.canvas, self.sep, self.logbox):
-            wdg.pack_forget()
-        self.logbox.pack(side=side, fill="y" if across else "x")
-        self.sep.pack(side=side, fill="y" if across else "x")
-        self.sep.configure(cursor="sb_h_double_arrow" if across else "sb_v_double_arrow")
-        self.canvas.pack(side=side, fill="both", expand=True)
-        self._size_log()
+        return agent_logs._arrange(self, sys.modules[__name__])
 
     def _size_log(self):
-        """The logs' size from the settings: lines (above / below) or a width in characters (left / right)."""
-        if self.opts.get("log_side", "bottom") in ("left", "right"):
-            self.log.configure(width=self.opts.get("log_cols", 60), height=1)
-        else:
-            self.log.configure(height=self.opts.get("log_lines", 6), width=1)
+        return agent_logs._size_log(self, sys.modules[__name__])
 
     def _split_start(self, e):
-        self._split = (e.x_root, e.y_root, self.log.winfo_width(), self.log.winfo_height())
+        return agent_logs._split_start(self, sys.modules[__name__], e)
 
     def _split_move(self, e):
-        """Drag the split: the logs from a few lines (or 20 characters) up to 80% of the window."""
-        side = self.opts.get("log_side", "bottom")
-        x0, y0, w0, h0 = getattr(self, "_split", (e.x_root, e.y_root, self.log.winfo_width(), self.log.winfo_height()))
-        if side in ("left", "right"):
-            col = max(1, self.f_main.measure("0"))
-            want = w0 + ((e.x_root - x0) if side == "left" else (x0 - e.x_root))
-            most = int(self.win.winfo_width() * 0.8)
-            cols = int(max(20, min(most // col, want // col)))
-            if cols != self.opts.get("log_cols"):
-                self.opts["log_cols"] = cols
-                self._size_log()
-            return
-        line = max(1, self.f_main.metrics("linespace"))
-        want = h0 + ((e.y_root - y0) if side == "top" else (y0 - e.y_root))
-        most = int(self.win.winfo_height() * 0.8) - self.tabs.winfo_height() - self.px(8)
-        lines = int(max(3, min(most // line, want // line)))
-        if lines != self.opts.get("log_lines"):
-            self.opts["log_lines"] = lines
-            self._size_log()
+        return agent_logs._split_move(self, sys.modules[__name__], e)
 
     def _typing(self):
         try:
@@ -1261,117 +816,22 @@ class AgentNetworkWindow:
 
     # ---- the cogwheel and its drop-down
     def _size_cog(self):
-        d = self.f_bold.metrics("linespace")
-        self.cog.configure(width=d, height=d)
-        self._draw_cog()
+        return agent_controls._size_cog(self, sys.modules[__name__])
 
     def _draw_cog(self):
-        c, P = self.cog, self.P
-        try:
-            d = int(c.cget("width"))
-            c.delete("all")
-            c.configure(bg=P["bar"])
-            cx = cy = d / 2
-            r_out, r_in, r_hole = d * 0.46, d * 0.33, d * 0.13
-            teeth = 8
-            pts = []
-            for k in range(teeth * 4):
-                a = self._spin + k * math.pi / (teeth * 2)
-                r = r_out if (k % 4) in (1, 2) else r_in
-                pts += [cx + r * math.cos(a), cy + r * math.sin(a)]
-            col = P["blue"] if self.menu_open or getattr(self, "_cog_hover", False) else P["mu"]
-            c.create_polygon(*pts, fill=col, outline="")
-            c.create_oval(cx - r_hole, cy - r_hole, cx + r_hole, cy + r_hole, fill=P["bar"], outline="")
-        except (tk.TclError, ValueError):
-            pass
+        return agent_controls._draw_cog(self, sys.modules[__name__])
 
     def toggle_menu(self, show=None):
-        self.menu_open = (not self.menu_open) if show is None else bool(show)
-        if self.menu_open:
-            if self.overlay_open:
-                self.open_overlay(False)
-            self._build_menu()
-        else:
-            self.menu.place_forget()
-        self._draw_cog()
-        return "break"
+        return agent_controls.toggle_menu(self, sys.modules[__name__], show)
 
     def _build_menu(self):
-        P, m = self.P, self.menu
-        for wdg in m.winfo_children():
-            wdg.destroy()
-        m.configure(bg=P["bar"], highlightbackground=P["line"], highlightcolor=P["line"])
-        pad = self.px(8)
-        o = self.opts
-        width = self.px(150)
-        line = self.f_small.metrics("linespace")
-        self._sliders = []
-
-        def section(title, first=False):
-            tk.Label(m, text=f"── {title} " + "─" * 24, font=self.f_small, bg=P["bar"], fg=P["mu"], anchor="w").pack(
-                fill="x", padx=pad, pady=(pad // 2 if first else self.px(6), 0))
-
-        def toggle(name, opt, text, inverted=False):
-            on = bool(o[opt]) != inverted
-            lab = tk.Label(m, text=f"{'[on ]' if on else '[off]'} {text}", font=self.f_main, bg=P["bar"],
-                           fg=P["blue"] if on else P["tx"], anchor="w", cursor="hand2")
-            lab.pack(fill="x", padx=pad)
-            lab.bind("<Button-1>", lambda e, n=name: (self.tool(n), "break")[1])
-
-        def slider(text, lo, hi, step, value, on_change, live=True):
-            row = tk.Frame(m, bg=P["bar"])
-            row.pack(fill="x", padx=pad, pady=(self.px(2), 0))
-            tk.Label(row, text=text.ljust(8), font=self.f_small, bg=P["bar"], fg=P["tx"]).pack(side="left")
-            sl = Slider(self, row, lo, hi, step, value, on_change, live=live)
-            sl.c.pack(side="left", fill="x", expand=True)
-            sl.size(width, line + self.px(4))
-            self._sliders.append(sl)
-            return sl
-
-        section("window", first=True)
-        toggle("pin", "on_top", "always on top")
-        if not IS_MAC:
-            toggle("frame", "frameless", "title bar", inverted=True)
-        toggle("each", "separate", "compact (one window for every session)", inverted=True)
-        if not o["separate"] and not self.pinned:
-            toggle("tabs", "tabbed", "  tabbed (one session at a time)")
-        slider("opacity", ALPHA_MIN, 100, ALPHA_STEP, o["alpha"], lambda v: self._slide("alpha", v))
-        self.scale_slider = slider("window scale", SCALE_MIN, SCALE_MAX, SCALE_STEP, o["scale"],
-                                   lambda v: self.set_scale(v / 100), live=False)
-        self.text_scale_slider = slider("text scale", TEXT_SCALE_MIN, TEXT_SCALE_MAX, TEXT_SCALE_STEP,
-                                        o["text_scale"], self.set_text_scale, live=False)
-
-        section("graph")
-        toggle("auto_fit", "auto_fit", "auto fit all")
-        toggle("tools", "tools", "tool calls")
-        if not o["separate"] and not self.pinned and not o["tabbed"]:
-            toggle("tidy", "tidy", "tidy (each session a titled group)")
-        if BG_OPACITY:
-            slider("backgrnd", ALPHA_MIN, 100, OPACITY_STEP, o["bg_alpha"], lambda v: self._slide("bg_alpha", v))
-        slider("nodes", ALPHA_MIN, 100, OPACITY_STEP, o["node_alpha"], lambda v: self._slide("node_alpha", v))
-
-        section("logs")
-        side = tk.Label(m, text=f"[{o['log_side']:^6}] position (click to move)", font=self.f_main, bg=P["bar"],
-                        fg=P["tx"], anchor="w", cursor="hand2")
-        side.pack(fill="x", padx=pad)
-        side.bind("<Button-1>", lambda e: (self.tool("logs"), "break")[1])
-        toggle("tail", "log_tail", "tail (follow the newest line)")
-        tk.Label(m, text="esc fold · click outside", font=self.f_small, bg=P["bar"], fg=P["mu"], anchor="w").pack(
-            fill="x", padx=pad, pady=(self.px(6), pad // 2))
-        self._place_menu()
+        return agent_controls._build_menu(self, sys.modules[__name__])
 
     def _slide(self, key, value):
-        self.opts[key] = value
-        self._spin_until = time.time() + 0.4
-        self._apply_options(changed=key)
-        self._save(key, delay=400)
+        return agent_controls._slide(self, sys.modules[__name__], key, value)
 
     def _place_menu(self):
-        try:
-            self.menu.place(relx=1.0, x=-self.px(4), y=self.head.winfo_height(), anchor="ne")
-            self.menu.lift()
-        except tk.TclError:
-            pass
+        return agent_controls._place_menu(self, sys.modules[__name__])
 
     # ---- theme
     @property
@@ -1379,42 +839,7 @@ class AgentNetworkWindow:
         return PALETTES.get(core.T.get("name"), PALETTES["light"])
 
     def _apply_theme(self):
-        name = core.T.get("name", "light")
-        if name == self.theme:
-            return
-        self.theme = name
-        P = self.P
-        for wdg in (self.win, self.body, self.tabs, self.filterbar):
-            wdg.configure(bg=P["bg"])
-        for wdg in (self.head, self.title, self.prev_btn, self.next_btn, self.count, self.foot, self.footbar,
-                    self.grip, self.close_btn, self.prompt_mark):
-            wdg.configure(bg=P["bar"])
-        for wdg in (self.title, self.prev_btn, self.next_btn, self.close_btn):
-            wdg.configure(fg=P["hi"])
-        self.prompt_mark.configure(fg=P["blue"])
-        for wdg in (self.count, self.foot, self.grip):
-            wdg.configure(fg=P["mu"])
-        self.canvas.configure(bg=P["bg"])
-        self.sep.configure(bg=P["line"])
-        self.log.configure(bg=P["bg"], fg=P["tx"], insertbackground=P["bg"], selectbackground=mix(P["blue"], P["bg"], 0.65),
-                           selectforeground=P["hi"], inactiveselectbackground=mix(P["blue"], P["bg"], 0.75))
-        self.chip.configure(bg=P["redbg"], fg=P["red"], highlightbackground=P["red"])
-        self.zoombar.configure(bg=P["bar"], highlightbackground=P["line"])
-        for lab in self.zoom_btns:
-            lab.configure(bg=P["bar"], fg=P["mu"] if lab is self.zoom_label else P["tx"])
-        self._update_log_filters()
-        self._statc_sig = None
-        self.overlay.configure(bg=P["node"], highlightbackground=P["red"], highlightthickness=1, bd=0)
-        try:
-            core.titlebar_theme(self.win)
-        except Exception:
-            pass
-        self._robots.clear()
-        self._log_sig = self._graph_sig = self._prompt_sig = None
-        if self._applied.get("clear"):
-            self._applied["clear"] = None  # the see-through key colour follows the theme
-        self._apply_options()
-        self._draw_cog()
+        return agent_controls._apply_theme(self, sys.modules[__name__])
 
     # ---- data
     def show_session(self, key=None):
@@ -1531,35 +956,18 @@ class AgentNetworkWindow:
 
     # ---- graph
     def robot(self, state, height):
-        key = (state, height, self.theme)
-        if key not in self._robots:
-            from PIL import Image
-            im = core.state_image(ROBOT_STATE.get(state, "idle")).convert("RGBA")
-            if state == "needs_input":  # red when that agent needs you
-                a = im.split()[3]
-                tinted = Image.blend(im, Image.new("RGBA", im.size, (214, 48, 40, 255)), 0.55)
-                tinted.putalpha(a)
-                im = tinted
-            width = max(1, round(im.width * height / im.height))
-            im = im.resize((width, max(1, height)), Image.LANCZOS)
-            self._robots[key] = core._to_photo(im)
-        return self._robots[key]
+        return agent_graph.robot(self, sys.modules[__name__], state, height)
 
     # The graph is drawn at its own zoom (self.gz) on top of the window's scale: gpx() for sizes, g_* fonts.
     # Panning moves the canvas view over it (scan_mark / scan_dragto); everything else stays put.
     def gpx(self, n):
-        return int(round(n * self.s * self.gz))
+        return agent_graph.gpx(self, sys.modules[__name__], n)
 
     def _graph_fonts(self):
-        size = max(1, int(round(8 * self._font_scale() * self.gz)))
-        small = max(1, int(round(7 * self._font_scale() * self.gz)))
-        for f, sz in ((self.g_main, size), (self.g_bold, size), (self.g_small, small)):
-            if f.cget("size") != sz:
-                f.configure(size=sz)
+        return agent_graph._graph_fonts(self, sys.modules[__name__])
 
     def _graph_line_height(self):
-        # Tk's minimum font size must not prevent a large diagram from fitting in the viewport.
-        return self.f_main.metrics("linespace") * self.gz if self.gz < 0.4 else self.g_main.metrics("linespace")
+        return agent_graph._graph_line_height(self, sys.modules[__name__])
 
     @staticmethod
     def _columns(net):
@@ -1587,634 +995,105 @@ class AgentNetworkWindow:
         return cols, False
 
     def _block_height(self, net, H):
-        """Height one session's graph needs (tabbed off: the sessions are stacked)."""
-        cols, beside = self._columns(net)
-        rows = max((len(c) for c in cols), default=0)
-        lh = self._graph_line_height()
-        main_h = lh * 4 + self.gpx(10)
-        sub_h = lh * 4 + self.gpx(8)
-        return int(max(main_h, rows * (sub_h + self.gpx(12 if IS_MAC else 6))) + 2 * self.gpx(10) + lh * 1.6)
+        return agent_graph._block_height(self, sys.modules[__name__], net, H)
 
     def _layout(self, net, W, H, reserve=None):
-        """Node boxes (one per agent, in net["agents"] order): main on the left, its subagents in a column to its
-        right, agents started by those further right. reserve: (x, y) of a box at the bottom right that the columns
-        should stay above. -> (boxes, beside)"""
-        lh = self._graph_line_height()
-        pad = self.gpx(10)
-        main_w, main_h = self.gpx(150), lh * 4 + pad
-        boxes = [None] * len(net["agents"])
-        boxes[0] = (pad, max(pad, (H - main_h) // 2), main_w, main_h)
-        cols, beside = self._columns(net)
-        if not cols:
-            return boxes, False
-        sub_w = self.gpx(140)
-        sub_h = lh * 4 + self.gpx(8)
-        x0 = pad + main_w + self.gpx(40 if IS_MAC else 70)
-        gap_x = sub_w + self.gpx(40 if IS_MAC else 60)
-        if reserve and x0 + (len(cols) - 1) * gap_x + sub_w > reserve[0] - pad:
-            H = max(sub_h + 2 * pad, reserve[1])
-        if IS_MAC:
-            # Keep siblings together on Mac instead of spreading them across the
-            # viewport. Preserve the existing Windows layout and display scaling.
-            step = sub_h + self.gpx(12)
-            H = max(H, max(len(col) for col in cols) * step + 2 * pad)
-            boxes[0] = (pad, (H - main_h) // 2, main_w, main_h)
-        for c, col in enumerate(cols):
-            rows = len(col)
-            if not IS_MAC:
-                step = max(sub_h + self.gpx(6), (H - 2 * pad) / max(1, rows))
-            for row, i in enumerate(col):
-                top = pad + (H - 2 * pad - step * rows) / 2 + row * step + (step - sub_h) / 2
-                boxes[i] = (x0 + c * gap_x, int(max(pad // 2, top)), sub_w, sub_h)
-        return boxes, beside
+        return agent_graph._layout(self, sys.modules[__name__], net, W, H, reserve)
 
     def _draw_graph(self, force=False):
-        c, P = self.canvas, self.P
-        W, H = max(50, c.winfo_width()), max(50, c.winfo_height())
-        blocks = self.blocks
-        sig = (W, H, self.gz, self.sel, self.key, self.theme, self.s, self.opts["node_alpha"], self.in_window,
-               tuple((k, tuple((a["id"], a.get("parent", ""), a.get("depth", 0),
-                                a["name"], a["state"], a["model_label"], a["effort"], a["ctx"], a["thought"] if a["main"] else "")
-                               for a in net["agents"])) for k, _, net in blocks))
-        if sig == self._graph_sig and not force:
-            self._draw_stats()
-            return
-        self._graph_sig = sig
-        self._graph_fonts()
-        # keep the view where it was (as a fraction of the drawing) unless a centre was asked for
-        old = getattr(self, "_content", None)
-        view = (c.canvasx(0), c.canvasy(0)) if old else None
-        c.delete("all")
-        self.edges, self._node_rects, self._title_rects = [], [], []
-        fading = self._stacked_mode() and (self._leaving or any(
-            b.get("net", {}).get("agents") for b in self._bands.values()))  # the last session still fading out
-        if (not blocks or not any(net["agents"] for _, _, net in blocks)) and not fading:
-            c.configure(scrollregion=(0, 0, W, H))
-            c.xview_moveto(0)
-            c.yview_moveto(0)
-            c.create_text(W // 2, H // 2, text="$ waiting for a session in claude code or codex_",
-                          fill=P["mu"], font=self.f_main)
-            self._dots, self._content = [], None
-            self._draw_stats()
-            return
-        VW = max(W * self.gz, self.gpx(420))
-        stacked = self._stacked_mode() or bool(self._leaving)
-        sbox = self._stats_size()
-        now = time.time()
-        self._titles = []
-        animating = False
-        if stacked:
-            y1 = self._plan_bands(blocks, H, now)
-            tidy = self.opts.get("tidy")
-            lh = self._graph_line_height()
-            head = int(lh * 1.6)
-            order = [(k, None) for k in self._leaving] + [(k, b) for b, (k, _, _) in enumerate(blocks)]
-            for key, b in order:
-                leaving = key in self._leaving
-                band = self._leaving[key] if leaving else self._bands[key]
-                fade = min(1.0, (now - band["t0"]) / self.FADE_S) if leaving else 0.0
-                y = band["y"] if leaving else self._band_y(band, now)
-                animating = animating or leaving or now < band["t"] + self.SLIDE_S
-                self._draw_band(b if b is not None else -1, key, band["item"], band["net"], y, band["h"], VW, head,
-                                tidy, fade)
-        else:
-            self._bands, y1 = {}, 0
-            key, item, net = blocks[0]
-            bh = max(H * self.gz, self._block_height(net, H))
-            self._bands[key] = {"from": 0, "to": 0, "t": 0, "y": 0, "item": item, "net": net, "h": bh}
-            reserve = (VW - sbox[0] - self.gpx(8), bh - sbox[1] - self.gpx(8))
-            self._draw_block(0, key, net, 0, 0, VW, bh, reserve)
-            y1 = bh
-        self._animating = animating
-        x1 = VW
-        bounds = self._graph_bounds()
-        if bounds:
-            x1, y1 = max(x1, bounds[2]), max(y1, bounds[3])
-        content_old = self._content
-        self._content = (x1, y1)
-        # scroll region: the drawing plus a view's worth around it, so it can be panned anywhere
-        c.configure(scrollregion=(min(-W, bounds[0] - W) if bounds else -W,
-                                  min(-H, bounds[1] - H) if bounds else -H, x1 + W, y1 + H))
-        layout = ("stacked",) if stacked else ("single", blocks[0][0])
-        if layout != getattr(self, "_last_layout", None):
-            self._last_layout, self._center_next, self._user_moved = layout, True, False
-        if self._center_next or not old:
-            if W > 80 and H > 80 and c.winfo_ismapped():
-                self._center_next = False  # centred for real (not on the 1-pixel canvas of a window still opening)
-            self.center_view()
-        elif view and (animating or getattr(self, "_was_animating", False)):
-            self._scroll_to(*view)  # sessions sliding: the view stays exactly where it is
-        elif view:
-            fx, fy = (view[0] + W / 2) / max(1, old[0]), (view[1] + H / 2) / max(1, old[1])
-            self._scroll_to(fx * x1 - W / 2, fy * y1 - H / 2)
-        self._was_animating = animating
-        if not self._center_next and not self._shift_into_view(margin=0.0, check_only=True):
-            self.center_view()  # nothing of the graph in sight (say, its only session moved): show it again
-        self._dots = [c.create_oval(0, 0, 0, 0, fill=col, outline="", state="hidden")
-                      for pts, st, col in self.edges for _ in range(2)]
-        self._draw_stats()
+        return agent_graph._draw_graph(self, sys.modules[__name__], force)
 
     # ---- stacked sessions (compact, not tabbed): bands that fade out and slide up
     def _stacked_mode(self):
-        return not self.pinned and not self.opts["separate"] and not self.opts["tabbed"]
+        return agent_graph._stacked_mode(self, sys.modules[__name__])
 
     FADE_S, SLIDE_S = 0.45, 0.35
 
     def _plan_bands(self, blocks, H, now):
-        """Where each session's band goes. A session that left fades where it was; the others then slide to their
-        new place. Returns the drawing's height."""
-        gap = self.gpx(14) if self.opts.get("tidy") else 0
-        head = int(self._graph_line_height() * 1.6)
-        targets, heights, y = {}, {}, 0
-        for key, item, net in blocks:
-            heights[key] = self._block_height(net, H) + (self.gpx(6) if self.opts.get("tidy") else 0)
-            targets[key] = y
-            y += heights[key] + gap
-        prev = getattr(self, "_bands", {}) or {}
-        for key, band in prev.items():
-            if key not in targets and key not in self._leaving and band.get("net", {}).get("agents"):
-                self._leaving[key] = dict(band, y=self._band_y(band, now), t0=now)
-        self._leaving = {k: v for k, v in self._leaving.items() if now - v["t0"] < self.FADE_S and k not in targets}
-        delay = max([self.FADE_S - (now - v["t0"]) for v in self._leaving.values()] or [0])
-        bands = {}
-        for key, item, net in blocks:
-            band = prev.get(key)
-            if band is None or getattr(self, "_fit_view", False):
-                band = {"from": targets[key], "to": targets[key], "t": now - self.SLIDE_S}
-            elif abs(band["to"] - targets[key]) > 0.5:  # its place changed: slide there (after any fade)
-                band = {"from": self._band_y(band, now), "to": targets[key], "t": now + delay}
-            bands[key] = dict(band, item=item, net=net, h=heights[key])
-        self._bands = bands
-        end = max([b["to"] + b["h"] for b in bands.values()] + [v["y"] + v["h"] for v in self._leaving.values()]
-                  + [head])
-        return end
+        return agent_graph._plan_bands(self, sys.modules[__name__], blocks, H, now)
 
     def _band_y(self, band, now):
-        p = min(1.0, max(0.0, (now - band["t"]) / self.SLIDE_S))
-        ease = 1 - (1 - p) ** 3
-        return band["from"] + (band["to"] - band["from"]) * ease
+        return agent_graph._band_y(self, sys.modules[__name__], band, now)
 
     def _draw_band(self, b, key, item, net, y, bh, VW, head, tidy, fade):
-        c, P = self.canvas, self.P
-        F = (lambda col: mix(col, P["bg"], fade)) if fade else (lambda col: col)
-        on = key == self.key and not fade
-        tag = f"band{b}" if b >= 0 else f"gone{abs(hash(key)) % 10000}"
-        title = session_label(item).replace("agent-network ▸ ", "")
-        tbar = f"tbar{b}" if b >= 0 else tag  # the session's title bar: a click opens its [all] log
-        pad = self.gpx(8)
-        if tidy:  # a group: a title bar on top of the session's nodes, its name sliding when it doesn't fit
-            x0, x1 = pad, VW - pad
-            if b >= 0:
-                self._title_rects.append((x0, y, x1, y + head))
-            c.create_rectangle(x0, y + head, x1, y + bh, fill="", outline=F(P["blue"] if on else P["line"]),
-                               dash=() if on else (2, 3))
-            c.create_rectangle(x0, y, x1, y + head, fill=F(P["sel"] if on else P["bar"]),
-                               outline=F(P["blue"] if on else P["line"]), tags=(tag, tbar))
-            font = self.g_bold if on else self.g_main
-            entry = (f"ttl{b}_{abs(hash(key)) % 10000}", ("● " if on else "○ ") + title, font,
-                     F(P["hi"] if on else P["tx"]), x0 + pad, x1 - x0 - 2 * pad, y + head / 2, (tag, tbar))
-            self._titles.append(entry)
-            self._draw_title(entry, time.time())
-        else:  # bands: a line between sessions; the name is a title bar on the session's main node
-            far = 50000  # bands run on forever sideways, however far you pan
-            c.create_rectangle(-far, y, VW + far, y + bh, fill=P["sel"] if on else P["bg"], outline="",
-                               stipple="gray25" if on else "", tags=tag)
-            c.create_line(-far, y, VW + far, y, fill=F(P["line"]))
-        if b >= 0:
-            c.tag_bind(tag, "<ButtonRelease-1>", lambda e, k=key: self._pick_session(k))
-        self._draw_block(b, key, net, pad if tidy else 0, y + head, VW - (2 * pad if tidy else 0), bh - head, None,
-                         fade=fade, title=None if tidy else (title, on, (tag, tbar)))
-        if b >= 0:
-            c.tag_bind(tbar, "<ButtonRelease-1>", lambda e, k=key: self._title_click(k))
-            c.tag_bind(tbar, "<Enter>", lambda e: c.configure(cursor="hand2"))
-            c.tag_bind(tbar, "<Leave>", lambda e: c.configure(cursor=""))
+        return agent_graph._draw_band(self, sys.modules[__name__], b, key, item, net, y, bh, VW, head, tidy, fade)
 
     def _draw_title(self, entry, now):
-        """A group's title: as is when it fits, else scrolling round like the pet's name tags (characters drawn one
-        by one, only while wholly inside the bar: a Tk canvas can't clip text)."""
-        tag, text, font, fill, left, room, ymid, click = entry
-        c = self.canvas
-        c.delete(tag)
-        if font.measure(text) <= room:
-            c.create_text(left, ymid, text=text, anchor="w", fill=fill, font=font, tags=(tag,) + tuple(click))
-            return False
-        loop_text = text + "    "
-        loop = font.measure(loop_text)
-        offset = (now * 30 * self.s * self.gz) % loop
-        right = left + room
-        for k in (0, 1):
-            cx = left - offset + k * loop
-            for ch in loop_text:
-                cw = font.measure(ch)
-                if cx >= right:
-                    break
-                if cx >= left and cx + cw <= right and not ch.isspace():
-                    c.create_text(cx, ymid, text=ch, anchor="w", fill=fill, font=font, tags=(tag,) + tuple(click))
-                cx += cw
-        return True
+        return agent_graph._draw_title(self, sys.modules[__name__], entry, now)
 
     def _draw_block(self, b, key, net, ox, oy, W, H, reserve, fade=0.0, title=None):
-        """One session's graph, at (ox, oy) in a W x H area. fade: 0 as is .. 1 gone (a session being cleared)."""
-        c, P0 = self.canvas, self.P
-        P = {k: (mix(v, P0["bg"], fade) if fade and isinstance(v, str) and v.startswith("#") else v)
-             for k, v in P0.items()}
-        ags = net["agents"]
-        if not ags:
-            return
-        current = key == self.key
-        boxes, beside = self._layout(net, W, H, reserve)
-        boxes = [(x + ox, y + oy, w, h) for x, y, w, h in boxes]
-        lh = self._graph_line_height()
-        index = {a["id"]: k for k, a in enumerate(ags)}
-        for i, (a, (x, y, w, h)) in enumerate(zip(ags[1:], boxes[1:]), 1):  # edges first, under the nodes
-            mx, my, mw, mh = boxes[index.get(a.get("parent", ""), 0)]  # from whoever started it
-            p0, p3 = (mx + mw, my + mh / 2), (x, y + h / 2)
-            mid = (p0[0] + p3[0]) / 2
-            pts = (p0, (mid, p0[1]), (mid, p3[1]), p3)
-            col = {"working": P["blue"], "needs_input": P["red"], "error": P["red"],
-                   "done": P["grn"]}.get(a["state"], P["line"])
-            dash = () if a["state"] == "done" else (3, 4)
-            line = [coord for t in range(0, 21) for coord in bezier(*pts, t / 20)]
-            c.create_line(*line, fill=col, width=max(1, self.gpx(1)), dash=dash, smooth=True)
-            if not fade:
-                self.edges.append((pts, a["state"], col))
-        for i, (a, (x, y, w, h)) in enumerate(zip(ags, boxes)):
-            status_col, status = STATUS.get(a["state"], STATUS["idle"])
-            border = P[status_col] if a["state"] != "idle" else P["line"]
-            if a["main"] and a["state"] == "waiting":
-                border = P["amb"]
-            focused = a.get("tool") and a["name"] == self._log_filters.get("only_tool") and \
-                0 <= self.sel < len(ags) and a["parent"] == ags[self.sel]["id"]
-            picked = current and (i == self.sel or focused)
-            fill = P["sel"] if picked else P["node"]
-            tag = f"node{b}_{i}" if b >= 0 else "gone"
-            if b >= 0:
-                self._node_rects.append((x, y, x + w, y + h))
-            c.create_rectangle(x, y, x + w, y + h, fill=fill, stipple=dither(self.opts["node_alpha"]),
-                               outline=border, width=max(1, self.gpx(1.3 if picked else 1)), tags=tag)
-            if a["main"] and title:  # the session's name as a title bar on top of its main node
-                text, on, click = title
-                th = int(lh * 1.35)
-                if b >= 0:
-                    self._title_rects.append((x, y - th, x + w, y))
-                c.create_rectangle(x, y - th, x + w, y, fill=P["sel"] if on else P["bar"],
-                                   outline=P["blue"] if on else border, tags=click)
-                entry = (f"mttl{b}_{abs(hash(key)) % 10000}", ("● " if on else "○ ") + text,
-                         self.g_bold if on else self.g_small, P["hi"] if on else P["tx"], x + self.gpx(5),
-                         w - self.gpx(10), y - th / 2, click)
-                self._titles.append(entry)
-                self._draw_title(entry, time.time())
-            if h < self.g_main.metrics("linespace") * 4:
-                # At overview scales the coloured nodes stay visible; zooming restores their details.
-                if b >= 0:
-                    c.tag_bind(tag, "<ButtonRelease-1>", lambda e, k=key, i=i: self._click_node(e, k, i))
-                continue
-            if a.get("tool"):
-                c.create_text(x + self.gpx(6), y + self.gpx(5), text="⚙", font=self.g_bold,
-                              anchor="nw", fill=border, tags=tag)
-                icon_w = self.g_bold.measure("⚙")
-            else:
-                img = self.robot(a["state"], max(1, int(lh * 1.15)))
-                if fade < 0.35:  # an image can't fade: it goes early
-                    c.create_image(x + self.gpx(6), y + self.gpx(5), image=img, anchor="nw", tags=tag)
-                icon_w = img.width()
-            tx = x + self.gpx(6) + icon_w + self.gpx(5)
-            inner = x + w - tx - self.gpx(4)
-            c.create_text(tx, y + self.gpx(5), text=self._fit(a["name"], inner, self.g_bold), anchor="nw",
-                          fill=mix(self.color(i), P0["bg"], fade) if fade else self.color(i), font=self.g_bold,
-                          tags=tag)
-            # a subagent's type (general-purpose, Explore...) when its name is its description, then model and effort
-            info = " · ".join(v for v in ((a.get("kind") if not a["main"] else ""), a["model_label"], a["effort"]) if v)
-            ctx = agents.fmt_tokens(a["ctx"])
-            ctx_line = (f"ctx {ctx}" + (f"/{agents.fmt_tokens(a['ctx_max'])}" if a["ctx_max"] else "")) if ctx else ""
-            rows = [info, ctx_line]  # the context always on a line of its own (what it says: in the logs)
-            ly = y + self.gpx(5) + lh
-            for row in rows:
-                if row:
-                    c.create_text(x + self.gpx(8), ly, text=self._fit(row, w - self.gpx(14), self.g_small),
-                                  anchor="nw", fill=P["mu"], font=self.g_small, tags=tag)
-                ly += lh
-            label = status
-            if current and i == self.in_window:
-                label = "! answer in the window"
-            if a["main"] and a["state"] == "waiting" and a["thought"]:
-                label = "… " + a["thought"]
-            c.create_text(x + self.gpx(8), y + h - self.gpx(4), text=self._fit(label, w - self.gpx(14), self.g_small),
-                          anchor="sw", fill=P[status_col], font=self.g_small, tags=tag)
-            if b >= 0:
-                c.tag_bind(tag, "<ButtonRelease-1>", lambda e, k=key, i=i: self._click_node(e, k, i))
-            c.tag_bind(tag, "<Enter>", lambda e: c.configure(cursor="hand2"))
-            c.tag_bind(tag, "<Leave>", lambda e: c.configure(cursor=""))
+        return agent_graph._draw_block(self, sys.modules[__name__], b, key, net, ox, oy, W, H, reserve, fade, title)
 
     def _title_click(self, key):
-        """A click (not a drag) on a session's title bar: that session, with its [all] log."""
-        if self._panned:
-            return
-        if key != self.key:
-            self._pick_session(key)
-        self.select(-1, clear_filters=True)
+        return agent_graph._title_click(self, sys.modules[__name__], key)
 
     def _click_node(self, e, key, i):
-        if self._panned:
-            return  # that was a drag
-        if key != self.key:
-            self._pick_session(key)
-        self.select(i, clear_filters=True)
-        if prompt_agent(self.net, self.item) == i:  # the agent that is asking: open its prompt
-            self._draw_prompt()
-            self.open_overlay(True)
+        return agent_graph._click_node(self, sys.modules[__name__], e, key, i)
 
     def _pick_session(self, key):
-        if self._panned or key == self.key:
-            return
-        self.key, self.sel = key, -1
-        self.open_overlay(False)
-        self._log_sig = self._graph_sig = self._prompt_sig = self._tabs_sig = None
-        self._refresh()
+        return agent_graph._pick_session(self, sys.modules[__name__], key)
 
     # ---- zoom and pan
     def zoom(self, factor=None, at=None, reset=False):
-        """Zoom the graph around a point of the view (default: its middle)."""
-        c = self.canvas
-        old = self.gz
-        new = 1.0 if reset else min(ZOOM_MAX, max(ZOOM_MIN, round(old * factor, 3)))
-        if abs(new - old) < 1e-3 and not reset:
-            return "break"
-        self._user_moved = not reset
-        W, H = c.winfo_width(), c.winfo_height()
-        mx, my = at if at else (W / 2, H / 2)
-        content = getattr(self, "_content", None)
-        frac = None
-        if content:
-            frac = (c.canvasx(mx) / max(1, content[0]), c.canvasy(my) / max(1, content[1]))
-        self.gz = new
-        self._robots.clear()
-        self._center_next = reset
-        self._draw_graph(force=True)
-        if frac and not reset and self._content:
-            self._scroll_to(frac[0] * self._content[0] - mx, frac[1] * self._content[1] - my)
-            self._shift_into_view()
-        self._update_zoombar()
-        return "break"
+        return agent_graph.zoom(self, sys.modules[__name__], factor, at, reset)
 
     def center_view(self, by_user=False):
-        """Place the average of the node centres in the viewport centre, keeping the current zoom."""
-        if by_user:
-            self._user_moved = False
-        c = self.canvas
-        W, H = c.winfo_width(), c.winfo_height()
-        rects = getattr(self, "_node_rects", [])
-        if rects:
-            cx = sum((x0 + x1) / 2 for x0, _, x1, _ in rects) / len(rects)
-            cy = sum((y0 + y1) / 2 for _, y0, _, y1 in rects) / len(rects)
-            self._scroll_to(cx - W / 2, cy - H / 2)
-        return "break"
+        return agent_graph.center_view(self, sys.modules[__name__], by_user)
 
     def _graph_bounds(self):
-        """Actual nodes and titles, excluding empty layout space and fixed controls."""
-        rects = getattr(self, "_node_rects", []) + getattr(self, "_title_rects", [])
-        if not rects:
-            return None
-        return (min(r[0] for r in rects), min(r[1] for r in rects),
-                max(r[2] for r in rects), max(r[3] for r in rects))
+        return agent_graph._graph_bounds(self, sys.modules[__name__])
 
     def fit_all(self):
-        """Choose a zoom that fits every visible node and title, then centre their bounds."""
-        if not self._graph_bounds():
-            return "break"
-        c = self.canvas
-        W, H = c.winfo_width(), c.winfo_height()
-        pad = max(8, self.px(10))
-        top = pad + self.zoombar.winfo_reqheight()
-        bottom = pad + self._stats_size()[1]
-        width, height = max(1, W - 2 * pad), max(1, H - top - bottom)
-        self._user_moved, self._center_next, self._fit_view = True, False, True
-        try:
-            # Measure the rendered geometry: fonts round to discrete sizes and overview nodes simplify.
-            lo, hi, best = ZOOM_MIN, ZOOM_MAX, ZOOM_MIN
-            for step in range(13):
-                self.gz = hi if step == 0 else (lo + hi) / 2
-                self._robots.clear()
-                self._draw_graph(force=True)
-                x0, y0, x1, y1 = self._graph_bounds()
-                if x1 - x0 <= width and y1 - y0 <= height:
-                    best = lo = self.gz
-                    if step == 0:
-                        break
-                else:
-                    hi = self.gz
-            if self.gz != best:
-                self.gz = best
-                self._robots.clear()
-                self._draw_graph(force=True)
-            x0, y0, x1, y1 = self._graph_bounds()
-            self._scroll_to((x0 + x1 - W) / 2, (y0 + y1) / 2 - (top + height / 2))
-            self._update_zoombar()
-        finally:
-            self._fit_view = False
-        return "break"
+        return agent_graph.fit_all(self, sys.modules[__name__])
 
     def _maybe_auto_fit(self, force=False):
-        """Fit on membership changes, including tool nodes and every displayed session."""
-        signature = frozenset((key, a["id"]) for key, _, net in self.blocks for a in net["agents"])
-        changed = signature != getattr(self, "_auto_fit_signature", None)
-        self._auto_fit_signature = signature
-        if not self.opts.get("auto_fit"):
-            self._auto_fit_pending = False
-            return
-        if not (force or changed or getattr(self, "_auto_fit_pending", False)):
-            return
-        c = self.canvas
-        if not c.winfo_ismapped() or c.winfo_width() <= 80 or c.winfo_height() <= 80:
-            self._auto_fit_pending = True
-            return  # wait for opening/resizing to settle before choosing a zoom
-        self._auto_fit_pending = False
-        self.fit_all()
+        return agent_graph._maybe_auto_fit(self, sys.modules[__name__], force)
 
     def _update_auto_fit(self):
-        self.auto_fit_var.set(bool(self.opts.get("auto_fit")))
-        P = self.P
-        self.auto_fit_btn.configure(bg=P["bar"], fg=P["tx"], selectcolor=P["bar"],
-                                    activebackground=P["bar"], activeforeground=P["hi"])
+        return agent_graph._update_auto_fit(self, sys.modules[__name__])
 
     def _scroll_to(self, left, top):
-        c = self.canvas
-        try:
-            x0, y0, x1, y1 = (float(v) for v in str(c.cget("scrollregion")).split())
-        except ValueError:
-            return
-        c.xview_moveto((left - x0) / max(1, x1 - x0))
-        c.yview_moveto((top - y0) / max(1, y1 - y0))
+        return agent_graph._scroll_to(self, sys.modules[__name__], left, top)
 
     def _pan_start(self, e):
-        self._panned = False
-        self._pan_from = (e.x, e.y)
-        self.canvas.scan_mark(e.x, e.y)
+        return agent_graph._pan_start(self, sys.modules[__name__], e)
 
     def _pan_move(self, e):
-        fx, fy = getattr(self, "_pan_from", (e.x, e.y))
-        if self._panned or abs(e.x - fx) + abs(e.y - fy) > 4:
-            self._panned = self._user_moved = True
-            self.canvas.configure(cursor="fleur")
-            self.canvas.scan_dragto(e.x, e.y, gain=1)
-            if self._shift_into_view():  # held at the edge: re-anchor, so the drag goes on from here
-                self.canvas.scan_mark(e.x, e.y)
+        return agent_graph._pan_move(self, sys.modules[__name__], e)
 
     def _shift_into_view(self, margin=0.1, check_only=False):
-        """Keep at least one node at least partly inside the view (less a 10% margin all round): panning, scrolling or
-        zooming stops there. Returns True when the view had to be moved (check_only: whether a node is in sight)."""
-        c = self.canvas
-        rects = getattr(self, "_node_rects", [])
-        if not rects:
-            return True if check_only else False
-        W, H = c.winfo_width(), c.winfo_height()
-        vx0, vy0 = c.canvasx(0) + W * margin, c.canvasy(0) + H * margin
-        vx1, vy1 = c.canvasx(0) + W * (1 - margin), c.canvasy(0) + H * (1 - margin)
-        best = None
-        for x0, y0, x1, y1 in rects:
-            dx = (x1 - vx0 - 1) if x1 < vx0 else ((x0 - vx1 + 1) if x0 > vx1 else 0)
-            dy = (y1 - vy0 - 1) if y1 < vy0 else ((y0 - vy1 + 1) if y0 > vy1 else 0)
-            if not dx and not dy:
-                return True if check_only else False
-            if best is None or abs(dx) + abs(dy) < abs(best[0]) + abs(best[1]):
-                best = (dx, dy)
-        if check_only:
-            return False
-        self._scroll_to(c.canvasx(0) + best[0], c.canvasy(0) + best[1])
-        return True
+        return agent_graph._shift_into_view(self, sys.modules[__name__], margin, check_only)
 
     def _pan_end(self, e):
-        if self._panned:
-            self.canvas.configure(cursor="")
-            self.win.after_idle(lambda: setattr(self, "_panned", False))
+        return agent_graph._pan_end(self, sys.modules[__name__], e)
 
     def _wheel(self, e):
-        """Ctrl + wheel zooms at the pointer; the wheel alone scrolls (shift: sideways)."""
-        up = (getattr(e, "delta", 0) > 0) or getattr(e, "num", 0) == 4
-        if e.state & 0x4 or (IS_MAC and e.state & 0x8):
-            return self.zoom(1.15 if up else 1 / 1.15, at=(e.x, e.y))
-        self._user_moved = True
-        if e.state & 0x1:
-            self.canvas.xview_scroll(-2 if up else 2, "units")
-        else:
-            self.canvas.yview_scroll(-2 if up else 2, "units")
-        self._shift_into_view()
-        return "break"
+        return agent_graph._wheel(self, sys.modules[__name__], e)
 
     def _update_zoombar(self):
-        try:
-            self.zoom_label.configure(text=f"{int(round(self.gz * 100))}%")
-        except (tk.TclError, AttributeError):
-            pass
+        return agent_graph._update_zoombar(self, sys.modules[__name__])
 
     # ---- the stats node and its drop-downs (fixed at the bottom right of the graph, outside the zoom)
     def _stats_size(self):
-        sl = self.f_small.metrics("linespace")
-        return self.px(150), sl * 4 + self.px(10)
+        return agent_graph._stats_size(self, sys.modules[__name__])
 
     def _draw_stats(self):
-        sc, P, st = self.statc, self.P, self.stats
-        w, h = self._stats_size()
-        sig = (w, h, self.theme, repr(st), self.stat_open, self.opts["node_alpha"])
-        if sig == getattr(self, "_statc_sig", None):
-            return
-        self._statc_sig = sig
-        sl = self.f_small.metrics("linespace")
-        try:
-            sc.configure(width=w, height=h, bg=P["node"], highlightbackground=P["line"], highlightthickness=1)
-            sc.delete("all")
-        except tk.TclError:
-            return
-        sc.create_text(self.px(6), self.px(4), text="≡ this task", anchor="nw", fill=P["hi"], font=self.f_bold)
-        if st.get("missing"):  # the task began before the part of a transcript that was read
-            sc.create_text(w - self.px(6), self.px(4), text="ⓘ", anchor="ne", fill=P["mu"], font=self.f_bold,
-                           tags="warn")
-            sc.tag_bind("warn", "<Enter>", lambda e: self._show_tip(
-                "Background tracking is catching up with this transcript. Older subagents and tool calls may "
-                "be missing temporarily. Logs keep a bounded history after tracking catches up.", sc, w))
-            sc.tag_bind("warn", "<Leave>", lambda e: self._hide_tip())
-        n_calls = sum(n for _, n in st["subagents"])
-        tool_calls = sum(n for _, n in st["tools"])
-        rows = (("subs", f"subagents {n_calls} ▾"), ("ctx", f"context {agents.fmt_tokens(st['ctx_total']) or 0} ▾"),
-                ("tools", f"tools {len(st['tools'])} · {tool_calls} calls ▾"))
-        for k, (kind, text) in enumerate(rows):
-            tag = f"stat_{kind}"
-            on = self.stat_open == kind
-            sc.create_text(self.px(8), self.px(6) + sl * (k + 1), text=self._fit(text, w - self.px(12), self.f_small),
-                           anchor="nw", fill=P["blue"] if on else P["tx"], font=self.f_small, tags=tag)
-            sc.tag_bind(tag, "<Button-1>", lambda e, k=kind: self.toggle_stat(k))
-            sc.tag_bind(tag, "<Enter>", lambda e: sc.configure(cursor="hand2"))
-            sc.tag_bind(tag, "<Leave>", lambda e: sc.configure(cursor=""))
+        return agent_graph._draw_stats(self, sys.modules[__name__])
 
     def _show_tip(self, text, near, width):
-        P = self.P
-        try:
-            self.tip.configure(text=text, bg=P["bar"], fg=P["tx"], wraplength=self.px(260),
-                               highlightbackground=P["line"], highlightthickness=1)
-            self.tip.place(in_=near, x=width, y=0, anchor="se")
-            self.tip.lift()
-        except tk.TclError:
-            pass
+        return agent_graph._show_tip(self, sys.modules[__name__], text, near, width)
 
     def _hide_tip(self):
-        try:
-            self.tip.place_forget()
-        except tk.TclError:
-            pass
+        return agent_graph._hide_tip(self, sys.modules[__name__])
 
     def toggle_stat(self, kind):
-        """Open (or fold) a read-only drop-down of the stats node: subagents, every context, tools and skills."""
-        if self.stat_open == kind:
-            kind = None
-        self.stat_open = kind
-        if kind is None:
-            self.statdrop.place_forget()
-        else:
-            if self.menu_open:
-                self.toggle_menu(False)
-            self._fill_stat()
-        self._draw_stats()
-        return "break"
+        return agent_graph.toggle_stat(self, sys.modules[__name__], kind)
 
     def _stat_lines(self, kind):
-        st = self.stats
-        if kind == "subs":
-            if not st["subagents"]:
-                return [("# no subagents in this task", "mu")]
-            return [(f"{name:<22} ×{n}", "") for name, n in st["subagents"]]
-        if kind == "ctx":
-            lines = [(f"{'#':<3}{'agent':<18}{'model':<14}{'context':>8}", "mu")]
-            for k, (name, model, ctx) in enumerate(st["calls"], 1):
-                lines.append((f"{k:<3}{name[:17]:<18}{model[:13]:<14}{agents.fmt_tokens(ctx) or '-':>8}", ""))
-            lines.append((f"{'':<3}{'total':<32}{agents.fmt_tokens(st['ctx_total']) or '0':>8}", "mu"))
-            return lines
-        lines = [(f"{name:<26} ×{n}", "") for name, n in st["tools"]] or [("# no tool calls in this task", "mu")]
-        lines.append(("── skills ──", "mu"))
-        lines += [(f"{name:<26} ×{n}", "") for name, n in st["skills"]] or [("# no skills used", "mu")]
-        if st.get("missing"):
-            lines.append(("ⓘ older entries may be missing (long task)", "mu"))
-        return lines
+        return agent_graph._stat_lines(self, sys.modules[__name__], kind)
 
     def _fill_stat(self):
-        P, t = self.P, self.stattext
-        lines = self._stat_lines(self.stat_open)
-        sig = (self.stat_open, tuple(lines), self.theme, self.s)
-        if sig == getattr(self, "_stat_sig", None) and self.statdrop.winfo_ismapped():
-            return
-        self._stat_sig = sig
-        title = {"subs": "subagents used", "ctx": "context per agent call", "tools": "tools and skills"}[self.stat_open]
-        self.stathead.configure(text=f"── {title} ── [esc]", bg=P["bar"], fg=P["mu"])
-        self.statdrop.configure(bg=P["bar"], highlightbackground=P["line"], highlightcolor=P["line"])
-        t.configure(state="normal", bg=P["bar"], fg=P["tx"], width=max(len(x) for x, _ in lines) + 1,
-                    height=min(14, len(lines)))
-        t.delete("1.0", "end")
-        t.tag_configure("mu", foreground=P["mu"])
-        t.tag_configure("warn", foreground=P["amb"])
-        for text, tag in lines:
-            t.insert("end", text + "\n", tag)
-        t.configure(state="disabled")
-        self.statdrop.place(in_=self.statc, relx=1.0, x=0, y=-self.px(4), anchor="se")
-        self.statdrop.lift()
+        return agent_graph._fill_stat(self, sys.modules[__name__])
 
     @staticmethod
     def _fit(text, width, font):
@@ -2228,643 +1107,91 @@ class AgentNetworkWindow:
         return text + "…" if text else ""
 
     def _animate(self):
-        if not self.alive():
-            return
-        if time.time() < self._moving_until:  # being dragged / resized: drawing now leaves trails on Windows
-            self._anim = self.win.after(FRAME_MS, self._animate)
-            return
-        try:
-            t = time.time() - self.t0
-            r = max(2, self.gpx(2.2))
-            for k, (pts, state, col) in enumerate(self.edges):
-                for j in range(2):
-                    if 2 * k + j >= len(self._dots):
-                        break
-                    dot = self._dots[2 * k + j]
-                    if state == "working":
-                        u = (t / 1.6 + j / 2) % 1.0  # two dots flowing out
-                    elif state == "done" and j == 0:
-                        u = 1 - (t / 2.4) % 1.0  # one flowing back with the result
-                    else:
-                        self.canvas.itemconfigure(dot, state="hidden")
-                        continue
-                    x, y = bezier(*pts, u)
-                    self.canvas.coords(dot, x - r, y - r, x + r, y + r)
-                    self.canvas.itemconfigure(dot, state="normal")
-            if self._animating or self._leaving:  # sessions fading out / sliding into place
-                self._draw_graph(force=True)
-            else:
-                now = time.time()
-                for entry in self._titles:  # long group titles scroll like the pet's name tags
-                    if entry[2].measure(entry[1]) > entry[5]:
-                        self._draw_title(entry, now)
-            # the cogwheel turns while hovered, while its drop-down is open, and for a moment after a change
-            if self.menu_open or getattr(self, "_cog_hover", False) or time.time() < self._spin_until:
-                self._spin = (self._spin + 0.12) % (2 * math.pi)
-                self._draw_cog()
-        except tk.TclError:
-            pass
-        self._anim = self.win.after(FRAME_MS, self._animate)
+        return agent_graph._animate(self, sys.modules[__name__])
 
     # ---- tabs and log
     def set_log_filter(self, key, value):
-        self._log_filters[key] = value
-        self._log_sig = None
-        self._update_log_filters()
-        self._draw_log()
+        return agent_logs.set_log_filter(self, sys.modules[__name__], key, value)
 
     def clear_log_filters(self):
-        self._log_filters = agents.default_log_filters()
-        self._log_sig = self._graph_sig = None
-        self._update_log_filters()
-        self._draw_graph()
-        self._draw_log()
-        return "break"
+        return agent_logs.clear_log_filters(self, sys.modules[__name__])
 
     def _update_log_filters(self):
-        P, filters = self.P, self._log_filters
-        for button, key, label in ((self.show_tools_btn, "show_tools", "show tools"),
-                                   (self.primary_btn, "primary", "primary")):
-            button.configure(text=f"[{'x' if filters[key] else ' '}] {label}", bg=P["bar"],
-                             fg=P["blue"] if filters[key] else P["tx"])
-        self.filterbar.configure(bg=P["bar"])
-        for button, group, label in ((self.tool_filter_btn, "tools", "tools"), (self.mcp_filter_btn, "mcp", "MCP")):
-            chosen = filters[group]
-            count = "" if chosen is None else f" {len(chosen)}"
-            button.configure(text=f"[{label}{count} ▾]", bg=P["bar"], fg=P["blue"] if chosen is not None else P["tx"])
-        self.clear_filters_btn.configure(bg=P["bar"], fg=P["blue"])
-        for button in self._filter_buttons:
-            button.configure(highlightbackground=P["bar"], highlightcolor=P["blue"])
-        self._layout_log_filters()
+        return agent_logs._update_log_filters(self, sys.modules[__name__])
 
     def _layout_log_filters(self, event=None):
-        """Align filter controls using their measured size; wrap in narrow log panes."""
-        width = self.filterbar.winfo_width()
-        if width <= 1:
-            return
-        buttons = self._filter_buttons
-        height = max(button.winfo_reqheight() for button in buttons)
-        gap = self.px(2)
-        x = y = 0
-        for button in buttons:
-            wanted = min(width, button.winfo_reqwidth())
-            if x and x + wanted > width:
-                x, y = 0, y + height + gap
-            button.place(x=x, y=y, width=wanted, height=height)
-            x += wanted + gap
-        needed = y + height
-        if int(self.filterbar.cget("height")) != needed:
-            self.filterbar.configure(height=needed)
+        return agent_logs._layout_log_filters(self, sys.modules[__name__], event)
 
     def _choose_tools(self, group, selected):
-        self._log_filters[group] = selected
-        self._log_filters["only_tool"] = None
-        self._graph_sig = self._log_sig = None
-        self._update_log_filters()
-        self._draw_graph()
-        self._draw_log()
+        return agent_logs._choose_tools(self, sys.modules[__name__], group, selected)
 
     def _toggle_log_tool(self, name, mcp):
-        group = "mcp" if mcp else "tools"
-        selected = self._log_filters[group]
-        selected = set(agents.available_log_tools(self.net, self.sel, mcp)) if selected is None else set(selected)
-        if name in selected:
-            selected.remove(name)
-        else:
-            selected.add(name)
-        self._choose_tools(group, selected)
+        return agent_logs._toggle_log_tool(self, sys.modules[__name__], name, mcp)
 
     def open_tool_filters(self, mcp):
-        group = "mcp" if mcp else "tools"
-        P = self.P
-        menu = tk.Menu(self.win, tearoff=0, bg=P["bar"], fg=P["tx"], activebackground=P["sel"],
-                       activeforeground=P["hi"], font=self.f_small)
-        menu.add_command(label="Show all", command=lambda: self._choose_tools(group, None))
-        menu.add_command(label="Hide all", command=lambda: self._choose_tools(group, set()))
-        menu.add_separator()
-        selected = self._log_filters[group]
-        menu._variables = []
-        names = agents.available_log_tools(self.net, self.sel, mcp)
-        for name in names:
-            var = tk.BooleanVar(master=self.win, value=selected is None or name in selected)
-            menu._variables.append(var)
-            menu.add_checkbutton(label=name, variable=var, command=lambda n=name: self._toggle_log_tool(n, mcp))
-        if not names:
-            menu.add_command(label="No MCP calls recorded" if mcp else "No tool calls recorded", state="disabled")
-        button = self.mcp_filter_btn if mcp else self.tool_filter_btn
-        try:
-            menu.tk_popup(button.winfo_rootx(), button.winfo_rooty() + button.winfo_height())
-        finally:
-            menu.grab_release()
-        return "break"
+        return agent_logs.open_tool_filters(self, sys.modules[__name__], mcp)
 
     def _draw_tabs(self):
-        P = self.P
-        choices = [(-1, "all")] + [(i, a["name"]) for i, a in enumerate(self.net["agents"]) if not a.get("tool")]
-        width = max(self.px(200), self.tabs.winfo_width())
-        sig = (tuple(choices), width, self.sel, self.theme, self.s)
-        if self._tabs_sig == sig:
-            return
-        self._tabs_sig = sig
-        for wdg in self.tabs.winfo_children():
-            wdg.destroy()
-        self.tailbtn = tk.Label(self.tabs, font=self.f_small, cursor="hand2", padx=self.px(3))
-        self.tailbtn.pack(side="right")
-        self.tailbtn.bind("<Button-1>", lambda e: self.tool("tail"))
-        self._update_tailbtn()
-        strip = tk.Canvas(self.tabs, height=self.f_main.metrics("linespace") + self.px(8),
-                          bg=P["bg"], bd=0, highlightthickness=0)
-        strip.pack(fill="x", expand=True)
-        scroll = tk.Scrollbar(self.tabs, orient="horizontal", command=strip.xview, width=max(8, self.px(7)))
-        scroll.pack(fill="x")
-        strip.configure(xscrollcommand=scroll.set)
-        row = tk.Frame(strip, bg=P["bg"])
-        strip.create_window(0, 0, window=row, anchor="nw")
-        row.bind("<Configure>", lambda e: strip.configure(scrollregion=strip.bbox("all")))
-        selected = None
-        for i, name in choices:
-            on = i == self.sel
-            col = P["hi"] if i < 0 else self.color(i)
-            label = f"[{agents.short(name, 45)}]"
-            font = self.f_bold if on else self.f_small
-            lab = tk.Label(row, text=label, font=font, cursor="hand2",
-                           bg=col if on else P["bg"], fg=P["bg"] if on else col, padx=self.px(3), pady=self.px(1))
-            lab.pack(side="left", padx=(0, self.px(3)), pady=self.px(2))
-            lab.bind("<Button-1>", lambda e, i=i: self.select(i))
-            if on:
-                selected = lab
-        strip.update_idletasks()
-        if selected is not None:
-            strip.xview_moveto(max(0, (selected.winfo_x() - strip.winfo_width() / 2) /
-                                  max(1, row.winfo_reqwidth())))
+        return agent_logs._draw_tabs(self, sys.modules[__name__])
 
     def _update_tailbtn(self):
-        P = self.P
-        try:
-            on = self.opts.get("log_tail", True)
-            self.tailbtn.configure(text="[tail ▼]" if on else "[tail —]", bg=P["bg"], fg=P["blue"] if on else P["mu"])
-        except (tk.TclError, AttributeError):
-            pass
+        return agent_logs._update_tailbtn(self, sys.modules[__name__])
 
     def _draw_log(self, keep=None):
-        """keep: the scroll position to stay at (folding an entry), instead of following the newest line."""
-        P, log = self.P, self.log
-        ags = self.net["agents"]
-        rows = agents.filtered_log_rows(self.net, self.sel, self._log_filters)[-160:]
-        filter_sig = tuple((k, tuple(sorted(v)) if isinstance(v, set) else v) for k, v in self._log_filters.items())
-        available = max(0, log.winfo_width() - 2 * int(log.cget("padx")) - 2)
-        sig = (self.sel, self.theme, self.s, self.opts.get("text_scale", 100), available,
-               tuple(rows), len(ags), filter_sig)
-        if sig == self._log_sig:
-            return
-        switched = (self._log_sig or (None,))[0] != sig[0]
-        try:
-            if not switched and log.tag_ranges("sel"):
-                return  # you are selecting text: new lines wait until the selection is gone
-        except tk.TclError:
-            pass
-        self._log_sig = sig
-        top = log.yview()[0]
-        log.configure(state="normal")
-        for edges in self._log_borders.values():
-            for edge in edges:
-                edge.destroy()
-        self._log_borders.clear()
-        log.delete("1.0", "end")
-        for i in range(len(ags)):
-            log.tag_configure(f"a{i}", foreground=self.color(i), font=self.f_bold)
-        log.tag_configure("mu", foreground=P["mu"])
-        log.tag_configure("think", foreground=P["blue"])
-        log.tag_configure("you", foreground=P["hi"], font=self.f_bold)
-        log.tag_configure("error", foreground=P["red"])
-        log.tag_configure("spawn", foreground=P["amb"])
-        if self.sel >= 0 and ags:
-            a = ags[self.sel]
-            info = " · ".join(v for v in (a["model_label"], a["effort"],
-                                          f"ctx {agents.fmt_tokens(a['ctx'])}" if a["ctx"] else "") if v)
-            log.insert("end", f"$ tail {a['name']} ", f"a{self.sel}")
-            log.insert("end", "# " + info + (f" · {a['kind']}" if a["kind"] and not a["main"] else "") + "\n", "mu")
-        if not rows:
-            log.insert("end", "(nothing logged yet)", "mu")
-        width = min(32, max((len(a["name"]) for a in ags), default=4))
-        # long and multi-line entries (a full reply) wrap under their text, not under the time stamp
-        hang = 9 + width + 3
-        log.tag_configure("hang", lmargin2=self.f_main.measure(" " * (hang + 2)))
-        log.tag_configure("fold", foreground=P["blue"])
-        log.tag_configure("odd", background=mix(P["bar"], P["bg"], 0.35))  # every other entry shaded
-        # an agent's final reply (its result): a light green tint, and a green mark before its time stamp
-        log.tag_configure("final", background=mix(P["grn"], P["bg"], 0.9))
-        log.tag_configure("finalmark", foreground=P["grn"])
-        log.tag_configure("expanded_body", lmargin1=self.px(6), lmargin2=self.px(6),
-                          rmargin=self.px(6), spacing1=self.px(3), spacing3=self.px(3), font=self.f_main)
-        log.tag_configure("expanded_header", lmargin1=self.px(6), lmargin2=self.px(6),
-                          rmargin=self.px(6), spacing1=self.px(4), spacing3=self.px(3), font=self.f_bold)
-        finals = set()
-        for i, a in enumerate(ags):
-            if a["state"] not in ("working", "needs_input", "waiting"):
-                last = next((k for k in range(len(rows) - 1, -1, -1) if rows[k][1] == i and rows[k][2] == "say"), None)
-                if last is not None:
-                    finals.add(last)
-        self._entries = []
-        for n, (t, i, kind, text) in enumerate(rows):
-            # long entries show their first line with ›: click (or right-click) to unfold them, ‹ to fold again
-            key = (t, ags[i]["name"], kind, hash(text))
-            stamp = time.strftime("%H:%M:%S ", time.localtime(t)) if t else " " * 9
-            name = ags[i]["name"].ljust(width)[:width]
-            mark = KIND_MARK.get(kind, "")
-            mark_font = self.f_bold if kind == "you" else self.f_main
-            prefix_width = (self.f_main.measure(("▍" if n in finals else "") + stamp + " │ ") +
-                            self.f_bold.measure(name) + mark_font.measure(mark + " " if mark else ""))
-            text_font = self.f_bold if kind == "you" else self.f_main
-            shown, big = log_preview(text, available - prefix_width, text_font, self.f_main.measure("  ›"))
-            expanded = key in self._expanded
-            if expanded:
-                shown = formatted_log_content(text)
-                big = True  # keep collapse available even after widening the pane
-            self._entries.append((key, text, ags[i]["name"], big))
-            start = log.index("end-1c")
-            if expanded:
-                title = {"you": "Query", "say": "Response", "think": "Thinking", "input": "Input",
-                         "output": "Output", "tool": "Tool", "error": "Error", "spawn": "Agent started"}.get(kind, kind)
-                log.insert("end", f"{stamp}{ags[i]['name']} · {title}  ‹\n", ("expanded_header", f"a{i}"))
-                log.insert("end", shown + "\n", "expanded_body")
-                tag = f"entry{n}"
-                edges = tuple(tk.Frame(log, bg="#244c80", bd=0, takefocus=0) for _ in range(4))
-                self._log_borders[tag] = edges
-                for edge in edges:
-                    edge.bind("<ButtonRelease-1>", lambda e, n=n: self._entry_click(n))
-            else:
-                if n in finals:
-                    log.insert("end", "▍", "finalmark")
-                log.insert("end", stamp, "mu")
-                log.insert("end", name, f"a{i}")
-                log.insert("end", " │ ", "mu")
-                if mark:
-                    log.insert("end", mark + " ", "mu" if kind in ("tool", "say") else kind)
-                log.insert("end", shown, (kind if kind in ("think", "you", "error", "spawn") else "say", "hang"))
-                if big:
-                    log.insert("end", "  ›", ("fold", "hang"))
-                log.insert("end", "\n")
-            log.tag_add(f"entry{n}", start, "end-1c")
-            log.tag_configure(f"entry{n}", wrap="word" if expanded else "none")
-            if n % 2:
-                log.tag_add("odd", start, "end-1c")
-            if n in finals:
-                log.tag_add("final", start, "end-1c")
-            log.tag_bind(f"entry{n}", "<ButtonRelease-1>", lambda e, n=n: self._entry_click(n))
-            for b in ("<Button-3>",) + (("<Button-2>", "<Control-Button-1>") if IS_MAC else ()):
-                log.tag_bind(f"entry{n}", b, lambda e, n=n: self._entry_menu(e, n))
-            if expanded:
-                log.insert("end", "\n", ())  # space between outlined entries; outside the clickable entry
-        log.configure(state="disabled")
-        if keep is not None:
-            log.yview_moveto(keep)
-        elif self.opts.get("log_tail", True) or switched:
-            log.see("end")  # tail: follow the newest line
-        else:
-            log.yview_moveto(top)  # stays where you are reading
-        log.after_idle(self._position_log_borders)
+        return agent_logs._draw_log(self, sys.modules[__name__], keep)
 
     def _position_log_borders(self, *args):
-        """Contour expanded text without embedding widgets that break selection and copying."""
-        log = self.log
-        if not self.alive():
-            return
-        height, width = log.winfo_height(), log.winfo_width()
-        visible_first, visible_last = log.index("@0,0"), log.index(f"@0,{height}")
-        for tag, edges in self._log_borders.items():
-            for edge in edges:
-                edge.place_forget()
-            if not log.tag_ranges(tag):
-                continue
-            first, last = f"{tag}.first", f"{tag}.last-1c"
-            if log.compare(last, "<", visible_first) or log.compare(first, ">", visible_last):
-                continue
-            top_line, bottom_line = log.dlineinfo(first), log.dlineinfo(last)
-            top = max(0, top_line[1]) if top_line else 0
-            bottom = min(height, bottom_line[1] + bottom_line[3]) if bottom_line else height
-            thick = max(1, self.px(1))
-            if bottom <= top:
-                continue
-            edges[0].place(x=0, y=top, width=thick, height=bottom - top, bordermode="ignore")
-            edges[1].place(x=width - thick, y=top, width=thick, height=bottom - top, bordermode="ignore")
-            if top_line and top_line[1] >= 0:
-                edges[2].place(x=0, y=top, width=width, height=thick, bordermode="ignore")
-            if bottom_line and bottom_line[1] + bottom_line[3] <= height:
-                edges[3].place(x=0, y=bottom - thick, width=width, height=thick, bordermode="ignore")
+        return agent_logs._position_log_borders(self, sys.modules[__name__], *args)
 
     # ---- log entries: fold / unfold, copy, open in a window
     def _entry_click(self, n):
-        try:
-            if self.log.tag_ranges("sel"):
-                return  # that was a selection, not a click
-        except tk.TclError:
-            pass
-        self._toggle_entry(n)
+        return agent_logs._entry_click(self, sys.modules[__name__], n)
 
     def _toggle_entry(self, n):
-        if n >= len(self._entries) or not self._entries[n][3]:
-            return
-        key = self._entries[n][0]
-        try:
-            self.log.tag_remove("sel", "1.0", "end")
-        except tk.TclError:
-            pass
-        if key in self._expanded:
-            self._expanded.discard(key)
-        else:
-            self._expanded.add(key)
-            if self.opts.get("log_tail", True):  # unfolding to read: stop following the tail
-                self.opts["log_tail"] = False
-                self._save("tail")
-                self._update_tailbtn()
-                if self.menu_open:
-                    self._build_menu()
-        self._log_sig = None
-        self._draw_log(keep=self.log.yview()[0])
-        try:
-            self.log.see(f"entry{n}.first")  # its first line stays in sight (unfolding near the end scrolls)
-        except tk.TclError:
-            pass
+        return agent_logs._toggle_entry(self, sys.modules[__name__], n)
 
     def _entry_menu(self, e, n):
-        if n >= len(self._entries):
-            return "break"
-        key, text, who, big = self._entries[n]
-        P = self.P
-        menu = tk.Menu(self.win, tearoff=0, bg=P["bar"], fg=P["tx"], activebackground=P["sel"],
-                       activeforeground=P["hi"], font=self.f_small)
-        if big:
-            menu.add_command(label="collapse" if key in self._expanded else "expand",
-                             command=lambda: self._toggle_entry(n))
-        menu.add_command(label="copy text", command=lambda: (self.win.clipboard_clear(),
-                                                             self.win.clipboard_append(text)))
-        first = text.strip().split("\n", 1)[0]
-        title = f"{who} · {first[:70]}" + ("…" if len(first) > 70 else "")
-        menu.add_command(label="open in a window", command=lambda: TextPopup(self, title, text))
-        try:
-            menu.tk_popup(e.x_root, e.y_root)
-        finally:
-            menu.grab_release()
-        return "break"
+        return agent_logs._entry_menu(self, sys.modules[__name__], e, n)
 
     # ---- the prompt
     def _draw_prompt(self):
-        item = self.item
-        who = prompt_agent(self.net, item) if self.net["agents"] else None
-        self._has_prompt = who is not None
-        if who is None:
-            if self.in_window is not None:
-                self.in_window = None
-                self._draw_graph()
-            self.chip.place_forget()
-            if self.overlay_open:
-                self.open_overlay(False)
-            self._prompt_sig = None
-            return
-        req = item.get("request") or {}
-        name = self.net["agents"][who]["name"]
-        answerable = core.hook_waiting(item) and self.pet.answers_enabled(item)
-        self.chip.configure(text=f"[!] {name} needs your input · " + ("space to open" if answerable
-                                                                       else "answer it in the window"))
-        in_window = None if answerable else who
-        if in_window != self.in_window:
-            self.in_window = in_window
-            self._draw_graph()
-        if not self.overlay_open:
-            self.chip.place(in_=self.canvas, relx=1.0, rely=1.0, x=-self.px(170), y=-self.px(6), anchor="se")
-        sig = (req.get("id"), self.theme, self.s, core.hook_waiting(item))
-        if sig != self._prompt_sig:
-            self._prompt_sig = sig
-            self._build_overlay(name, req, item)
+        return agent_prompts._draw_prompt(self, sys.modules[__name__])
 
     def open_overlay(self, show):
-        self.overlay_open = bool(show) and self._has_prompt
-        if self.overlay_open:
-            if self.menu_open:
-                self.toggle_menu(False)
-            self.chip.place_forget()
-            self.option = 0
-            self._mark_option()
-            self._place_overlay()
-        else:
-            self.overlay.place_forget()
-            self._prompt_sig = None  # the chip comes back on the next refresh
-        return "break"
+        return agent_prompts.open_overlay(self, sys.modules[__name__], show)
 
     def _place_overlay(self):
-        """Over the logs, and up over the graph as far as the prompt needs (never under the bars)."""
-        width = max(self.px(200), self.win.winfo_width() - self.px(20))
-        for lab in getattr(self, "_wraps", []):
-            try:
-                lab.configure(wraplength=width - self.px(36))
-            except tk.TclError:
-                pass
-        bottom = self.footbar.winfo_y() - self.px(6)
-        self._flow_options(width - self.px(20))
-        highest = self.body.winfo_y() + self.px(6)
-        top = self.body.winfo_y() + self.canvas.winfo_y() + int(self.canvas.winfo_height() * 0.72)
-        try:
-            self.overlay.update_idletasks()
-            need = self.overlay.winfo_reqheight() + self.px(4)
-        except tk.TclError:
-            need = 0
-        top = max(highest, min(top, bottom - need))
-        self.overlay.place(x=self.px(10), y=top, width=width, height=max(self.px(60), bottom - top))
-        self.overlay.lift()
+        return agent_prompts._place_overlay(self, sys.modules[__name__])
 
     def _build_overlay(self, name, req, item):
-        P, ov = self.P, self.overlay
-        for wdg in ov.winfo_children():
-            wdg.destroy()
-        self.options, self._wraps = [], []
-        pad = self.px(10)
-        questions = req.get("questions") or []
-        kind = "asks you" if req.get("kind") == "question" or questions else f"wants to run {req.get('tool') or 'a tool'}"
-        top = tk.Frame(ov, bg=P["node"])
-        top.pack(fill="x", padx=pad, pady=(pad, 0))
-        tk.Label(top, text=f"? {name} {kind}", font=self.f_bold, bg=P["node"], fg=P["red"], anchor="w").pack(
-            side="left")
-        fold = tk.Label(top, text="[esc] fold", font=self.f_small, bg=P["node"], fg=P["mu"], cursor="hand2")
-        fold.pack(side="right")
-        fold.bind("<Button-1>", lambda e: self.open_overlay(False))
-        detail = (req.get("detail") or "").strip()
-        if req.get("description"):
-            lab = tk.Label(ov, text="# " + req["description"], font=self.f_small, bg=P["node"], fg=P["mu"],
-                           anchor="w", justify="left", wraplength=self.px(560))
-            lab.pack(fill="x", padx=pad)
-            self._wraps.append(lab)
-        if detail and not questions:
-            lines = detail.splitlines()
-            shown = "\n".join(lines[:6]) + ("\n…" if len(lines) > 6 else "")
-            lab = tk.Label(ov, text=shown, font=self.f_main, bg=P["bar"], fg=P["hi"], anchor="w", justify="left",
-                           wraplength=self.px(560), padx=self.px(6), pady=self.px(3))
-            lab.pack(fill="x", padx=pad, pady=self.px(4))
-            self._wraps.append(lab)
-        answerable = core.hook_waiting(item) and self.pet.answers_enabled(item)
-        self.own = None  # (question, entry) when a typed answer can be sent
-        self.radio = False  # the options are a pick-one list (a question)
-        if questions:
-            simple = len(questions) == 1 and not questions[0].get("multiSelect") and questions[0].get("options")
-            for q in questions[:1]:
-                lab = tk.Label(ov, text=q.get("question", ""), font=self.f_main, bg=P["node"], fg=P["hi"], anchor="w",
-                               justify="left", wraplength=self.px(560))
-                lab.pack(fill="x", padx=pad, pady=(self.px(4), 0))
-                self._wraps.append(lab)
-            if len(questions) > 1 or (questions and questions[0].get("multiSelect")):
-                lab = tk.Label(ov, text="# several questions or picks: answer them on the full card", font=self.f_small,
-                               bg=P["node"], fg=P["mu"], anchor="w", justify="left")
-                lab.pack(fill="x", padx=pad)
-                self._wraps.append(lab)
-            if answerable and simple:
-                q, self.radio = questions[0], True
-                for opt in q["options"][:8]:
-                    label = str(opt.get("label") if isinstance(opt, dict) else opt)
-                    self.options.append((label, lambda label=label, q=q: self._send(
-                        "allow", {q["question"]: label})))
-                self.options.append(("your own answer:", self._send_own))
-        elif answerable:
-            self.options = [("allow once", lambda: self._send("allow"))]
-            for sug in (req.get("suggestions") or [])[:3]:  # the AI's own "don't ask again" choices
-                agent_name = "codex" if (item or {}).get("agent") == "codex" else "claude"
-                self.options.append((f"{agent_name}: {suggestion_label(sug)}",
-                                     lambda sug=sug: self._send("allow", permissions=[sug])))
-            self.options += [("aipet: always (whitelist)", self._always),
-                             ("deny", lambda: self._send("deny"))]
-        n_answers = len(self.options)
-        self.options.append(("full card", lambda: self.pet.open_detail(self.key)))
-        codex = (item or {}).get("agent") == "codex"
-        self.options.append(("answer in codex" if codex and answerable else "go to window", self._go))
-        self._opt_row = tk.Frame(ov, bg=P["node"])
-        self._opt_row.pack(fill="x", padx=pad, pady=self.px(6))
-        self._opt_labels, self._opt_flow = [], None
-        for n, (label, _) in enumerate(self.options):
-            if self.radio and label == "your own answer:":
-                own_row = tk.Frame(self._opt_row, bg=P["node"])
-                lab = tk.Label(own_row, font=self.f_main, cursor="hand2", padx=self.px(4), pady=self.px(1),
-                               bg=P["node"], fg=P["tx"], anchor="w")
-                lab.pack(side="left")
-                entry = tk.Entry(own_row, font=self.f_main, bg=P["bar"], fg=P["hi"], insertbackground=P["hi"],
-                                 relief="flat", highlightthickness=1, highlightbackground=P["line"],
-                                 highlightcolor=P["red"])
-                entry.pack(side="left", fill="x", expand=True, padx=(self.px(4), 0))
-                entry.bind("<KeyRelease>", lambda e, n=n: self._own_typed(n))
-                entry.bind("<FocusIn>", lambda e, n=n: self._pick(n))
-                entry.bind("<Return>", lambda e: (self._send_own(), "break")[1])
-                entry.bind("<Escape>", lambda e: (self.win.focus_set(), "break")[1])
-                self.own = (questions[0], entry)
-                lab.bind("<Button-1>", lambda e, n=n: self.choose(n))
-                lab._row = own_row
-            else:
-                lab = tk.Label(self._opt_row, font=self.f_main, cursor="hand2", padx=self.px(4), pady=self.px(1),
-                               bg=P["node"], fg=P["tx"], anchor="w", justify="left")
-                lab.bind("<Button-1>", lambda e, n=n: self.choose(n))
-                lab._row = None
-            lab._text = label
-            lab._answer = n < n_answers
-            self._opt_labels.append(lab)
-        self._flow_options(self.px(560))
-        if answerable:
-            hint = ("# 1-9 or ↑↓ + enter to answer · type your own + enter · esc fold" if self.radio
-                    else "# 1-9 or ←→ + enter to answer · esc fold")
-        elif req.get("id") in self._released:
-            hint = "# handed back to codex: answer it in the codex window now (go to window takes you there)"
-        else:
-            hint = "# this prompt can only be answered in the session window (or turn on answering in permissions)"
-        self.note = tk.Label(ov, text=hint, font=self.f_small, bg=P["node"], fg=P["mu"], anchor="w", justify="left")
-        self.note.pack(fill="x", padx=pad, pady=(0, pad))
-        self._wraps.append(self.note)
-        self._mark_option()
-        if self.overlay_open:
-            self._place_overlay()
+        return agent_prompts._build_overlay(self, sys.modules[__name__], name, req, item)
 
     def _flow_options(self, width):
-        """The answers side by side when they fit, else one per line (wrapping long ones); a question's answers are
-        always one per line, like radio buttons."""
-        labels = getattr(self, "_opt_labels", [])
-        if not labels:
-            return
-        for lab in labels:
-            lab.configure(wraplength=0)
-        total = sum(lab.winfo_reqwidth() + self.px(4) for lab in labels)
-        flow = "row" if not self.radio and total <= width else "column"
-        if flow == self._opt_flow and flow == "row":
-            return
-        self._opt_flow = flow
-        for lab in labels:
-            (lab._row or lab).pack_forget()
-        for lab in labels:
-            widget = lab._row or lab
-            if flow == "row":
-                widget.pack(side="left", padx=(0, self.px(4)))
-            else:
-                widget.pack(side="top", fill="x", anchor="w", pady=(0, self.px(1)))
-                if widget is lab:
-                    lab.configure(wraplength=max(self.px(120), width - self.px(30)))
+        return agent_prompts._flow_options(self, sys.modules[__name__], width)
 
     def _mark_option(self):
-        P = self.P
-        for n, lab in enumerate(getattr(self, "_opt_labels", [])):
-            try:
-                on = n == self.option
-                mark = ("(•) " if on else "( ) ") if self.radio and lab._answer else ""
-                lab.configure(text=f"[{n + 1}] {mark}{lab._text}", bg=P["redbg"] if on else P["node"],
-                              fg=P["red"] if on else P["tx"])
-            except (tk.TclError, AttributeError):
-                pass
+        return agent_prompts._mark_option(self, sys.modules[__name__])
 
     def _pick(self, n):
-        self.option = n
-        self._mark_option()
+        return agent_prompts._pick(self, sys.modules[__name__], n)
 
     def _own_typed(self, n):
-        if self.own and self.own[1].get().strip():
-            self._pick(n)
+        return agent_prompts._own_typed(self, sys.modules[__name__], n)
 
     def _send_own(self):
-        """Send what was typed as the answer; with nothing typed yet, go to the box."""
-        if not self.own:
-            return
-        q, entry = self.own
-        text = entry.get().strip()
-        if not text:
-            entry.focus_set()
-            return
-        self.win.focus_set()
-        self._send("allow", {q["question"]: text})
+        return agent_prompts._send_own(self, sys.modules[__name__])
 
     def step_option(self, d):
-        if getattr(self, "options", None):
-            self.option = (self.option + d) % len(self.options)
-            self._mark_option()
-        return "break"
+        return agent_prompts.step_option(self, sys.modules[__name__], d)
 
     def choose(self, n):
-        if self.overlay_open and 0 <= n < len(getattr(self, "options", [])):
-            self.option = n
-            self._mark_option()
-            self.options[n][1]()
-        return "break"
+        return agent_prompts.choose(self, sys.modules[__name__], n)
 
     def _send(self, behavior, answers=None, permissions=None):
-        ok = (self.pet.send_answer(self.key, behavior, answers=answers, permissions=permissions) if permissions
-              else self.pet.send_answer(self.key, behavior, answers=answers))
-        self.note.configure(text="# sent" if ok else "# couldn't send it: the prompt may have been answered already")
-        if ok:
-            self.win.after(600, lambda: self.open_overlay(False))
+        return agent_prompts._send(self, sys.modules[__name__], behavior, answers, permissions)
 
     def _go(self):
-        """Go to the session's window. Codex: AIPet lets go of the prompt, so Codex shows its own one there (with
-        choices the pet doesn't have, like always allowing that tool)."""
-        req = (self.item or {}).get("request") or {}
-        if (self.item or {}).get("agent") == "codex" and req.get("id"):
-            self._released.add(req["id"])
-        self.pet.go_to_prompt(self.key)
-        self._prompt_sig = None  # rebuilt as "answer it in the window"
-        self.open_overlay(False)
+        return agent_prompts._go(self, sys.modules[__name__])
 
     def _always(self):
-        added = self.pet.whitelist_request(self.item)
-        self._send("allow")
-        if added:
-            self.note.configure(text="# " + added)
+        return agent_prompts._always(self, sys.modules[__name__])

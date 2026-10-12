@@ -506,11 +506,15 @@ From source, the Windows hook runs via `pythonw` and the script, so no exe is ne
 ## Files
 | File | Purpose |
 |---|---|
-| `aipet_app.py` | Entry point: tray, the shared menu, autostart, config watcher |
-| `aipet.py` | The pet window, permission / question cards, sounds, session reading, Workbench poller |
+| `aipet_app.py` | Entry point: tray, application actions, autostart, config watcher |
+| `aipet.py` | Pet runtime coordination, shared state and compatibility entry points |
+| `aipetlib/config.py`, `records.py`, `sessions.py`, `permissions.py` | Configuration persistence, session interpretation and permission rules |
+| `aipetlib/geometry.py`, `windows.py`, `mac_panels.py`, `click_through.py` | Monitor geometry and native window behavior |
+| `aipetlib/vscode.py`, `workbench.py`, `hook_events.py` | Editor routing, MCP polling and hook event transitions |
+| `aipetlib/ui/` | Pet rendering, permission cards, tooltips, themes, menu definitions and focused agent-window components |
 | `aipet_settings.py` | The AIPet menu window (built from the same menu definition) |
 | `aipet_agents.py` | Reads a session's agents (main + subagents) from Claude Code transcripts and Codex rollouts |
-| `aipet_agents_window.py` | The agent network window |
+| `aipet_agents_window.py` | Agent-window lifecycle and state; delegates graph, logs, prompts, controls and widget construction |
 | `aipet_guide.py` | The settings guide for AI assistants (Copy settings guide for AI) |
 | `aipet_hook.py` | The hook Claude Code and Codex run on each event |
 | `hooks_installer.py` | settings.json / hooks.json merge and remove, backups and restore, the Cowork plugin |
@@ -520,6 +524,18 @@ From source, the Windows hook runs via `pythonw` and the script, so no exe is ne
 | `legacy.py` | Moving over from Claude Pet (removable later) |
 | `build.bat`, `build_mac.sh`, `.github/workflows/` | Builds and the macOS self-test |
 | `tools/` | Sprite, icon and demo GIF generators, test helpers |
+
+The entry-point modules retain the existing callable interfaces. Components receive the owning window/app and
+shared services explicitly; they do not import an entry point back into their implementation. The owner keeps the
+mutable UI state and callbacks, so extracting a component does not create a second configuration, cache or session
+store. Pure record helpers and the Workbench transport can also be used without a desktop runtime. The hook's source
+fallback deploys only the toolkit-free package files it needs alongside the script.
+
+Place new behavior in the component responsible for it and keep lifecycle coordination in the entry points. Preserve
+the existing entry-point methods when callers or tests depend on them. For a structural change, compare the same
+synthetic sessions and isolated settings before and after, exercise the actual native widgets, and capture matching
+screenshots. Native macOS checks opt in with `AIPET_NATIVE_WINDOW_TEST=1`; a pass on macOS does not verify the Windows
+desktop. Keep local parity handoffs, scripts, screenshots and reports outside the tracked source tree.
 
 ## License
 Free for everyone to use, modify and share, including at work. Forks and modified versions must keep the license and credit "AIPet by Duck Code". Selling AIPet, or a product that mainly provides it, needs a written agreement first. See [LICENSE](LICENSE).
