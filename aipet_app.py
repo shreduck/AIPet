@@ -403,6 +403,7 @@ class TrayApp:
             self.ui(self.show_setup)  # first run: shows what is installed / up to date / outdated per target
         elif stale:
             self.ui(lambda: self.offer_update(stale))
+        self.ui(lambda: self.root.after(1500, self.offer_agent_network))
 
     # ---- first-run setup
     def show_setup(self, check_stopped=False):
@@ -1577,6 +1578,29 @@ class TrayApp:
                 "settings": True}
 
     # ---- agent network windows: one for all sessions, or one per session ("each")
+    def offer_agent_network(self):
+        """Offer the new view once, after setup and any other startup dialog have closed."""
+        if self.pet.cfg.get("agent_network_intro_seen"):
+            return
+        if not setup_is_done() or self.setup_win is not None or self.busy or self.root.grab_current() is not None:
+            self.root.after(1500, self.offer_agent_network)
+            return
+        self.pet.cfg["agent_network_intro_seen"] = True
+        core.save_setting("agent_network_intro_seen", True)
+
+        def chosen(try_it):
+            if try_it:
+                self.show_agent_network()
+                self.refresh_menu()
+
+        core.themed_dialog(
+            self.root, "Try AIPet's agent view", kind="question", heading="Meet the agent view",
+            text="See your Claude and Codex agents in a live graph, including nested subagents, "
+                 "their tool calls, inputs, outputs and shared logs.\n\nWould you like to try it? "
+                 "You can also open it later from the AIPet menu: Agent network window.",
+            buttons=(("Not now", False, "secondary"), ("Try it", True, "primary")),
+            cancel=False, on_result=chosen)
+
     def _agent_windows(self):
         wins = {k: w for k, w in (getattr(self, "agents_wins", None) or {}).items() if w.alive()}
         self.agents_wins = wins

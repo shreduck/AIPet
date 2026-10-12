@@ -136,6 +136,12 @@ def _cached(path, size, parse):
         parsed = parse(_read_tail(path, size))
     except OSError:
         return None
+    parsed["tool_calls"] = _merge_tool_calls((hit[1].get("tool_calls") or []) if hit else [],
+                                              parsed.get("tool_calls") or [])
+    closed = parsed.get("closed_t") or (parsed.get("last_prompt_t") if parse is parse_claude else 0) or 0
+    for call in parsed["tool_calls"]:
+        if not call.get("finished_t") and call.get("started_t", closed) < closed:
+            call["finished_t"] = closed  # a later turn cannot reactivate a tool with no recorded result
     parsed["mtime"] = st.st_mtime
     parsed["cut"] = st.st_size > size  # only the file's tail was read
     if len(_TAILS) > 128:
@@ -146,7 +152,45 @@ def _cached(path, size, parse):
 
 def _empty():
     return {"model": "", "effort": "", "ctx": 0, "ctx_max": 0, "lines": [], "last_prompt_t": 0.0, "done": None,
-            "first_t": 0.0}
+            "first_t": 0.0, "tool_calls": [], "closed_t": 0.0}
+
+
+def _tool_text(value):
+    """Readable input/output text, preserving structured content."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return full(value)
+    return full(json.dumps(value, ensure_ascii=False, indent=2, default=str))
+
+
+def _merge_tool_calls(previous, current):
+    by_id = {c["id"]: dict(c) for c in previous}
+    for call in current:
+        merged = by_id.setdefault(call["id"], {})
+        started = merged.get("started_t")
+        merged.update(call)
+        if started:
+            merged["started_t"] = started
+    calls = sorted(by_id.values(), key=lambda c: c.get("finished_t") or c.get("started_t") or 0)
+    # Keep outstanding calls even if their input has fallen out of the transcript tail.
+    pending = [c for c in calls if not c.get("finished_t")]
+    groups = {}
+    for call in calls:
+        if call.get("finished_t"):
+            groups.setdefault(call.get("name", ""), []).append(call)
+    finished = [c for group in groups.values() for c in group[-MAX_LOG // 2:]]
+    return sorted(pending + finished, key=lambda c: c.get("started_t") or c.get("finished_t") or 0)
+
+
+def _tool_failed(output):
+    if isinstance(output, str):
+        try:
+            output = json.loads(output)
+        except ValueError:
+            return False
+    return isinstance(output, dict) and bool(output.get("isError") or output.get("is_error") or output.get("error"))
 
 
 # --------------------------------------------------------------------------- Claude Code
@@ -178,6 +222,8 @@ def parse_claude(entries):
                     lines.append((t, "think", core._phrase(c["thinking"], 160)))
                 elif c.get("type") == "tool_use":
                     name, args = str(c.get("name") or "tool"), c.get("input") or {}
+                    cid = str(c.get("id") or f"{t}:{name}:{len(info['tool_calls'])}")
+                    info["tool_calls"].append({"id": cid, "name": name, "input": _tool_text(args), "started_t": t})
                     if name in ("Agent", "Task"):
                         what = args.get("subagent_type") or "agent"
                         lines.append((t, "spawn", f"started {what}: {short(args.get('description'), 70)}"))
@@ -187,6 +233,10 @@ def parse_claude(entries):
         else:
             for c in parts:
                 if c.get("type") == "tool_result":
+                    cid = str(c.get("tool_use_id") or "")
+                    if cid:
+                        info["tool_calls"].append({"id": cid, "output": _tool_text(c.get("content")),
+                                                   "finished_t": t, "error": bool(c.get("is_error"))})
                     if c.get("is_error"):
                         body = c.get("content")
                         if isinstance(body, list):
@@ -197,6 +247,7 @@ def parse_claude(entries):
                     if text and not text.startswith(SKIP_TEXT) and not e.get("isMeta"):
                         lines.append((t, "you", short(text, 160)))
                         info["last_prompt_t"] = t
+    info["tool_calls"] = _merge_tool_calls([], info["tool_calls"])
     return info
 
 
@@ -241,6 +292,7 @@ def parse_codex(entries):
             started = t
         elif kind == "event_msg" and sub in ("task_complete", "turn_aborted"):
             finished = t
+            info["closed_t"] = t
         elif kind == "response_item" and sub == "message":
             role = p.get("role")
             for c in p.get("content") or []:
@@ -259,11 +311,38 @@ def parse_codex(entries):
         elif kind == "response_item" and sub in ("function_call", "custom_tool_call"):
             name = str(p.get("name") or "tool")
             args = p.get("arguments") if sub == "function_call" else p.get("input")
+            cid = str(p.get("call_id") or p.get("id") or f"{t}:{name}")
+            info["tool_calls"].append({"id": cid, "name": name, "input": _tool_text(args), "started_t": t})
             if name == "spawn_agent":
                 lines.append((t, "spawn", f"started {_tool_arg(name, args) or 'an agent'}"))
             elif name not in ("wait", "wait_agent"):
                 arg = _tool_arg(name, args) if sub == "function_call" else _script_arg(args)
                 lines.append((t, "tool", f"{name}({arg})" if arg else name))
+        elif kind == "response_item" and sub in ("function_call_output", "custom_tool_call_output"):
+            cid = str(p.get("call_id") or "")
+            if cid:
+                info["tool_calls"].append({"id": cid, "output": _tool_text(p.get("output")), "finished_t": t,
+                                           "error": bool(p.get("is_error") or _tool_failed(p.get("output")))})
+        elif kind == "event_msg" and sub in ("item_started", "item_completed"):
+            call = p.get("item") or {}
+            call_type = call.get("type")
+            cid = str(call.get("id") or "")
+            if cid and call_type in ("CommandExecution", "FileChange", "McpToolCall", "MCPToolCall"):
+                if call_type == "CommandExecution":
+                    name, args = "exec_command", {"command": call.get("command"), "cwd": call.get("cwd")}
+                    output = call.get("aggregated_output", call.get("formatted_output", ""))
+                elif call_type == "FileChange":
+                    name, args, output = "apply_patch", call.get("changes"), call.get("stdout", "")
+                else:
+                    name = f"mcp__{call.get('server') or 'server'}__{call.get('tool') or 'tool'}"
+                    args, output = call.get("arguments"), call.get("result")
+                entry = {"id": cid, "name": name, "input": _tool_text(args), "started_t": t}
+                if sub == "item_completed":
+                    entry.update(output=_tool_text(output), finished_t=t,
+                                 error=bool(call.get("error") or call.get("exit_code") or _tool_failed(output) or
+                                            call.get("status") == "failed"))
+                info["tool_calls"].append(entry)
+    info["tool_calls"] = _merge_tool_calls([], info["tool_calls"])
     info["done"] = bool(finished and finished >= started) if (started or finished) else None
     return info
 
@@ -323,7 +402,7 @@ def codex_subagent_files(rollout, thread_id):
 
 
 # --------------------------------------------------------------------------- the network
-def read_network(item, now=None):
+def read_network(item, now=None, include_tools=False):
     """{"agents": [agent...], "log": [(t, index, kind, text)]} for one session item of the pet.
     agent: {"id", "name", "main", "model", "effort", "ctx", "ctx_max", "state", "thought", "lines", "kind"}
     state: working / needs_input / waiting (main agent waiting on subagents) / done / idle."""
@@ -372,6 +451,7 @@ def read_network(item, now=None):
             parent = ""
         subs.append({"id": aid, "name": name, "main": False, "kind": kind if kind != name else "", "path": path,
                      "parent": parent,
+                     "tool_calls": info["tool_calls"],
                      "_missing": bool(info.get("cut") and (info["first_t"] or 0) > turn_start + 1),
                      "state": state, "mtime": info["mtime"], "first_t": info["first_t"] or info["mtime"], **{
                          k: info[k] for k in ("model", "effort", "ctx", "ctx_max", "lines")}})
@@ -424,8 +504,11 @@ def read_network(item, now=None):
             now - main_info.get("mtime", 0) > RECENT:
         main_state = "waiting"
     main = {"id": "", "name": "main", "main": True, "kind": "Codex" if codex else "Claude", "path": transcript,
-            "state": main_state, **{k: main_info[k] for k in ("model", "effort", "ctx", "ctx_max", "lines")}}
+            "state": main_state, "tool_calls": main_info["tool_calls"],
+            **{k: main_info[k] for k in ("model", "effort", "ctx", "ctx_max", "lines")}}
     agents = [main] + subs
+    if include_tools:
+        agents += tool_nodes(agents, now, retention)
     for a in agents:
         a["model_label"] = model_name(a["model"])
         a["thought"] = next((core._phrase(text, 160) if kind == "say" else text for _, kind, text in reversed(a["lines"])
@@ -441,6 +524,39 @@ def read_network(item, now=None):
     return {"agents": agents, "log": log, "turn_start": turn_start, "missing": missing}
 
 
+def tool_nodes(agents, now, retention):
+    """One child node and input/output log per unique tool for each calling agent."""
+    nodes = []
+    for agent in agents:
+        grouped = {}
+        for call in agent.get("tool_calls") or []:
+            if call.get("name"):
+                grouped.setdefault(call["name"], []).append(call)
+        for name, calls in grouped.items():
+            latest = max(c.get("finished_t") or c.get("started_t") or 0 for c in calls)
+            pending = any(not c.get("finished_t") for c in calls)
+            busy = pending and agent["state"] in ("working", "waiting", "needs_input")
+            if retention and not busy and latest and now - latest >= retention:
+                continue
+            rows = []
+            for call in calls:
+                if "input" in call:
+                    rows.append((call.get("started_t", 0), "input", f"call {call['id']}\n{call['input']}"))
+                if "output" in call:
+                    rows.append((call.get("finished_t", 0), "error" if call.get("error") else "output",
+                                 f"call {call['id']}\n{call['output']}"))
+            latest_call = max(calls, key=lambda c: c.get("finished_t") or c.get("started_t") or 0)
+            state = "working" if busy else ("error" if latest_call.get("error") else "done")
+            nodes.append({"id": "tool:" + json.dumps([agent["id"], name]), "name": name,
+                          "tab_name": f"{name} · {agent['name']}", "main": False, "tool": True,
+                          "parent": agent["id"], "depth": agent.get("depth", 0) + 1,
+                          "kind": f"{len(calls)} calls · {agent['name']}", "path": agent["path"],
+                          "state": state, "mtime": latest, "first_t": min(c.get("started_t") or latest for c in calls),
+                          "model": "", "effort": "", "ctx": 0, "ctx_max": 0,
+                          "lines": sorted(rows, key=lambda r: r[0])[-MAX_LOG:]})
+    return nodes
+
+
 def network_stats(net):
     """What the current task (since your latest prompt) used, for the agent network's stats node:
     {"subagents": [(type, times)], "calls": [(name, model, ctx)] one per agent in start order (main first),
@@ -449,6 +565,8 @@ def network_stats(net):
     types, tools, skills = {}, {}, {}
     calls = []
     for a in net.get("agents", []):
+        if a.get("tool"):
+            continue  # tool children have no model context and are not subagents
         calls.append((a["name"], a.get("model_label") or "", int(a.get("ctx") or 0)))
         if not a["main"]:
             base = a.get("kind") or a["name"].rsplit(" #", 1)[0]  # by type: general-purpose ×3

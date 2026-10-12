@@ -309,6 +309,8 @@ When Claude Code or Codex asks for permission, the popup (click the bubble) show
 
 ## Agent network window
 A live map of one session: the main agent and every subagent it started, Claude Code and Codex alike.
+- A one-time invitation offers **Try it** or **Not now**. Either choice, or closing it, prevents another invitation;
+  the view remains available from the AIPet menu.
 - **Nodes** carry a small copy of the pet's robot (red when that agent needs you), the agent's name (a Claude Code
   subagent's description, e.g. *Find the callers*, with its type under it; Codex's own nickname), model, reasoning
   effort and (on its own line) context size when the transcript records them, and its state. Edges show what is going on: blue with dots
@@ -316,6 +318,13 @@ A live map of one session: the main agent and every subagent it started, Claude 
   handed back its result (what each one says and does is in the logs). An agent started by a subagent sits in a
   column further right, linked to the subagent that started it (Claude Code records it in the subagent's
   `.meta.json`, Codex in the rollout's `parent_thread_id`).
+- **Tool nodes** sit under the agent that called them, with a gear icon. Each unique tool, including MCP tools,
+  gets one node and log tab per calling agent. Repeated calls share that tab, with their inputs and outputs
+  matched by call ID. The graph settings include a **tool calls** toggle. Tool nodes do not count as subagents
+  or add model context to the stats.
+- Finished subagents remain visible across new messages until unused for **80% of Clear finished after**
+  (3 minutes means 2 minutes 24 seconds). Reuse resets the timer; active agents and their parent branches stay
+  visible, and setting the session timeout to **never** also disables subagent expiry.
 - **Logs** below the graph, or above, left or right of it (settings: *logs position*). Every other entry is shaded,
   and each agent's final reply (its result) is tinted green with a green mark before it. Drag the line between graph and logs to
   resize them (up to 80% of the window); *tail* (settings, or `[tail ▼]` at the end of the tabs) follows the newest
@@ -356,10 +365,12 @@ A live map of one session: the main agent and every subagent it started, Claude 
   grouped by name) and *tools* (every tool and how often, and the skills used). Click a line for its read-only
   drop-down; Esc or a click elsewhere folds it. A small `ⓘ` (hover it) shows when the task began before the part of a
   transcript AIPet reads (its last 256 KB, 128 KB for a subagent): older entries may be missing then.
-- **Zoom and pan** the graph: `[-] 100% [+] [reset] [center]` at its top left, Ctrl + mouse wheel (at the pointer),
+- **Zoom and pan** the graph: `[-] 100% [+] [reset] [center] [fit all]` at its top left, Ctrl + mouse wheel (at the pointer),
   + / - and 0; drag to pan, the wheel scrolls (Shift: sideways). The stats node and zoom controls stay put. Panning,
   scrolling and zooming stop where at least one node is still in sight (inside a 10% margin), and a view with no
   node in it re-centres by itself.
+  **Center** places the average of the node centres in the viewport centre without changing zoom.
+  **Fit all** adjusts zoom to show every node and title, leaving room for the fixed controls.
 - **Reset agent network appearance** (Appearance, next to Reset pet size, in every menu and the AIPet menu window) puts the default look
   back and centres the open windows on the main screen; one window or one per session stays as it was.
 - **Size**: the window can't get smaller than what everything needs at 50% scale. Shrinking it below what the current

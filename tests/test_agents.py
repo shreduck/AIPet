@@ -4,7 +4,7 @@ import tempfile
 import time
 import unittest
 from contextlib import ExitStack
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import aipet_agents as agents
 
@@ -319,6 +319,63 @@ class CodexNetworkTests(unittest.TestCase):
 
 
 class WindowLogicTests(unittest.TestCase):
+    def graph_window(self):
+        import aipet_agents_window as win
+        view = object.__new__(win.AgentNetworkWindow)
+        view.canvas = MagicMock()
+        view.canvas.winfo_width.return_value = 500
+        view.canvas.winfo_height.return_value = 350
+        view.gz = 1.0
+        view._robots = {}
+        view._title_rects = []
+        view._scroll_to = MagicMock()
+        view._update_zoombar = MagicMock()
+        view.px = lambda n: n
+        view.zoombar = MagicMock()
+        view.zoombar.winfo_reqheight.return_value = 20
+        view._stats_size = lambda: (150, 50)
+        return view
+
+    def test_center_uses_node_gravity_center_and_keeps_zoom(self):
+        view = self.graph_window()
+        view.gz = 1.7
+        view._content = (3000, 3000)  # empty layout space must not affect centering
+        view._node_rects = [(0, 0, 100, 100), (400, 0, 500, 100), (400, 200, 500, 300)]
+        view.center_view(by_user=True)
+        left, top = view._scroll_to.call_args.args
+        self.assertAlmostEqual(left, (50 + 450 + 450) / 3 - 250)
+        self.assertAlmostEqual(top, (50 + 50 + 250) / 3 - 175)
+        self.assertEqual(view.gz, 1.7)
+
+    def test_fit_all_includes_titles_and_fits_below_previous_zoom_limit(self):
+        view = self.graph_window()
+
+        def redraw(force=False):
+            z = view.gz
+            view._node_rects = [(0, 100 * z, 2000 * z, 1100 * z)]
+            view._title_rects = [(0, 0, 2000 * z, 100 * z)]
+
+        view._draw_graph = redraw
+        redraw()
+        view.fit_all()
+        self.assertLess(view.gz, 0.4)
+        left, top = view._scroll_to.call_args.args
+        x0, y0, x1, y1 = view._graph_bounds()
+        self.assertGreaterEqual(x0 - left, 10)
+        self.assertLessEqual(x1 - left, 490)
+        self.assertGreaterEqual(y0 - top, 30)
+        self.assertLessEqual(y1 - top, 290)
+        self.assertFalse(view._fit_view)
+        view._update_zoombar.assert_called_once()
+
+    def test_empty_graph_center_and_fit_do_nothing(self):
+        view = self.graph_window()
+        view._node_rects = []
+        view.center_view(by_user=True)
+        view.fit_all()
+        view._scroll_to.assert_not_called()
+        self.assertEqual(view.gz, 1.0)
+
     def test_picks_the_session_that_needs_you_and_the_asking_agent(self):
         import aipet_agents_window as win
         items = [{"key": "a", "source": "CC", "session_id": "1", "state": "working"},
