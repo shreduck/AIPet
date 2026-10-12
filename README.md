@@ -97,6 +97,12 @@ restart, and the app says so). *Copy settings guide for AI* (AIPet menu → Gene
 the folder, which files may be edited, every `config.json` key with its current value and allowed values, and the
 `auto-approve.json` format. Paste it into Claude, Codex or another assistant and ask it to change AIPet for you.
 
+**Nothing piles up.** A minute after start and then hourly, AIPet clears what it no longer needs: session files after
+`stale_hours` (12 h), usage readings of sessions gone for a day, half-written files and the waits / answers of hooks
+that were killed (after an hour), expired timed auto approves, the debug logs once nothing has written to them for a
+week (and they are size-capped meanwhile), and saved diagnostics after 30 days. Backups keep the original plus the
+newest few per install. Transcripts are only ever read, never copied.
+
 **Questions from Claude** (its AskUserQuestion tool) open in the pet's popup like permission prompts: each question with
 its options (check boxes when several may be picked) and a field for your own answer. *Send answer* hands the answers to
 Claude Code, which carries on as if you had answered there. Auto approve never answers a question, and a question is
