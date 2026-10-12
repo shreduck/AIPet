@@ -17,6 +17,8 @@ Probe: python  aipet.py --probe-workbench   (prints what Workbench returns)
 
 Standard library only (tkinter, urllib, winsound).
 """
+import aipetlib.ui.appearance_controls as appearance_controls
+import aipetlib.ui.tooltips as tooltips
 import copy
 import glob
 import json
@@ -33,6 +35,11 @@ import urllib.error
 import urllib.request
 import tkinter as tk
 import aipet_usage as usage
+import aipetlib.ui.sprites as sprites
+import aipetlib.ui.theme as theme
+from aipetlib.ui.permission_card import PermissionCard
+from aipetlib.ui.pet_view import PetView
+from aipetlib.ui import font_metrics
 from aipetlib.mac_panels import MacOverlayWindow, MacPetWindow
 from aipetlib.click_through import ClickThroughController
 import aipetlib.windows as windows
@@ -151,9 +158,7 @@ T = {}  # the active theme; set_theme() mutates it in place so every module sees
 
 
 def set_theme(name):
-    name = name if name in THEMES else "light"
-    T.clear()
-    T.update(THEMES[name], name=name)
+    return theme.set_theme(sys.modules[__name__], name)
 
 
 set_theme("light")
@@ -169,61 +174,19 @@ MUTED_FG = {"#6b7280", "grey", "gray"}
 
 
 def _fg_role(w, opt="fg"):
-    roles = w.__dict__.setdefault("_pet_roles", {})
-    if opt not in roles:
-        try:
-            v = str(w.cget(opt))
-        except tk.TclError:
-            return T["win_fg"]
-        low = v.lower()
-        roles[opt] = "fg" if low in _DEFAULT_FG else ("muted" if low in MUTED_FG else "keep:" + v)
-    role = roles[opt]
-    if role == "fg":
-        return T["win_fg"]
-    if role == "muted":
-        return T["muted"]
-    c = role[5:]
-    return DARK_TEXT.get(c.lower(), c) if T.get("name") == "dark" else c
+    return theme._fg_role(sys.modules[__name__], w, opt)
 
 
 def themed_color(c):
-    """A status colour readable on the current theme's window background."""
-    return DARK_TEXT.get(c.lower(), c) if T.get("name") == "dark" else c
+    return theme.themed_color(sys.modules[__name__], c)
 
 
 def button_style(kind="secondary"):
-    """Options for a tk.Button in the pet's style: 'primary' (filled), 'danger' or 'secondary' (outlined)."""
-    if IS_MAC:
-        # Aqua draws the button face itself and ignores our filled background.
-        # Its matching system text stays readable in both macOS appearances.
-        return dict(fg="systemButtonText", activeforeground="systemButtonText",
-                    bg=T["win_bg"], highlightbackground=T["win_bg"],
-                    cursor="hand2", padx=14, pady=4,
-                    font=(UI_FONT, 9, "bold") if kind in ("primary", "danger") else (UI_FONT, 9))
-    if kind == "primary":
-        return dict(bg=T["primary"], fg=T["primary_fg"], activebackground=T["primary_active"],
-                    activeforeground=T["primary_fg"], relief="flat", bd=0, highlightthickness=0, cursor="hand2",
-                    padx=14, pady=4, font=(UI_FONT, 9, "bold"))
-    if kind == "danger":
-        return dict(bg=T["danger"], fg="#ffffff", activebackground=T["danger_active"], activeforeground="#ffffff",
-                    relief="flat", bd=0, highlightthickness=0, cursor="hand2", padx=14, pady=4,
-                    font=(UI_FONT, 9, "bold"))
-    return dict(bg=T["btn_bg"], fg=T["btn_fg"], activebackground=T["btn_active"], activeforeground=T["btn_fg"],
-                relief="flat", bd=0, highlightthickness=1, highlightbackground=T["border"], highlightcolor=T["border"],
-                cursor="hand2", padx=12, pady=3, disabledforeground=T["menu_disabled"], font=(UI_FONT, 9))
+    return theme.button_style(sys.modules[__name__], kind)
 
 
 def style_menu(menu):
-    """Colour a Tk menu and its submenus like the theme (Windows and Linux; macOS draws menus natively)."""
-    try:
-        menu.configure(bg=T["menu_bg"], fg=T["menu_fg"], activebackground=T["menu_active_bg"],
-                       activeforeground=T["menu_active_fg"], disabledforeground=T["menu_disabled"],
-                       selectcolor=T["menu_fg"], relief="flat", bd=1, activeborderwidth=0)
-    except tk.TclError:
-        return
-    for child in menu.winfo_children():
-        if isinstance(child, tk.Menu):
-            style_menu(child)
+    return theme.style_menu(sys.modules[__name__], menu)
 
 
 def fill_menu(menu, entries):
@@ -413,126 +376,31 @@ def chime_path(kind):
 
 
 def _ttk_scale_style(widget):
-    try:
-        from tkinter import ttk
-        s = ttk.Style(widget)
-        s.configure("Pet.Horizontal.TScale", background=T["win_bg"], troughcolor=T["entry_bg"])
-        return "Pet.Horizontal.TScale"
-    except Exception:
-        return None
+    return theme._ttk_scale_style(sys.modules[__name__], widget)
 
 
 def theme_widget(w):
-    """Style one widget and everything inside it."""
-    cls, bg = w.winfo_class(), T["win_bg"]
-    try:
-        if cls in ("Frame", "Toplevel", "Tk", "Canvas"):
-            w.configure(bg=bg)
-        elif cls == "Labelframe":
-            w.configure(bg=bg, fg=_fg_role(w), highlightbackground=T["border"])
-        elif cls == "Label":
-            w.configure(bg=bg, fg=_fg_role(w))
-        elif cls == "Button":
-            kind = w.__dict__.setdefault("_pet_kind", "primary" if str(w.cget("default")) == "active" else "secondary")
-            opts = button_style(kind)
-            if str(w.cget("font")) != "TkDefaultFont":
-                opts.pop("font")  # keep a font the window chose itself (or the one set on an earlier pass)
-            w.configure(**opts)
-        elif cls in ("Checkbutton", "Radiobutton"):
-            fg = _fg_role(w)
-            w.configure(bg=bg, fg=fg, activebackground=bg, activeforeground=fg, selectcolor=T["entry_bg"],
-                        disabledforeground=T["menu_disabled"], highlightthickness=0)
-        elif cls == "Entry":
-            w.configure(bg=T["entry_bg"], readonlybackground=T["entry_bg"], fg=T["entry_fg"],
-                        insertbackground=T["entry_fg"], relief="flat", highlightthickness=1,
-                        highlightbackground=T["border"], highlightcolor=T["primary"])
-        elif cls == "Text":
-            w.configure(bg=T["entry_bg"], fg=T["entry_fg"], insertbackground=T["entry_fg"], relief="flat",
-                        highlightthickness=1, highlightbackground=T["border"], highlightcolor=T["primary"])
-        elif cls == "Scale":
-            w.configure(bg=bg, fg=T["win_fg"], troughcolor=T["entry_bg"], activebackground=T["primary"],
-                        highlightthickness=0)
-        elif cls == "TScale":
-            style = _ttk_scale_style(w)
-            if style:
-                w.configure(style=style)
-    except tk.TclError:
-        pass
-    for child in w.winfo_children():
-        if isinstance(child, tk.Menu):
-            style_menu(child)
-        else:
-            theme_widget(child)
+    return theme.theme_widget(sys.modules[__name__], w)
 
 
 def titlebar_theme(win):
-    """Windows 10/11: a dark title bar for a window while the dark theme is on."""
-    if os.name != "nt":
-        return
-    try:
-        import ctypes
-        win.update_idletasks()
-        u32, dwm = ctypes.windll.user32, ctypes.windll.dwmapi
-        u32.GetParent.argtypes, u32.GetParent.restype = [ctypes.c_void_p], ctypes.c_void_p
-        hwnd = u32.GetParent(win.winfo_id()) or win.winfo_id()
-        val = ctypes.c_int(1 if T.get("name") == "dark" else 0)
-        dwm.DwmSetWindowAttribute.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_uint]
-        for attr in (20, 19):  # DWMWA_USE_IMMERSIVE_DARK_MODE (newer builds, then 1809 - 1909)
-            if dwm.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(val), ctypes.sizeof(val)) == 0:
-                break
-        u32.SetWindowPos.argtypes = [ctypes.c_void_p, ctypes.c_void_p] + [ctypes.c_int] * 4 + [ctypes.c_uint]
-        u32.SetWindowPos(hwnd, None, 0, 0, 0, 0, 0x37)  # redraw the frame now (NOMOVE|NOSIZE|NOZORDER|NOACTIVATE|FRAMECHANGED)
-    except Exception:
-        pass
+    return theme.titlebar_theme(sys.modules[__name__], win)
 
 
 def native_menu_theme():
-    """Windows 10 1903+: menus the system draws (the tray icon's menu, menu borders) follow the theme. Uses uxtheme's
-    SetPreferredAppMode / FlushMenuThemes (by ordinal, as they are not exported by name); harmless if unavailable."""
-    if os.name != "nt":
-        return
-    try:
-        import ctypes
-        if sys.getwindowsversion().build < 18362:
-            return
-        ux = ctypes.WinDLL("uxtheme")
-        set_mode = ux[135]
-        set_mode.argtypes, set_mode.restype = [ctypes.c_int], ctypes.c_int
-        set_mode(2 if T.get("name") == "dark" else 3)  # ForceDark / ForceLight
-        ux[136]()  # FlushMenuThemes
-    except Exception:
-        pass
+    return theme.native_menu_theme(sys.modules[__name__])
 
 
 def use_console_font(root):
-    """Widgets that don't name a font (buttons, check boxes, entries, Tk menus...) get the console font too."""
-    try:
-        from tkinter import font as tkfont
-        for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont", "TkCaptionFont",
-                     "TkSmallCaptionFont", "TkIconFont", "TkTooltipFont"):
-            tkfont.Font(root=root, name=name, exists=True).configure(family=UI_FONT)
-    except Exception:
-        pass
+    return theme.use_console_font(sys.modules[__name__], root)
 
 
 def theme_window(win):
-    """Style a finished Toplevel like the pet and keep it in step with later theme switches."""
-    theme_widget(win)
-    titlebar_theme(win)
-    if win not in THEMED:
-        THEMED.append(win)
-        win.bind("<Destroy>", lambda e, w=win: THEMED.remove(w) if e.widget is w and w in THEMED else None, add="+")
-    return win
+    return theme.theme_window(sys.modules[__name__], win)
 
 
 def retheme_all():
-    for w in list(THEMED):
-        try:
-            if w.winfo_exists():
-                theme_widget(w)
-                titlebar_theme(w)
-        except tk.TclError:
-            pass
+    return theme.retheme_all(sys.modules[__name__])
 
 
 DIALOG_ACCENTS = {"info": "#5b8def", "question": "#5b8def", "warning": "#f59e0b", "error": "#ef4444"}
@@ -540,127 +408,7 @@ DIALOG_ACCENTS = {"info": "#5b8def", "question": "#5b8def", "warning": "#f59e0b"
 
 def themed_dialog(root, title, text, buttons=(("OK", True, "primary"),), kind="info", heading=None, cancel=None,
                   enter_confirms=True, on_result=None):
-    """A modal message card in the pet's style (accent border, bold heading, flat buttons), in place of the native
-    message boxes. buttons: (label, value, 'primary' | 'danger' | 'secondary'), left to right; the first primary or
-    danger one is the default (Enter, unless enter_confirms is False: then Enter cancels, for risky choices).
-    Escape or closing returns `cancel`. With on_result, deliver the result after
-    closing without nesting a wait loop inside a native button callback."""
-    previous_focus, previous_grab = root.focus_get(), root.grab_current()
-    previous_grab_status = previous_grab.grab_status() if previous_grab is not None else None
-    accent = DIALOG_ACCENTS.get(kind, DIALOG_ACCENTS["info"])
-    bg, fg = T["win_bg"], T["win_fg"]
-    w = tk.Toplevel(root)
-    # A modal card belongs to the window that opened it. Topmost alone does
-    # not keep it above another topmost window on macOS.
-    if root.winfo_viewable():
-        w.transient(root.winfo_toplevel())
-    w.overrideredirect(True)
-    w.attributes("-topmost", True)
-    w.configure(bg=accent)
-    w.title(title)
-    result = {"v": cancel, "closing": False, "restored": False}
-    card = tk.Frame(w, bg=bg)
-    card.pack(padx=2, pady=2)
-    tk.Frame(card, bg=accent, height=5).pack(fill="x")
-    body = tk.Frame(card, bg=bg)
-    body.pack(fill="both", padx=18, pady=(12, 14))
-    top = tk.Frame(body, bg=bg)
-    top.pack(fill="x")
-    head = tk.Label(top, text=heading or title, bg=bg, fg=fg, anchor="w", font=(UI_FONT, 12, "bold"))
-    head.pack(side="left", fill="x", expand=True)
-    x = tk.Label(top, text="✕", bg=bg, fg=T["muted"], cursor="hand2", font=(UI_FONT, 11), padx=4)
-    x.pack(side="right")
-    if kind in ("warning", "error"):
-        tk.Label(body, text="warning" if kind == "warning" else "something went wrong", bg=bg, fg=accent, anchor="w",
-                 font=(UI_FONT, 9, "bold")).pack(fill="x")
-    tk.Frame(body, bg=T["border"], height=1).pack(fill="x", pady=8)
-    tk.Label(body, text=text, bg=bg, fg=T["bubble_msg"], justify="left", anchor="w", wraplength=440,
-             font=(UI_FONT, 10)).pack(fill="x")
-    row = tk.Frame(body, bg=bg)
-    row.pack(fill="x", pady=(14, 0))
-
-    def restore_input():
-        if result["restored"]:
-            return
-        result["restored"] = True
-        try:
-            w.grab_release()
-        except tk.TclError:
-            pass
-        try:
-            if previous_grab is not None and previous_grab.winfo_exists():
-                previous_grab.grab_set_global() if previous_grab_status == "global" else previous_grab.grab_set()
-            if previous_focus is not None and previous_focus.winfo_exists():
-                previous_focus.focus_set()
-        except tk.TclError:
-            pass
-
-    def finish():
-        restore_input()
-        w.destroy()
-        if on_result is not None and root.winfo_exists():
-            root.after_idle(lambda: on_result(result["v"]))
-
-    def done(value):
-        if result["closing"]:
-            return
-        result.update(v=value, closing=True)
-        # Let Aqua finish tracking the clicked button before destroying it.
-        w.after_idle(finish)
-
-    def destroyed(event):
-        if event.widget is w and not result["closing"]:
-            result["closing"] = True
-            restore_input()
-            if on_result is not None and root.winfo_exists():
-                root.after_idle(lambda: on_result(cancel))
-
-    w.bind("<Destroy>", destroyed, add="+")
-    w.protocol("WM_DELETE_WINDOW", lambda: done(cancel))
-
-    default = None
-    for label, value, style in reversed(list(buttons)):  # packed from the right, so the last one ends up rightmost
-        b = tk.Button(row, text=label, command=lambda v=value: done(v), **button_style(style))
-        b.pack(side="right", padx=(8, 0))
-        if style in ("primary", "danger") and default is None:
-            default = value
-    if default is None and buttons:
-        default = list(buttons)[-1][1]
-    x.bind("<Button-1>", lambda e: done(cancel))
-    w.bind("<Escape>", lambda e: done(cancel))
-    w.bind("<Return>", lambda e: done(default if enter_confirms else cancel))
-    drag = {}
-    for widget in (top, head):
-        widget.bind("<ButtonPress-1>", lambda e: drag.update(d=(e.x_root - w.winfo_x(), e.y_root - w.winfo_y())))
-        widget.bind("<B1-Motion>", lambda e: w.geometry(f"+{e.x_root - drag['d'][0]}+{e.y_root - drag['d'][1]}")
-                    if "d" in drag else None)
-    w.update_idletasks()
-    ww, wh = w.winfo_reqwidth(), w.winfo_reqheight()
-    try:
-        ref = (root.winfo_x() + root.winfo_width() // 2, root.winfo_y() + root.winfo_height() // 2)
-        left, top_, right, bottom = work_area(*ref, w) or (0, 0, w.winfo_screenwidth(), w.winfo_screenheight())
-    except Exception:
-        left, top_, right, bottom = 0, 0, w.winfo_screenwidth(), w.winfo_screenheight()
-    w.geometry(geo(left + (right - left - ww) // 2, max(top_ + 20, top_ + (bottom - top_ - wh) // 3)))
-    w.deiconify()
-    w.lift()
-    w.focus_force()
-    if IS_MAC:
-        import mac_statusbar
-        mac_statusbar.raise_modal(w.title(), root.winfo_toplevel().title())
-        w._mouse_bridge = mac_statusbar.PanelMouseBridge(w)
-        w.bind("<Destroy>", lambda event: w._mouse_bridge.close() if event.widget is w else None, add="+")
-    try:
-        w.grab_set()
-    except tk.TclError:
-        pass
-    if on_result is not None:
-        return w
-    try:
-        root.wait_window(w)
-    finally:
-        restore_input()
-    return result["v"]
+    return theme.themed_dialog(sys.modules[__name__], root, title, text, buttons, kind, heading, cancel, enter_confirms, on_result)
 
 
 STYLE ={"v": "robot"}  # "robot", "mole" or "cat"
@@ -1228,112 +976,34 @@ for _f in range(TALK_FRAMES):
 
 
 def load_sprites(directory=None):
-    """Load the robot sprites (needs Pillow + assets/sprites). Returns a dict, or False if unavailable."""
-    if directory is None and _SPR["state"] is not None:
-        return _SPR["state"]
-    try:
-        from PIL import Image
-        d = directory or SPRITE_DIR
-        with open(os.path.join(d, "sprites.json"), encoding="utf-8") as f:
-            meta = json.load(f)
-        img = {"robot": Image.open(os.path.join(d, meta["robot"]["file"])).convert("RGBA")}
-        img["shadow"] = _solid_shadow(Image.open(os.path.join(d, "shadow.png")).convert("RGBA"))
-        res = {"meta": meta, "img": img, "faces": {}}
-    except Exception as e:
-        log_error(f"robot sprites unavailable in {directory or SPRITE_DIR!r} ({e!r}); using the mole")
-        res = False
-    if directory is None:
-        _SPR["state"] = res
-    return res
+    return sprites.load_sprites(sys.modules[__name__], directory)
 
 
 def _rgb(hex_color):
-    h = hex_color.lstrip("#")
-    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return sprites._rgb(sys.modules[__name__], hex_color)
 
 
 def robot_image(face, lights, spr=None):
-    """The robot at native sprite resolution with a face painted on its screen and its three lights coloured.
-    face: a key of FACE_PARTS; lights: three keys of LIGHT_COLORS."""
-    spr = spr or load_sprites()
-    key = (face, tuple(lights))
-    if key in spr["faces"]:
-        return spr["faces"][key]
-    m = spr["meta"]["robot"]
-    im = spr["img"]["robot"].copy()
-    px = im.load()
-    x0, y0, x1, y1 = m["screen"]
-    cyan = _rgb(spr["meta"].get("cyan", "#6ee7f3"))
-
-    def stamp(pattern, cx, cy):
-        h, w = len(pattern), len(pattern[0])
-        for j, row in enumerate(pattern):
-            for i, ch in enumerate(row):
-                x, y = cx - w // 2 + i, cy - h // 2 + j
-                if ch != "." and x0 <= x <= x1 and y0 <= y <= y1:
-                    px[x, y] = (CYAN_LIGHT if ch == "2" else cyan) + (255,)
-
-    eye, mouth = FACE_PARTS[face]
-    if face == "ask":  # a big "?" in the middle of the screen
-        stamp(QUESTION_PIXELS, (x0 + x1) // 2, (y0 + y1) // 2)
-    else:
-        for side in ("left", "right"):
-            stamp(EYE_PIXELS[eye], *m["eyes"][side])
-        stamp(MOUTH_PIXELS[mouth], *m["mouth"])
-    for (lx, ly, _name), colour in zip(m["lights"], lights):  # each light is a 2x2 dot; (lx, ly) is its top-left
-        for dx in (0, 1):
-            for dy in (0, 1):
-                if 0 <= lx + dx < im.width and 0 <= ly + dy < im.height and px[lx + dx, ly + dy][3]:
-                    px[lx + dx, ly + dy] = LIGHT_COLORS[colour] + (255,)
-    spr["faces"][key] = im
-    return im
+    return sprites.robot_image(sys.modules[__name__], face, lights, spr)
 
 
 def state_image(state, spr=None):
-    """Native-resolution robot for a state (the tray icon uses this)."""
-    spr = spr or load_sprites()
-    return robot_image(STATE_FACE.get(state, "sleep"), light_cycle(state, 0), spr)
+    return sprites.state_image(sys.modules[__name__], state, spr)
 
 
 def light_cycle(state, t):
-    if state == "working":
-        i = int(t * 4) % 3
-        return tuple("amber" if j == i else ("green" if j == (i + 1) % 3 else "off") for j in range(3))
-    if state == "needs_input":  # flashing amber: attention
-        return ("amber",) * 3 if int(t * 3) % 2 else ("off", "amber", "off")
-    if state == "auto":  # steady green: something was just auto-approved
-        return ("green",) * 3
-    return {"done": ("green",) * 3, "error": ("red", "amber", "red"), "idle": ("off",) * 3}.get(state, ("off",) * 3)
+    return sprites.light_cycle(sys.modules[__name__], state, t)
 
 
 _PNG_PHOTOS = {"on": IS_MAC}  # macOS: Pillow's ImageTk bridge often can't reach the app's Tk, so hand Tk a PNG instead
 
 
 def _to_photo(im):
-    if not _PNG_PHOTOS["on"]:
-        try:
-            from PIL import ImageTk
-            return ImageTk.PhotoImage(im)
-        except Exception as e:  # e.g. TclError: invalid command name "PyImagingPhoto"
-            log_error(f"ImageTk unavailable, using PNG images: {e!r}")
-            _PNG_PHOTOS["on"] = True
-    import base64
-    import io
-    buf = io.BytesIO()
-    im.save(buf, "PNG")
-    return tk.PhotoImage(data=base64.b64encode(buf.getvalue()).decode("ascii"), format="png")  # Tk 8.6+ reads PNG
+    return sprites._to_photo(sys.modules[__name__], im)
 
 
 def sprite_photo(key, image, w, h):
-    """Nearest-neighbour resize + PhotoImage, cached by (key, w, h)."""
-    k = (key, w, h)
-    ph = _PHOTOS.get(k)
-    if ph is None:
-        if len(_PHOTOS) > 400:
-            _PHOTOS.clear()
-        from PIL import Image
-        ph = _PHOTOS[k] = _to_photo(image.resize((max(1, w), max(1, h)), Image.NEAREST))
-    return ph
+    return sprites.sprite_photo(sys.modules[__name__], key, image, w, h)
 
 
 # macOS Tk paints no images at all on a transparent canvas (systemTransparent), whatever the image format, while
@@ -1344,39 +1014,7 @@ _RUNS = {}
 
 
 def pixel_rects(key, image):
-    """[(x0, y0, x1, y1, "#rrggbb")] covering the opaque pixels of a PIL RGBA image, in image pixels. Horizontal runs
-    of one colour are merged, then identical runs on consecutive rows, so a sprite needs a few hundred rectangles."""
-    rects = _RUNS.get(key)
-    if rects is not None:
-        return rects
-    im = image.convert("RGBA")
-    px = im.load()
-    w, h = im.size
-    open_runs, rects = {}, []  # (x0, x1, colour) -> y where the run started
-    for y in range(h + 1):
-        row = set()
-        if y < h:
-            x = 0
-            while x < w:
-                r, g, b, a = px[x, y]
-                if a < 128:
-                    x += 1
-                    continue
-                col = f"#{r:02x}{g:02x}{b:02x}"
-                x1 = x + 1
-                while x1 < w and px[x1, y][3] >= 128 and px[x1, y][:3] == (r, g, b):
-                    x1 += 1
-                row.add((x, x1, col))
-                x = x1
-        for run in list(open_runs):
-            if run not in row:  # the run ends above this row: close its rectangle
-                rects.append((run[0], open_runs.pop(run), run[1], y, run[2]))
-        for run in row:
-            open_runs.setdefault(run, y)
-    if len(_RUNS) > 600:
-        _RUNS.clear()
-    _RUNS[key] = rects
-    return rects
+    return sprites.pixel_rects(sys.modules[__name__], key, image)
 
 
 _LOGGED = set()
@@ -1403,8 +1041,7 @@ MONO_FAMILY = UI_FONT
 
 
 def mono(size):
-    """A console font at the pet's scale (Consolas on Windows, Menlo on macOS)."""
-    return (MONO_FAMILY, max(4, int(round(size * SCALE["v"]))))
+    return sprites.mono(sys.modules[__name__], size)
 
 
 # ---- pixel-art speech bubbles and glyphs, drawn at sprite resolution so they match the robot
@@ -1421,754 +1058,31 @@ MARK_COLORS = {"ok": "#22a447", "no": "#e0301e", "?": "#111827"}
 
 
 def bubble_image(w, h, fill, outline, tail_cx):
-    """A w x h speech bubble plus a tail, as one shape: 1 px outline, round corners, and the tail grows out of the box
-    (no seam), all at sprite resolution so it scales with the robot."""
-    key = ("bubble", w, h, fill, outline, tail_cx)
-    if key in _IMG_CACHE:
-        return _IMG_CACHE[key]
-    from PIL import Image
-    H = h + (BUBBLE_TAIL if tail_cx is not None else 0)
-    mask = [[False] * w for _ in range(H)]
-    for y in range(h):
-        inset = _BUBBLE_INSET[y] if y < len(_BUBBLE_INSET) else (
-            _BUBBLE_INSET[h - 1 - y] if h - 1 - y < len(_BUBBLE_INSET) else 0)
-        for x in range(inset, w - inset):
-            mask[y][x] = True
-    for r in range(BUBBLE_TAIL if tail_cx is not None else 0):  # 7, 5, 3, 1 px wide
-        for x in range(tail_cx - (3 - r), tail_cx + (3 - r) + 1):
-            if 0 <= x < w:
-                mask[h + r][x] = True
-    fill_c, out_c = _rgb(fill) + (255,), _rgb(outline) + (255,)
-    im = Image.new("RGBA", (w, H), (0, 0, 0, 0))
-    px = im.load()
-    for y in range(H):
-        for x in range(w):
-            if mask[y][x]:
-                edge = any(not (0 <= nx < w and 0 <= ny < H and mask[ny][nx])
-                           for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)))
-                px[x, y] = out_c if edge else fill_c
-    _IMG_CACHE[key] = im
-    return im
+    return sprites.bubble_image(sys.modules[__name__], w, h, fill, outline, tail_cx)
 
 
 def mark_image(kind, k=1):
-    """A check / cross / question-mark glyph in pixel art, enlarged k times (nearest neighbour)."""
-    key = ("mark", kind, k)
-    if key not in _IMG_CACHE:
-        from PIL import Image
-        rows = MARKS[kind]
-        im = Image.new("RGBA", (len(rows[0]), len(rows)), (0, 0, 0, 0))
-        px = im.load()
-        colour = _rgb(MARK_COLORS[kind]) + (255,)
-        for y, row in enumerate(rows):
-            for x, ch in enumerate(row):
-                if ch == "#":
-                    px[x, y] = colour
-        _IMG_CACHE[key] = im.resize((im.width * k, im.height * k), Image.NEAREST) if k > 1 else im
-    return _IMG_CACHE[key]
+    return sprites.mark_image(sys.modules[__name__], kind, k)
 
 
 def _solid_shadow(im):
-    """The pet window is colour-keyed transparent, so semi-transparent pixels would blend with the key colour (a magenta
-    halo). Turn the soft shadow into two solid tones."""
-    out = im.copy()
-    px = out.load()
-    for y in range(out.height):
-        for x in range(out.width):
-            a = px[x, y][3]
-            px[x, y] = (0, 0, 0, 0) if a < 40 else ((150, 150, 166, 255) if a < 100 else (118, 118, 136, 255))
-    return out
+    return sprites._solid_shadow(sys.modules[__name__], im)
 
 
-class Pet:
+class Pet(PetView):
+    """Compatibility constructor for the desktop runtime."""
+    services = sys.modules[__name__]
+
     def __init__(self, app, key):
-        self.app = app
-        self.key = key
-        self.data = {}
-        self.acked = False
-        self.last_remind = 0.0
-        self.born = 0.0  # when this pet starts popping out of the ground (0 = already out)
-        self.seed = (sum(map(ord, key)) % 97) / 13.0  # desync animations
-        self.usage_extra = USAGE_GUTTER
-        self._usage_hover = None
-        self._usage_details = {}
-        c = self.canvas = tk.Canvas(app.frame, width=px(CANVAS_W + USAGE_GUTTER), height=px(CANVAS_H), bg=TRANSPARENT,
-                                    highlightthickness=0, bd=0)
-        c.bind("<ButtonPress-1>", app.on_press)
-        c.bind("<B1-Motion>", app.on_drag)
-        c.bind("<ButtonRelease-1>", lambda e: app.on_release(e, self))
-        c.bind("<Button-3>", lambda e: app.on_menu(e, self))
-        if IS_MAC:  # macOS Tk: right button is Button-2; ctrl-click is the trackpad equivalent
-            c.bind("<Button-2>", lambda e: app.on_menu(e, self))
-            c.bind("<Control-Button-1>", lambda e: app.on_menu(e, self))
-            c.bind("<Control-ButtonRelease-1>", lambda e: "break")
-        c.bind("<Enter>", lambda e: app.show_tip(self))
-        c.bind("<Leave>", lambda e: app.hide_tip())
-        self._on_bubble = False  # the check/cross/? bubble ("ans" items) opens the details popup when clicked
-        c.tag_bind("ans", "<Enter>", lambda e: c.config(cursor="hand2"))
-        c.tag_bind("ans", "<Leave>", lambda e: c.config(cursor=""))
-        c.tag_bind("ans", "<ButtonPress-1>", lambda e: setattr(self, "_on_bubble", True))
-        self._on_badge = None  # a badge's session key, when a badge was pressed (it opens that session's prompt)
-        c.tag_bind("badge", "<Enter>", lambda e: c.config(cursor="hand2"))
-        c.tag_bind("badge", "<Leave>", lambda e: c.config(cursor=""))
-        c.tag_bind("badge", "<ButtonPress-1>", lambda e: setattr(self, "_on_badge", self._badge_under_pointer()))
-
-    def _badge_under_pointer(self):
-        c = self.canvas
-        for tag in c.gettags("current"):
-            if tag.startswith("badge:"):
-                return tag[6:] or None
-        return None
-
-    def destroy(self):
-        self.canvas.destroy()
-
-    def draw(self, t):
-        c = self.canvas
-        c.delete("all")
-        if STYLE["v"] == "cat":
-            self._draw_cat(t)
-        elif STYLE["v"] == "mole":
-            self._draw_mole(t)
-        else:
-            self._draw_robot(t)
-        c.move("all", BADGE_GUTTER, -TOP_TRIM)  # drop the empty top strip
-        min_x = self._draw_badges()
-        extra = self._draw_usage()
-        # compact mode, expanded: the badges stand in a column snapped to the pet's left; widen the canvas to the left
-        # for it (the overlay is anchored bottom-right, so the pet itself doesn't move)
-        gutter = int(math.ceil(-min_x)) + 1 if min_x is not None and min_x < 0 else 0
-        if gutter:
-            c.move("all", gutter, 0)
-        if gutter != getattr(self, "gutter", 0) or extra != getattr(self, "usage_extra", 0):
-            delta = px(CANVAS_W + gutter + extra) - px(CANVAS_W + getattr(self, "gutter", 0) + getattr(self, "usage_extra", 0))
-            self.gutter = gutter
-            self.usage_extra = extra
-            c.config(width=px(CANVAS_W + gutter + extra))
-            delta += self.app._sync_usage_padding()
-            self.app.shift_for_width(delta)  # update the canvas and shared margin in the same redraw
-        self._finish()
-        self._update_usage_hover()
-
-    def _draw_usage(self):
-        details = usage.badge_details(self.data.get("everyone") or [self.data])
-        rows = [(r["agent"], r["window"], r["percent"]) for r in details]
-        self._usage_details = {}
-        if not rows:
-            return USAGE_GUTTER
-        c, left = self.canvas, PET_W - 26
-        # Align a short column with the lower body, ending above the name tag.
-        top = 81 - min(6, len(rows)) * 9
-        font = mono(4.5)
-        extra = 0
-        # Start beside the robot, below its speech bubble. Never cover the name tag.
-        for start in range(0, len(rows), 6):
-            column = rows[start:start + 6]
-            labels = [("CX" if ai == "codex" else "CL") + f" {window} {percent}%" for ai, window, percent in column]
-            width = max(self._char_w(font) * len(label) + 6 for label in labels)
-            for i, ((ai, window, percent), label) in enumerate(zip(column, labels)):
-                colour = "#5b8def" if ai == "codex" else "#d98960"
-                y = top + i * 9
-                tag = f"usage:{ai}:{window}:{percent}"
-                self._usage_details[tag] = details[start + i]
-                c.create_rectangle(left, y, left + width, y + 8, fill=T["tag_bg"], outline=colour, width=1, tags=("usage", tag))
-                c.create_text(left + 3, y + 4, text=label, font=font, fill=colour, anchor="w", tags=("usage", tag))
-            extra = max(extra, int(math.ceil(left + width + 2 - CANVAS_W)))
-            left += width + 3
-        return max(USAGE_GUTTER, extra)
-
-    def _update_usage_hover(self):
-        # Animation recreates canvas items. Track the reading under the pointer
-        # instead of item Enter/Leave events, which would flicker every frame.
-        c = self.canvas
-        if not c.winfo_ismapped():
-            self._usage_hover = None
-            return
-        x, y = c.winfo_pointerx() - c.winfo_rootx(), c.winfo_pointery() - c.winfo_rooty()
-        tag = next((tag for item in c.find_overlapping(x, y, x, y) for tag in c.gettags(item)
-                    if tag in self._usage_details), None)
-        if tag == self._usage_hover:
-            return
-        previous, self._usage_hover = self._usage_hover, tag
-        if tag:
-            self.app.show_usage_tip(self, self._usage_details[tag])
-        elif previous:
-            if 0 <= x < c.winfo_width() and 0 <= y < c.winfo_height():
-                self.app.show_tip(self)
-            else:
-                self.app.hide_tip()
-
-    def _completion_seal(self, x, y):
-        self.canvas.create_oval(x - 9, y - 9, x + 9, y + 9, fill="#dcfce7", outline="#15803d", width=1)
-        self._mark("ok", x, y)
-
-    def _finish(self):
-        """Apply the overall size: everything is drawn at 92x122 and scaled here (line widths too)."""
-        s = SCALE["v"]
-        if abs(s - 1) < 0.01:
-            return
-        c = self.canvas
-        c.scale("all", 0, 0, s, s)
-        for it in c.find_all():
-            if c.type(it) in ("line", "oval", "polygon", "arc", "rectangle"):
-                try:
-                    c.itemconfigure(it, width=max(1.0, float(c.itemcget(it, "width")) * s))
-                except tk.TclError:
-                    pass
-
-    def _draw_tag(self):
-        c = self.canvas
-        st = self.data.get("state", "idle")
-        col, dark = COLORS.get(st, COLORS["idle"]), DARK.get(st, DARK["idle"])
-        # name label: a pixel-art rounded box like the speech bubbles (solid pixels: no colour fringing on the
-        # transparent window), with a small "light" in the state colour like the ones on the robot
-        tw_, th_ = PET_W - 6, TAG_H
-        try:
-            s_ = SCALE["v"]
-            im = bubble_image(tw_, th_, T["tag_bg"], T["tag_outline"], None)
-            self._put(("tag", tw_, th_, T["tag_bg"], T["tag_outline"]), im, int(round(tw_ * s_)), int(round(th_ * s_)),
-                      3, PET_H - 2 - TAG_H, "nw")
-        except Exception:  # no Pillow: a plain rectangle
-            c.create_rectangle(3, PET_H - 2 - TAG_H, PET_W - 3, PET_H - 2, fill=T["tag_bg"], outline=T["tag_outline"], width=1)
-        font, sub_font = mono(5.0), mono(4.0)  # console-style text, like the robot's screen
-        room, left = PET_W - 14, 7  # inside the tag's rounded border
-        everyone = self.data.get("everyone") or []
-        entries = [(m.get("raw_title") or m.get("title") or "session", m.get("conv") or "", m.get("state"))
-                   for m in (everyone if len(everyone) > 1 else [self.data])]
-        two = any(e[1] for e in entries)  # a conversation title to show: the name moves up, the title goes below it
-        y_top0 = PET_H - 2 - TAG_H
-        y1 = y_top0 + 6.4 if two else PET_H - 2 - TAG_H / 2 + 1.5  # name near the top; one line: a bit low (badges)
-        y2 = y_top0 + 13.9  # clear of the tag's bottom border
-        sub_fg = "#d1d5db" if T.get("name") == "dark" else "#374151"
-        if len(everyone) > 1:  # compact mode: every session scrolls past like a banner, its title right below it
-            self._title_banner(entries, font, sub_font, left, room, y1, y2 if two else None, sub_fg)
-            return
-        name, title, _ = entries[0]  # one pet: never cut, a line too long for the tag scrolls round instead
-        self._marquee(name, font, y1, T["tag_fg"], left, room)
-        if title:
-            self._marquee(title, sub_font, y2, sub_fg, left, room)
-
-    def _marquee(self, text, font, y, fill, left, room):
-        """One line of the name tag: centred if it fits, else scrolling round like a ticker (characters drawn one by one
-        and only while wholly inside the tag, since a Tk canvas can't clip text)."""
-        c = self.canvas
-        if self._text_w(font, text) <= room:
-            c.create_text(PET_W / 2, y, text=text, fill=fill, font=font)
-            return
-        gap = self.BANNER_GAP
-        loop_text = text + gap
-        loop = self._text_w(font, loop_text)
-        offset = (time.time() * self.BANNER_PX + self.seed * 37) % loop
-        right = left + room
-        for k in (0, 1):
-            cx = left - offset + k * loop
-            for ch in loop_text:
-                key = ("cw", font, ch)
-                cw = _IMG_CACHE[key] if key in _IMG_CACHE else _IMG_CACHE.setdefault(key, self._text_w(font, ch))
-                if cx >= right:
-                    break
-                if cx >= left and cx + cw <= right and not ch.isspace():
-                    c.create_text(cx, y, text=ch, anchor="w", fill=fill, font=font)
-                cx += cw
-
-    def _cut(self, font, text, room):
-        """text cut to fit room drawing units, with an ellipsis (real font widths, not a character count)."""
-        if self._text_w(font, text) <= room:
-            return text
-        while text and self._text_w(font, text + "\u2026") > room:
-            text = text[:-1]
-        return text.rstrip() + "\u2026"
-
-    EXPAND, COLLAPSE = "\u25b4", "\u25be"  # compact mode's badges: up to expand, down to collapse
-    # compact mode's banner: each title after its state symbol, both in a faded state colour
-    BANNER_STATES = {"working": ("\u2743", "#6a9fd8"), "needs_input": ("\u2749", "#e07b74"),
-                     "error": ("\u2749", "#e07b74"), "done": ("\u2713", "#6fb88a"), "idle": ("\u273a", "#9aa3ad")}
-    BANNER_GAP = "    "
-
-    BANNER_PX = 14  # scroll speed, drawing units per second
-    BANNER_TITLE_MAX = 64  # a title is cut (with an ellipsis) to the width of its name or this, whichever is wider
-
-    def _title_banner(self, entries, font, sub_font, left, room, y1, y2, sub_fg):
-        """Compact mode: every session's name after its state symbol (working, waiting, done) in a faded state colour,
-        and - when y2 is given - its conversation title in small text right below, both scrolling together through
-        the name tag. Shown whole and centred when it all fits. Tk canvases can't clip text, so while scrolling each
-        character is drawn on its own and only those wholly inside the tag are shown."""
-        c, cols = self.canvas, []  # cols: (top text, colour, bottom text, width)
-        gap = self._text_w(font, self.BANNER_GAP)
-        for name, title, state in entries:
-            sym, colour = self.BANNER_STATES.get(state, ("\u2743", "#9aa3ad"))
-            top = f"{sym} {name}"
-            tw = self._text_w(font, top)
-            sub = self._cut(sub_font, title, max(tw, self.BANNER_TITLE_MAX)) if (title and y2 is not None) else ""
-            cols.append((top, colour, sub, max(tw, self._text_w(sub_font, sub))))
-        total = sum(w for *_, w in cols) + gap * (len(cols) - 1)
-        if total <= room:  # it all fits: centred, no scrolling
-            x = PET_W / 2 - total / 2
-            for top, colour, sub, w in cols:
-                c.create_text(x, y1, text=top, anchor="w", fill=colour, font=font)
-                if sub:
-                    c.create_text(x, y2, text=sub, anchor="w", fill=sub_fg, font=sub_font)
-                x += w + gap
-            return
-        loop = total + gap
-        offset = (time.time() * self.BANNER_PX) % loop
-        right = left + room
-        for k in (0, 1):  # the strip twice, so the start follows the end seamlessly
-            x = left - offset + k * loop
-            for top, colour, sub, w in cols:
-                if x < right and x + w > left:
-                    for text, f, y, fill in ((top, font, y1, colour), (sub, sub_font, y2, sub_fg)):
-                        cx = x
-                        for ch in text:
-                            key = ("cw", f, ch)  # per-character widths, measured once
-                            cw = _IMG_CACHE[key] if key in _IMG_CACHE else _IMG_CACHE.setdefault(key, self._text_w(f, ch))
-                            if cx >= left and cx + cw <= right and not ch.isspace():
-                                c.create_text(cx, y, text=ch, anchor="w", fill=fill, font=f)
-                            cx += cw
-                x += w + gap
-
-    def _draw_badges(self):
-        """Where each session runs: one small pixel box per session ("Claude CLI", "Codex WSL VS"...), styled like the
-        name tag and sitting like tabs on its top edge, faint red while that session needs you. In compact mode there is
-        one per session shown. Badges wrap onto rows above when a row is full. Called after the drawing has been moved
-        (see draw())."""
-        c = self.canvas
-        texts = [BADGE_NAMES.get(b, b) for b in self.data.get("badges", [])]
-        if not texts:
-            return
-        flags = self.data.get("badge_attention") or [self.data.get("state") == "needs_input"] * len(texts)
-        keys = self.data.get("badge_keys") or [self.data.get("focus", self.key)] * len(texts)  # whose prompt a click opens
-        everyone = self.data.get("everyone") or []
-        collapse = False
-        if len(everyone) > 1:  # compact mode: one merged badge, or every session's badge plus a collapse badge
-            if not self.app.badges_expanded:
-                texts = [merge_badges([(m.get("badges") or ["?"])[0] for m in everyone]) + " " + self.EXPAND]
-                flags = [any(m.get("state") == "needs_input" for m in everyone)]
-                keys = ["__expand"]
-            else:  # the collapse badge goes on a row of its own, above all the others (see below)
-                collapse = True
-        font = fnt(4.5)
-        arrow_font = fnt(4.5 * 1.2)  # the expand / collapse arrows, 20% bigger than the badge text
-        h, gap, s_ = 11, 2, SCALE["v"]
-        left, right = BADGE_GUTTER + 6, BADGE_GUTTER + PET_W - 6
-
-        def split(text):  # (label, arrow): the merged badge ends with the expand arrow, the collapse badge is one
-            if text and text[-1] in (self.EXPAND, self.COLLAPSE):
-                return text[:-1].rstrip(), text[-1]
-            return text, ""
-
-        def width(text):
-            label, arrow = split(text)
-            dot = 0 if not label else 8  # the arrow-only collapse badge has no dot
-            return int(round(4 + dot + self._text_w(font, label) + (2 if label and arrow else 0)
-                             + (self._text_w(arrow_font, arrow) if arrow else 0)))
-        # expanded compact badges: each session's conversation title on a second, smaller line
-        sub_font, sub_h = fnt(4.5 * 0.85), 7
-        sub_fg = "#d1d5db" if T.get("name") == "dark" else "#374151"  # almost black grey (light grey on dark tags)
-        titles = list(self.data.get("badge_titles") or []) if collapse else []
-        titles += [""] * (len(texts) - len(titles))
-
-        def fit(text, room):
-            if self._text_w(sub_font, text) <= room:
-                return text
-            while text and self._text_w(sub_font, text + "\u2026") > room:
-                text = text[:-1]
-            return text.rstrip() + "\u2026" if text else ""
-        col_max = 112  # expanded compact mode: the widest a badge in the side column gets (titles are cut to fit)
-        rows, x = [[]], left
-        for text, hot, key, sub in zip(texts, flags, keys, titles):
-            w = width(text)
-            if sub:
-                sub = fit(sub, (col_max if collapse else right - left) - 6)
-                w = max(w, int(round(6 + self._text_w(sub_font, sub))))
-            if rows[-1] and x + w > right:  # no more room on this row: wrap to a new one above
-                rows.append([])
-                x = left
-            rows[-1].append((text, hot, x, w, key, sub))
-            x += w + gap
-        if collapse:  # always the topmost row
-            rows.append([(self.COLLAPSE, False, left, width(self.COLLAPSE), "__collapse", "")])
-        placed = []  # (text, hot, x, y, w, height, key, title)
-        if collapse:
-            # expanded compact mode: one column to the LEFT of the pet, right-aligned against it, from the name tag's
-            # bottom upwards (the collapse badge on top); a further column to the left when a column is full
-            entries = [e for row in rows for e in row]
-            col_right, bottom0 = -2, PET_H - 2 - TOP_TRIM
-            bottom, col_w = bottom0, 0
-            for text, hot, _, w, key, sub in entries:
-                bh = h + (sub_h if sub else 0)
-                if bottom - bh < 2 and bottom != bottom0:  # column full: start the next one further left
-                    col_right -= col_w + 3
-                    bottom, col_w = bottom0, 0
-                placed.append((text, hot, col_right - w, bottom - bh, w, bh, key, sub))
-                bottom -= bh + gap
-                col_w = max(col_w, w)
-        else:
-            bottom = PET_H - 2 - TAG_H - TOP_TRIM + 4  # the first row overlaps the tag's top border by 4 units
-            for row in rows:
-                row_h = h + (sub_h if any(e[5] for e in row) else 0)
-                for text, hot, bx, w, key, sub in row:
-                    bh = h + (sub_h if sub else 0)
-                    placed.append((text, hot, bx, bottom - bh, w, bh, key, sub))  # a row's badges share one line
-                bottom -= row_h + gap
-        for text, hot, bx, y, w, bh, key, sub in placed:
-            bg = BADGE_ATTENTION_BG if hot else T["tag_bg"]
-            tags = ("badge", "badge:" + (key or ""))
-            try:
-                im = bubble_image(w, bh, bg, T["tag_outline"], None)
-                self._put(("badge", w, bh, bg, T["tag_outline"]), im, int(round(w * s_)), int(round(bh * s_)), bx, y,
-                          "nw", tags=tags)
-            except Exception:  # no Pillow
-                c.create_rectangle(bx, y, bx + w, y + bh, fill=bg, outline=T["tag_outline"], tags=tags)
-            if sub:
-                c.create_text(bx + 3, y + h + sub_h / 2 - 1.5, text=sub, anchor="w",
-                              fill="#374151" if hot else sub_fg, font=sub_font, tags=tags)
-            label, arrow = split(text)
-            fg = "#111827" if hot else T["tag_fg"]
-            tx = bx + 2
-            if label:
-                dot = COLORS["needs_input"] if text.startswith("+") else badge_dot(text)
-                # the dot at the badge's middle; the text a unit higher than its anchor box would put it, because
-                # its visual middle sits below the box's middle (room for descenders)
-                c.create_rectangle(bx + 3, y + 4, bx + 6, y + 7, fill=dot, outline="", tags=tags)
-                c.create_text(bx + 8, y + h / 2 - 0.5, text=label, anchor="w", fill=fg, font=font, tags=tags)
-                tx = bx + 8 + self._text_w(font, label) + 2
-            if arrow:
-                c.create_text(tx, y + h / 2 - 0.5, text=arrow, anchor="w", fill=fg, font=arrow_font, tags=tags)
-        return min((p[2] for p in placed), default=None)
+        super().__init__(self.services, app, key)
 
     @staticmethod
     def _text_w(font, text):
-        """Width of text in drawing units (real font metrics, so the label stays centred at every size)."""
-        key = ("font", font)
-        if key not in _IMG_CACHE:
-            import tkinter.font as tkfont
-            _IMG_CACHE[key] = tkfont.Font(family=font[0], size=font[1], weight=font[2] if len(font) > 2 else "normal")
-        return _IMG_CACHE[key].measure(text) / SCALE["v"]
-
-    def _mole_head(self, cx, bc, k, st, ph):
-        c = self.canvas
-        rx, ry = 21 * k, 29 * k
-        c.create_oval(cx - rx, bc - ry, cx + rx, bc + ry, fill=MOLE_BODY, outline=MOLE_EDGE, width=2)
-        c.create_oval(cx - rx * 0.62, bc - ry * 0.85, cx - rx * 0.2, bc - ry * 0.5, fill=MOLE_LIGHT, outline="")
-        ey, ex = bc - 9 * k, 8 * k
-        for side in (-1, 1):  # eyes
-            x = cx + side * ex
-            if st in ("done", "idle"):
-                c.create_arc(x - 4 * k, ey - 3 * k, x + 4 * k, ey + 3 * k, start=180, extent=180, style="arc",
-                             width=2, outline=INK)
-            elif st == "error":
-                c.create_line(x - 3 * k, ey - 3 * k, x + 3 * k, ey + 3 * k, width=2, fill=INK)
-                c.create_line(x - 3 * k, ey + 3 * k, x + 3 * k, ey - 3 * k, width=2, fill=INK)
-            elif st == "working" and (ph % 4) < 0.15:  # blink
-                c.create_line(x - 3 * k, ey, x + 3 * k, ey, width=2, fill=INK)
-            else:
-                r = (4.6 if st == "needs_input" else 3.4) * k
-                c.create_oval(x - r, ey - r * 1.25, x + r, ey + r * 1.25, fill=INK, outline="")
-                c.create_oval(x - r * 0.15, ey - r * 0.95, x + r * 0.45, ey - r * 0.25, fill="white", outline="")
-        wig = math.sin(ph * 10) * 1.2 * k if st == "working" else 0  # nose wiggles while digging
-        ny = bc + 5 * k
-        c.create_oval(cx - 9 * k + wig, ny - 6 * k, cx + 9 * k + wig, ny + 7 * k, fill=MOLE_NOSE,
-                      outline=MOLE_NOSE_EDGE, width=2)
-        c.create_oval(cx - 5 * k + wig, ny - 4 * k, cx - 1.5 * k + wig, ny - 0.5 * k, fill="white", outline="")
-
-    def _draw_mole(self, t):
-        c = self.canvas
-        st = self.data.get("state", "idle")
-        col = COLORS.get(st, COLORS["idle"])
-        t += self.seed
-        cx0, ground = PET_W / 2, 90
-        p = max(0.0, min(1.0, (time.time() - self.born) / EMERGE_SECONDS)) if self.born else 1.0
-        e = 1 + 2.70158 * (p - 1) ** 3 + 1.70158 * (p - 1) ** 2 if p > 0 else 0.0
-        emerging = p < 1.0
-        heads = HEAD_LAYOUTS[min(3, int(self.data.get("subagents", 0) or 0)) + 1]
-
-        # the ground disc: its rim shows the state colour
-        c.create_oval(cx0 - 40, ground - 9, cx0 + 40, ground + 9, fill=MOLE_EDGE, outline=col, width=3)
-        top = 99
-        for i, (dx, k) in enumerate(heads):
-            main = i == len(heads) - 1
-            ph = t + i * 1.7
-            cx, dy = cx0 + dx, 0.0
-            if st == "working":  # popping up and down while digging
-                dy = -abs(math.sin(ph * (5 if main else 4.2))) * 8 * k + 2
-            elif st == "needs_input":
-                dy = (-abs(math.sin(ph * 7)) * 15 if not self.acked else -2 * math.sin(ph * 3)) * (1 if main else 0.6)
-            elif st == "error" and not self.acked:
-                cx += 2 * math.sin(ph * 25)
-            elif st in ("done", "idle"):  # asleep, mostly underground
-                dy = 8 + 1.5 * math.sin(ph * 2)
-            bc = ground - 34 * k + dy + EMERGE_DEPTH * (1 - e)
-            top = min(top, bc - 29 * k)
-            self._mole_head(cx, bc, k, st, ph)
-
-        # the front hill hides the buried part of the heads
-        c.create_oval(cx0 - 31, ground - 15, cx0 + 31, ground + 1, fill=MOLE_HILL, outline=MOLE_HILL_EDGE, width=2)
-        c.create_oval(cx0 - 16, ground - 11, cx0 + 8, ground - 4, fill="#7a4e2b", outline="")
-        if not emerging:
-            if st == "working":  # flying dirt
-                for i in range(5):
-                    ph = (t * 1.5 + i * 0.2) % 1
-                    x = cx0 + (1 if i % 2 else -1) * (26 + ph * 14)
-                    y = ground - 8 - 26 * math.sin(math.pi * ph)
-                    r = 2.6 * (1 - ph * 0.5)
-                    c.create_oval(x - r, y - r, x + r, y + r, fill=MOLE_EDGE, outline="")
-            elif st == "needs_input":
-                bx, by = cx0 + 28, max(14.0, top - 4)
-                r = 10 + (0 if self.acked else 1.5 * math.sin(t * 8))
-                c.create_oval(bx - r, by - r, bx + r, by + r, fill="white", outline=DARK["needs_input"], width=2)
-                c.create_text(bx, by, text="!", fill="#dc2626", font=fnt(12, "bold"))
-            elif st == "done":
-                self._completion_seal(cx0 - 28, top + 8)
-            elif st == "idle":  # rising z's
-                for i in range(2):
-                    ph = (t * 0.6 + i * 0.5) % 1
-                    zx, zy, s = cx0 + 22 + ph * 8, 40 - ph * 18, 3 + ph * 3
-                    c.create_line(zx - s, zy - s, zx + s, zy - s, zx - s, zy + s, zx + s, zy + s, width=2, fill="#9ca3af")
-        self._draw_tag()
+        return font_metrics._text_w(sys.modules[__name__], font, text)
 
     @staticmethod
     def _char_w(font):
-        key = ("charw", font)
-        if key not in _IMG_CACHE:
-            import tkinter.font as tkfont
-            _IMG_CACHE[key] = tkfont.Font(family=font[0], size=font[1]).measure("0") / SCALE["v"]
-        return _IMG_CACHE[key]
-
-    def _terminal_rows(self, rows=3, cols=13):
-        """Scrolling hacker text for the working bubble; each row advances at its own speed."""
-        tx = self.__dict__.setdefault("_tx", {"rows": None, "t": 0.0})
-        now = time.time()
-        if tx["rows"] is None or len(tx["rows"][0]) != cols:
-            tx["rows"] = ["".join(random.choice(TERMINAL_CHARS) for _ in range(cols)) for _ in range(rows)]
-        if now - tx["t"] > 0.09:
-            tx["t"] = now
-            for i in range(rows):
-                if random.random() < (0.55, 0.85, 0.4)[i % 3]:
-                    tx["rows"][i] = tx["rows"][i][1:] + random.choice(TERMINAL_CHARS)
-        return tx["rows"]
-
-    def _put(self, key, image, w, h, x, y, anchor="nw", tags=()):
-        """Draw a PIL image scaled to w x h (final pixels) at canvas point (x, y). Canvas coordinates are at base size
-        and _finish() scales them by SCALE, which is why rectangles use w / SCALE. See RECT_SPRITES."""
-        c = self.canvas
-        if not RECT_SPRITES:
-            c.create_image(x, y, image=sprite_photo(key, image, w, h), anchor=anchor, tags=tags)
-            return
-        s = SCALE["v"]
-        bw, bh = w / s, h / s  # size in base coordinates
-        left = x - (bw / 2 if anchor in ("center", "n", "s") else (bw if "e" in anchor else 0))
-        top = y - (bh / 2 if anchor in ("center", "e", "w") else (bh if "s" in anchor else 0))
-        kx, ky = bw / image.width, bh / image.height
-        for x0, y0, x1, y1, col in pixel_rects(key, image):
-            c.create_rectangle(left + x0 * kx, top + y0 * ky, left + x1 * kx, top + y1 * ky,
-                               fill=col, outline="", width=0, tags=tags)
-
-    def _bubble(self, x1, y1, x2, y2, tail_x, fill, outline, tags=()):
-        """Pixel-art speech bubble (see bubble_image) with its top-left at (x1, y1); the tail points down at tail_x."""
-        w, h = max(14, int(round(x2 - x1))), max(9, int(round(y2 - y1)))
-        tcx = max(5, min(w - 6, int(round(tail_x - x1))))
-        im = bubble_image(w, h, fill, outline, tcx)
-        s = SCALE["v"]
-        self._put(("bubble", w, h, fill, outline, tcx), im, int(round(w * s)), int(round(im.height * s)),
-                  int(round(x1)), int(round(y1)), "nw", tags)
-
-    def _mark(self, kind, cx, cy, k=1, tags=()):
-        im = mark_image(kind, k)
-        s = SCALE["v"]
-        self._put(("mark", kind, k), im, int(round(im.width * s)), int(round(im.height * s)),
-                  int(round(cx)), int(round(cy)), "center", tags)
-
-    def _draw_robot(self, t):
-        spr = load_sprites()
-        if not spr:
-            return self._draw_mole(t)
-        c = self.canvas
-        st = self.data.get("state", "idle")
-        t += self.seed
-        s = SCALE["v"]
-        cx0, ground = PET_W / 2, 90
-        p = max(0.0, min(1.0, (time.time() - self.born) / EMERGE_SECONDS)) if self.born else 1.0
-        e = 1 + 2.70158 * (p - 1) ** 3 + 1.70158 * (p - 1) ** 2 if p > 0 else 0.0
-        rise = EMERGE_DEPTH * (1 - e)  # new pets rise up from behind the name tag
-        emerging = p < 1.0
-        shadow = spr["img"]["shadow"]
-
-        # the robot (one per active agent: the main one in front, subagents smaller beside it)
-        rm = spr["meta"]["robot"]
-        rw0, rh0 = rm["size"]
-        members = self.data.get("members")
-        if members:  # compact mode: a robot per session, each in its own state; the front one is the focus
-            heads = HEAD_LAYOUTS[len(members)]
-            states = [(m["state"], self.app.ack.get(m["key"], False)) for m in members[1:]] + [(st, self.acked)]
-        else:  # one session: the main robot in front, its subagents smaller beside it, all in the session's state
-            heads = HEAD_LAYOUTS[min(3, int(self.data.get("subagents", 0) or 0)) + 1]
-            states = [(st, self.acked)] * len(heads)
-        top_main = ground
-        flash = bool(self.data.get("auto_flash")) and st not in ("needs_input", "error")
-        # a subagent or another session just finished: the done check briefly takes over the working bubble
-        done_flash = st == "working" and time.time() < self.app.done_flash.get(self.data.get("focus", self.key), 0)
-        for i, (dx, k) in enumerate(heads):
-            main = i == len(heads) - 1
-            hst, hacked = states[i]
-            ph = t + i * 1.7
-            cx, dy, squash = cx0 + dx, 0.0, 1.0
-            face = STATE_FACE.get(hst, "sleep")
-            if main and flash:  # just auto-approved something: a calm, content robot with green lights
-                hst, face = "auto", "joy"
-                dy = -abs(math.sin(ph * 2.5)) * 1.5
-            elif hst == "working":
-                dy = -abs(math.sin(ph * (5 if main else 4.2))) * 3 * k
-                frame = int(ph * 8) % TALK_FRAMES  # the wave travels along the mouth (one loop = 0.5 s, 2 Hz)
-                # Blink on a cosine at BLINK_RATIO x the mouth's frequency: a short blink near each peak. The two
-                # rhythms drift apart and line up again now and then.
-                blink = math.cos(2 * math.pi * BLINK_RATIO * (8 / TALK_FRAMES) * ph) > BLINK_THRESHOLD
-                face = f"talkblink{frame}" if blink else f"talk{frame}"
-                if main and done_flash:
-                    face = "joy"
-            elif hst == "needs_input":  # hops while it waits for you
-                dy = (-abs(math.sin(ph * 7)) * 8 if not hacked else -1.5 * math.sin(ph * 3)) * (1 if main else 0.6)
-                squash = 1.0 if dy < -1.2 else 0.94
-            elif hst == "error" and not hacked:
-                cx += 2 * math.sin(ph * 25)
-            elif hst == "idle":
-                squash = 1 + 0.025 * math.sin(ph * 2)  # slow breathing
-            w, h = int(round(rw0 * k * s)), int(round(rh0 * k * squash * s))
-            sw = int(round(rw0 * k * 1.1 * s))
-            self._put("shadow", shadow, sw, max(2, int(sw * 0.25)), cx, ground + 2, "center")
-            im = robot_image(face, light_cycle(hst, ph))
-            self._put(("robot", face, light_cycle(hst, ph)), im, w, h, cx, ground + dy + rise, "s", tags=("hit",))
-            if main:
-                top_main = ground + dy - rh0 * k * squash
-
-        if not emerging:
-            bx1, bx2 = cx0 - 34, cx0 + 36
-            by1 = 15.0  # the top of the drawing (the strip above is trimmed off: badges live in a left column)
-            by2 = 36.0 if st == "needs_input" else min(top_main + 2, 40.0)  # the hop must not squash the bubble
-            tail = cx0 - 6  # off the antenna
-            if flash:  # a small pale-green "✓ auto" bubble: approved by the whitelist, nothing to do
-                top = by2 - 19
-                self._bubble(cx0 - 26, top, cx0 + 16, by2, tail, "#f0fdf4", "#4b8f63")
-                y = (top + by2) / 2
-                self._mark("ok", cx0 - 15, y)
-                c.create_text(cx0 + 3, y, text="auto", fill="#4b8f63", font=fnt(5))
-            elif done_flash:
-                self._completion_seal(cx0 - 27, top_main + 8)
-            elif st == "working":  # hacker-screen bubble
-                self._bubble(bx1, by1, bx2, by2, tail, "#0b1220", "#34d399")
-                font = mono(5)
-                cw = self._char_w(font)  # real width of one character, in drawing units
-                rows = self._terminal_rows(cols=max(6, int((bx2 - bx1 - 12) / cw)))
-                for i, row in enumerate(rows):
-                    y = by1 + 6 + i * (by2 - by1 - 8) / 2.6
-                    c.create_text(bx1 + 5, y, text=row[:-1], anchor="w", fill="#22c55e", font=font)
-                    c.create_text(bx1 + 5 + cw * (len(row) - 1), y, text=row[-1], anchor="w", fill="#d1fae5", font=font)
-            elif st == "done":
-                # A completion seal, away from the interactive speech bubble.
-                x, y = cx0 - 27, top_main + 8
-                self._completion_seal(x, y)
-            elif st == "error":
-                top = by2 - 19  # a small bubble, centred on its tail
-                self._bubble(cx0 - 22, top, cx0 + 10, by2, tail, "#fafafa", "#111827")
-                bob = 1 if int(t * 3) % 2 else 0  # a one-pixel bob
-                self._mark("ok" if st == "done" else "no", cx0 - 6, (top + by2) / 2 - bob)
-            elif st == "needs_input":  # the answer bubble: check / cross / question mark (click it for the popup)
-                self._bubble(bx1 + 4, by1, bx2 - 6, by2, tail, "#fafafa", "#111827", tags=("ans",))
-                y, pulse = (by1 + by2) / 2, int(t * 2) % 3
-                if (self.data.get("request") or {}).get("kind") == "question":  # a question: just a bobbing "?"
-                    self._mark("?", cx0 - 1, y - (1 if int(t * 3) % 2 else 0), tags=("ans",))
-                else:
-                    for i, (x, kind) in enumerate(((cx0 - 16, "ok"), (cx0 - 1, "no"), (cx0 + 14, "?"))):
-                        self._mark(kind, x, y - (1 if i == pulse else 0), tags=("ans",))
-            else:  # idle: sleeping, rising z's
-                for i in range(3):
-                    ph = (t * 0.5 + i / 3) % 1
-                    zx, zy = cx0 + 14 + ph * 14, top_main + 4 - ph * 22
-                    c.create_text(zx, zy, text="z", fill="#9ca3af", font=fnt(8 + 5 * ph, "bold"))
-        self._draw_tag()
-
-    def _draw_cat(self, t):
-        c = self.canvas
-        st = self.data.get("state", "idle")
-        col, dark = COLORS.get(st, COLORS["idle"]), DARK.get(st, DARK["idle"])
-        t += self.seed
-        cx, base, rx, ry, dy = PET_W / 2, 66, 26, 22, 0.0
-
-        # Diglett-style entrance: rise out of a dirt mound with a little overshoot.
-        p = max(0.0, min(1.0, (time.time() - self.born) / EMERGE_SECONDS)) if self.born else 1.0
-        e = 1 + 2.70158 * (p - 1) ** 3 + 1.70158 * (p - 1) ** 2 if p > 0 else 0.0
-        emerging = p < 1.0
-
-        if st == "working":
-            dy = -3 * math.sin(t * 6)
-        elif st == "needs_input":
-            dy = -abs(math.sin(t * 7)) * 12 if not self.acked else -2 * math.sin(t * 3)
-        elif st == "error" and not self.acked:
-            cx += 2 * math.sin(t * 25)
-        else:
-            ry *= 1 + 0.04 * math.sin(t * 2)  # breathing
-
-        by = base + dy + EMERGE_DEPTH * (1 - e)
-        ground = base + 26
-        sw = rx * (1 + dy / 40)
-        c.create_oval(cx - sw, ground - 3, cx + sw, ground + 4, fill="#2b2b2b", outline="")
-
-        top = by - ry
-        for side in (-1, 1):  # ears
-            c.create_polygon(cx + side * 18, top + 7, cx + side * 13, top - 9, cx + side * 4, top + 2,
-                             fill=col, outline=dark, width=2)
-        c.create_oval(cx - rx, by - ry, cx + rx, by + 22, fill=col, outline=dark, width=2)
-
-        ey = by - 3
-        for side in (-1, 1):  # eyes
-            ex = cx + side * 9
-            if st in ("done", "idle"):
-                c.create_arc(ex - 5, ey - 3, ex + 5, ey + 4, start=180, extent=180, style="arc", width=2, outline=INK)
-            elif st == "error":
-                c.create_line(ex - 4, ey - 4, ex + 4, ey + 4, width=2, fill=INK)
-                c.create_line(ex - 4, ey + 4, ex + 4, ey - 4, width=2, fill=INK)
-            elif st == "working" and (t % 4) < 0.15:  # blink
-                c.create_line(ex - 4, ey, ex + 4, ey, width=2, fill=INK)
-            else:
-                r = 6 if st == "needs_input" else 5
-                px = 2 * math.sin(t * 1.7) if st == "working" else 0
-                c.create_oval(ex - r, ey - r, ex + r, ey + r, fill="white", outline=INK)
-                c.create_oval(ex + px - 2.5, ey - 2.5, ex + px + 2.5, ey + 2.5, fill=INK, outline="")
-
-        my = by + 9  # mouth
-        if st == "needs_input":
-            c.create_oval(cx - 3, my - 3, cx + 3, my + 3, fill=INK, outline="")
-        elif st == "done":
-            c.create_arc(cx - 6, my - 6, cx + 6, my + 3, start=200, extent=140, style="arc", width=2, outline=INK)
-            for side in (-1, 1):
-                c.create_oval(cx + side * 17 - 4, my - 4, cx + side * 17 + 4, my + 1, fill="#f9a8d4", outline="")
-        elif st == "error":
-            c.create_line(cx - 6, my, cx - 2, my - 2, cx + 2, my, cx + 6, my - 2, width=2, fill=INK)
-        else:
-            c.create_line(cx - 4, my, cx + 4, my, width=2, fill=INK)
-
-        if emerging:  # dirt mound hides the part of the body still underground
-            mw = 34 * (1 - 0.5 * p)
-            c.create_oval(cx - mw, ground - 12, cx + mw, ground + 3, fill=MOUND, outline=MOUND_DARK, width=2)
-            c.create_oval(cx - mw * 0.55, ground - 8, cx + mw * 0.55, ground - 1, fill=MOUND_DARK, outline="")
-
-        if emerging:
-            pass
-        elif st == "working":  # orbiting dots
-            for i in range(3):
-                a = t * 3 + i * 2.094
-                x, y = cx + 20 * math.cos(a), top - 14 + 5 * math.sin(a)
-                c.create_oval(x - 3, y - 3, x + 3, y + 3, fill="white", outline=dark)
-        elif st == "needs_input":
-            bx, byy = cx + 24, top - 14
-            pulse = 0 if self.acked else 1.5 * math.sin(t * 8)
-            r = 10 + pulse
-            c.create_oval(bx - r, byy - r, bx + r, byy + r, fill="white", outline=dark, width=2)
-            c.create_text(bx, byy, text="!", fill="#dc2626", font=fnt(12, "bold"))
-        elif st == "done":
-            self._completion_seal(cx - 28, top + 8)
-
-        self._draw_tag()
+        return font_metrics._char_w(sys.modules[__name__], font)
 
 
 # --------------------------------------------------------------------------- diagnostics
@@ -2523,560 +1437,13 @@ NO_CHOICE = "\x00none"  # "nothing picked" for a question's radio buttons (Tk dr
 OWN_CHOICE = "\x00own"  # the "Your own answer" radio button: send the typed text
 
 
-class Detail:
-    """A styled card, centred on the screen, with the full context of a session that needs the user. The robot
-    beside it asks with a "?" and reacts when you answer."""
-
+class Detail(PermissionCard):
+    """Compatibility constructor for the desktop runtime."""
     ACCENT = COLORS["needs_input"]
-
-    def f(self, size, *style, family=None):
-        return card_font(size, *style, family=family)
+    services = sys.modules[__name__]
 
     def __init__(self, app, key, item):
-        self.app, self.key, self._shown, self.sent = app, key, None, None
-        self.pinned = item.get("state") != "needs_input"  # opened from the menu: not a prompt that closes when answered
-        self._after, self._t0, self._moved, self._size = None, time.time(), False, None
-        bg, fg, msg_fg, muted = T["bubble_bg"], T["bubble_fg"], T["bubble_msg"], T["bubble_muted"]
-        w = self.win = MacOverlayWindow(app.root) if IS_MAC else tk.Toplevel(app.root)
-        w.withdraw()
-        w.title(f"AIPet permission — {key}")
-        if IS_MAC:
-            w.attributes("-alpha", 0.0)
-        w.overrideredirect(True)  # our own frame: accent border, draggable header, close button
-        w.attributes("-topmost", True)
-        w.configure(bg=self.ACCENT)
-        w.bind("<Escape>", lambda e: self.close())
-        card = tk.Frame(w, bg=bg)
-        card.pack(padx=2, pady=2)
-        tk.Frame(card, bg=self.ACCENT, height=5).pack(fill="x")
-        cols = tk.Frame(card, bg=bg)
-        cols.pack(fill="both", padx=16, pady=(12, 14))
-
-        spr = load_sprites()
-        self.robot = None
-        left = tk.Frame(cols, bg=bg)
-        left.pack(side="left", anchor="n", fill="y", padx=(0, 16))
-        if spr:  # left column: the robot (room below it for its whole shadow)
-            sc = CARD_SCALE["v"]
-            self.robot = tk.Canvas(left, width=int(140 * sc), height=int(212 * sc), bg=bg, highlightthickness=0, bd=0)
-            self.robot.pack(side="top", anchor="n", pady=(int(12 * sc), 0))
-        # size of this card: slider under the robot; also Ctrl + plus / minus / 0 and Ctrl + mouse wheel on the card
-        size_row = tk.Frame(left, bg=bg)
-        size_row.pack(side="bottom", fill="x", pady=(8, 0))
-        self.size_var = tk.DoubleVar(master=w, value=CARD_SCALE["v"])
-        self.size_label = tk.Label(size_row, text=f"{int(round(CARD_SCALE['v'] * 100))}%", bg=bg, fg=muted,
-                                   font=self.f(8), width=5, anchor="e")
-        self.size_scale = tk.Scale(size_row, from_=CARD_SCALE_MIN, to=CARD_SCALE_MAX, resolution=CARD_SCALE_STEP,
-                                   orient="horizontal", variable=self.size_var, showvalue=False, length=90,
-                                   sliderlength=14, width=8, bg=T["primary"], troughcolor=T["entry_bg"],
-                                   activebackground=T["primary_active"], sliderrelief="flat", highlightthickness=0,
-                                   bd=0, relief="flat",
-                                   command=lambda v: self.size_label.configure(text=f"{int(round(float(v) * 100))}%"))
-        self.size_scale.pack(side="left")
-        self.size_label.pack(side="left")
-        self.size_scale.bind("<ButtonRelease-1>", lambda e: self.app.set_card_scale(self.size_var.get()))
-        mod = "Command" if IS_MAC else "Control"
-        for seq, step in (("plus", 1), ("equal", 1), ("KP_Add", 1), ("minus", -1), ("KP_Subtract", -1),
-                          ("0", 0), ("KP_0", 0)):
-            w.bind(f"<{mod}-{seq}>", lambda e, s=step: self.zoom_by(s))
-        w.bind("<MouseWheel>", lambda e: self.zoom_by(1 if e.delta > 0 else -1)
-               if e.state & (0x8 if IS_MAC else 0x4) else None)
-        w.bind("<Control-Button-4>", lambda e: self.zoom_by(1))
-        w.bind("<Control-Button-5>", lambda e: self.zoom_by(-1))
-        right = tk.Frame(cols, bg=bg, width=430)
-        right.pack(side="left", fill="both", expand=True, anchor="n")
-
-        top = tk.Frame(right, bg=bg)
-        top.pack(fill="x")
-        self.head = tk.Label(top, bg=bg, fg=fg, anchor="w", font=self.f(15, "bold"))
-        self.head.pack(side="left", fill="x", expand=True)
-        close = tk.Label(top, text="\u2715", bg=bg, fg=muted, cursor="hand2", font=self.f(12), padx=4)
-        close.pack(side="right")
-        close.bind("<Button-1>", lambda e: self.close())
-        self.status = tk.Label(right, text="needs your permission", bg=bg, fg=self.ACCENT, anchor="w",
-                               font=self.f(9, "bold"))
-        self.status.pack(fill="x")
-        self.where = tk.Label(right, bg=bg, fg=muted, anchor="w", justify="left", wraplength=430, font=self.f(8))
-        self.where.pack(fill="x", pady=(2, 0))
-        tk.Frame(right, bg=T["border"], height=1).pack(fill="x", pady=8)
-        for widget in (top, self.head):  # drag the card by its header
-            widget.bind("<ButtonPress-1>", self._drag_start)
-            widget.bind("<B1-Motion>", self._drag_move)
-
-        self.body = tk.Frame(right, bg=bg)
-        self.body.pack(fill="x")
-        self.ask = tk.Label(self.body, bg=bg, fg=fg, anchor="w", justify="left", wraplength=430, font=self.f(11, "bold"))
-        self.desc = tk.Label(self.body, bg=bg, fg=msg_fg, anchor="w", justify="left", wraplength=430, font=self.f(10))
-        self.code = tk.Text(self.body, height=1, width=60, wrap="word", bg="#0b1220", fg="#d1fae5", relief="flat",
-                            borderwidth=0, highlightthickness=0, padx=10, pady=8, font=self.f(9, family=MONO_FAMILY), state="disabled",
-                            insertbackground="#d1fae5")
-        wait_row = tk.Frame(right, bg=bg)
-        wait_row.pack(fill="x", pady=(8, 0))
-        self.wait = tk.Label(wait_row, bg=bg, fg=muted, anchor="w", font=self.f(9))
-        self.wait.pack(side="left")
-        self.golink = tk.Label(wait_row, text="Go to window ›", bg=bg, fg=self.ACCENT, cursor="hand2", padx=8, pady=1,
-                               highlightthickness=1, highlightbackground=self.ACCENT, highlightcolor=self.ACCENT,
-                               font=self.f(9, "bold"))
-        self.golink.bind("<Button-1>", lambda e: self.go())
-        self.golink.bind("<Enter>", lambda e: self.golink.configure(bg=T["btn_active"]))
-        self.golink.bind("<Leave>", lambda e: self.golink.configure(bg=T["bubble_bg"]))
-        self.note = tk.Label(right, bg=bg, fg=muted, anchor="w", justify="left", wraplength=430, font=self.f(8))
-        self.note.pack(fill="x", pady=(2, 8))
-        # Escape hatch for a prompt that is gone (its agent died, it was settled elsewhere) but still shows here
-        self.clearlink = tk.Label(right, text="Not asking anymore? Clear this prompt", bg=bg, fg=muted, cursor="hand2",
-                                  anchor="w", font=self.f(8, "underline"))
-        self.clearlink.bind("<Button-1>", lambda e: self.clear_prompt())
-        # Timed auto approve for this session (asks to confirm first)
-        self.timedlink = tk.Label(right, bg=bg, fg=themed_color("#b45309"), cursor="hand2", anchor="w",
-                                  font=self.f(8, "underline"))
-        self.timedlink.bind("<Button-1>", lambda e: self.auto_approve_for_a_while())
-        # Questions (Claude's AskUserQuestion): one block per question, options as toggles, plus an own-answer field
-        self.qframe = tk.Frame(self.body, bg=bg)
-        self._qid, self._qvars = None, []
-        self.q_row = tk.Frame(right, bg=bg)
-        self.btn_send = tk.Button(self.q_row, text="Send answer", command=self.send_answers,
-                                  **dict(button_style("primary"), font=self.f(10, "bold")))
-        self.btn_send.pack(side="right", ipady=2)
-        self.answer_row = tk.Frame(right, bg=bg)
-        self.btn_deny = tk.Button(self.answer_row, text="Deny", width=12, bg=bg, fg=themed_color("#dc2626"),
-                                  activebackground=T["btn_active"], activeforeground=themed_color("#b91c1c"),
-                                  relief="flat", bd=0, highlightthickness=1, highlightbackground=themed_color("#dc2626"),
-                                  cursor="hand2",
-                                  font=self.f(10, "bold"), command=lambda: self.answer("deny"))
-        dark = T.get("name") == "dark"  # dark theme: black text on a brighter green
-        allow_fg, allow_bg, allow_active = ("#111827", "#22c55e", "#16a34a") if dark else ("white", "#16a34a", "#15803d")
-        self.btn_allow = tk.Button(self.answer_row, text="Allow once", width=14, bg=allow_bg, fg=allow_fg,
-                                   activebackground=allow_active, activeforeground=allow_fg, relief="flat", cursor="hand2",
-                                   font=self.f(10, "bold"), command=lambda: self.answer("allow"))
-        if IS_MAC:
-            self.btn_allow.configure(**button_style("primary"))
-            self.btn_deny.configure(**button_style("danger"))
-        # Allow + whitelist: allows this one and adds it to the hook config's auto-approve whitelist (lighter green)
-        wl_bg, wl_fg, wl_active = ("#14532d", "#bbf7d0", "#166534") if dark else ("#dcfce7", "#166534", "#bbf7d0")
-        self.btn_whitelist = tk.Button(self.answer_row, text="Allow + whitelist", bg=wl_bg, fg=wl_fg,
-                                       activebackground=wl_active, activeforeground=wl_fg, relief="flat", bd=0,
-                                       highlightthickness=1, highlightbackground="#16a34a", cursor="hand2",
-                                       font=self.f(10, "bold"), command=self.allow_and_whitelist)
-        self.btn_deny.pack(side="left", ipady=3)
-        self.btn_allow.pack(side="right", ipady=4)
-        self.btn_whitelist.pack(side="right", ipady=3, padx=(0, 8))
-        self.answer_row.pack(fill="x")
-        self.go_row = tk.Frame(right, bg=bg)
-        self.btn_go = tk.Button(self.go_row, text="Go to window", bg=self.ACCENT, fg="#111827", activebackground="#d97706",
-                                activeforeground="#111827", relief="flat", cursor="hand2", font=self.f(10, "bold"),
-                                command=self.go)
-        self.btn_go.pack(side="left", ipady=4, ipadx=14)
-        self.update(item)
-        self.apply_scale()
-        self._place(first=True)
-        w.deiconify()
-        if IS_MAC:
-            import mac_statusbar as mac
-            w.update_idletasks()
-            mac.set_all_spaces(w.title(), app.cfg.get("all_spaces", True))
-            # Tk 8.6 skips native panel mouse events. Forward this card's events
-            # so buttons, text selection, and dragging still work without activation.
-            self._mouse_bridge = mac.PanelMouseBridge(w)
-            w.bind("<Destroy>", lambda event: self._mouse_bridge.close()
-                   if event.widget is w else None, add="+")
-            w.attributes("-alpha", 1.0)
-        else:
-            w.focus_force()
-        self._tick()
-
-    # ---- placement: centred on the screen, cascading a little when several are open
-    def _place(self, first=False):
-        w = self.win
-        w.update_idletasks()
-        size = (w.winfo_reqwidth(), w.winfo_reqheight())
-        if size == self._size and not first:
-            return
-        self._size = size
-        if self._moved:
-            return
-        n = len(self.app.details) - (0 if self.key in self.app.details else 0)
-        n = max(0, n - (1 if self.key in self.app.details else 0))
-        root = self.app.root  # centre on the monitor the pets are on
-        ref = (root.winfo_x() + root.winfo_width() // 2, root.winfo_y() + root.winfo_height() // 2)
-        left, top, right, bottom = work_area(*ref, w) or (0, 0, w.winfo_screenwidth(), w.winfo_screenheight())
-        x = left + (right - left - size[0]) // 2 + 28 * n
-        y = max(top + 20, top + (bottom - top - size[1]) // 2 - 30 + 28 * n)
-        w.geometry(geo(x, y))
-
-    def _fit_code(self):
-        """Size the command box to its real wrapped line count (long paths wrap mid-word, so estimates clip)."""
-        try:
-            if not self.code.winfo_ismapped():
-                return
-            self.code.config(state="normal", height=40)
-            self.code.update_idletasks()
-            n = self.code.count("1.0", "end-1c", "displaylines")  # number of line BREAKS, so rows = breaks + 1
-            rows = (int(n[0]) if n else 0) + 1
-            self.code.config(height=max(1, min(16, rows)))
-            self.code.config(state="disabled")
-            self._place()
-        except tk.TclError:
-            pass
-
-    def _drag_start(self, e):
-        self._drag = (e.x_root - self.win.winfo_x(), e.y_root - self.win.winfo_y())
-        self._moved = True
-
-    def _drag_move(self, e):
-        dx, dy = self._drag
-        self.win.geometry(f"+{e.x_root - dx}+{e.y_root - dy}")
-
-    # ---- the robot: asks while waiting, reacts to your answer
-    def _tick(self):
-        try:
-            if not self.win.winfo_exists():
-                return
-            if self.robot is not None:
-                self._draw_robot(time.time() - self._t0)
-        except tk.TclError:
-            return
-        self._after = self.win.after(60, self._tick)
-
-    def _draw_robot(self, t):
-        spr = load_sprites()
-        if not spr:
-            return
-        c = self.robot
-        c.delete("all")
-        if self.sent in ("Allow once", "Answer"):
-            face, state, dy = "joy", "done", -abs(math.sin(t * 6)) * 4
-        elif self.sent == "Deny":
-            face, state, dy = "worried", "error", 0.0
-        elif getattr(self, "_state", "needs_input") != "needs_input" and self._state in STATE_FACE:
-            face, state, dy = STATE_FACE[self._state], self._state, -abs(math.sin(t * 2)) * 3
-        else:
-            face, state, dy = "ask", "needs_input", -abs(math.sin(t * 4)) * 10
-        rw, rh = spr["meta"]["robot"]["size"]
-        sc = CARD_SCALE["v"]
-        z, cx, base, dy = 3 * sc, 70 * sc, 186 * sc, dy * sc
-        shadow = spr["img"]["shadow"]
-        sw = int(rw * z * 1.1 * (1 - min(0.35, abs(dy) / (40 * sc))))
-        c.create_image(cx, base + 4 * sc, image=sprite_photo("popup-shadow", shadow, sw, max(2, sw // 4)),
-                       anchor="center")
-        lights = light_cycle(state, t)
-        im = robot_image(face, lights, spr)
-        c.create_image(cx, base + dy, image=sprite_photo(("popup", face, lights), im, int(rw * z), int(rh * z)),
-                       anchor="s")
-        if state == "needs_input":  # floating question marks
-            for i in range(3):
-                ph = (t * 0.6 + i / 3) % 1
-                c.create_text((26 + i * 44 + 8 * math.sin(t * 3 + i)) * sc, (60 - ph * 34) * sc, text="?", fill=self.ACCENT,
-                              font=self.f(int(9 + 7 * (1 - ph)), "bold"))
-
-    def update(self, item):
-        self._item = item
-        self._state = item.get("state", "needs_input")
-        req = item.get("request") or {}
-        if self.sent and self._state == "needs_input" and req.get("id") and req.get("id") != getattr(self, "_sent_id", None):
-            self.sent = None  # that prompt is settled and the next queued one is showing: answer it too
-        if self._state != "needs_input" and not self.sent:
-            return self._update_status(item)
-        pending = item.get("pending", 0)
-        question = req.get("kind") == "question"
-        self.status.config(text=("has a question for you" if question else "needs your permission")
-                           + (f"  ·  {pending} prompts waiting" if pending > 1 else ""), fg=self.ACCENT)
-        self.head.config(text=item.get("title", "session"))
-        self.where.config(text=" \u00b7 ".join(x for x in (item.get("where"), item.get("detail")) if x))
-        for widget in (self.ask, self.desc, self.code, self.qframe):
-            widget.pack_forget()
-        if question:
-            self._show_questions(req)
-        elif req:
-            who = "Codex" if item.get("agent") == "codex" else "Claude"
-            self.ask.config(text=f"Allow {who} to use {req.get('tool') or 'this tool'}?")
-            self.ask.pack(fill="x")
-            if req.get("description"):
-                self.desc.config(text=req["description"])
-                self.desc.pack(fill="x", pady=(4, 0))
-            detail = req.get("detail", "")
-            if detail:
-                if detail != self._shown:
-                    self.code.config(state="normal")
-                    self.code.delete("1.0", "end")
-                    self.code.insert("1.0", detail)
-                    lines = sum(max(1, -(-len(ln) // 50)) for ln in detail.splitlines() or [""]) + 1  # provisional
-                    self.code.config(height=max(1, min(16, lines)), state="disabled")
-                    self.win.after(80, self._fit_code)  # then measure the real wrapped height once it is on screen
-                    self._shown = detail
-                self.code.pack(fill="x", pady=(8, 0))
-        else:
-            self.ask.config(text=item.get("message") or "Waiting for your input")
-            self.ask.pack(fill="x")
-        self.wait.config(text=f"waiting {ago(item['changed'])}" if item.get("changed") else "")
-        can_answer = self.app.answers_enabled(item) and hook_waiting(item) and not self.sent
-        who = "Codex" if item.get("agent") == "codex" else "Claude Code"
-        if self.sent:
-            note = f"Sent: {self.sent}. {who} will carry on in a moment."
-        elif can_answer and item.get("agent") == "codex":
-            note = ("Allow once or Deny answers this prompt right from here. Go to window hands it back to Codex, "
-                    "which then shows its own prompt there (with its other choices, like always allowing a tool).")
-        elif can_answer:
-            note = ("Allow once or Deny answers this prompt right from here, or answer in the session window "
-                    "(Go to window). If you do neither, the normal prompt appears.")
-        elif req and not self.app.answers_enabled(item):
-            note = (f"Answer this one in {who} (Go to window). To answer prompts here instead, switch on "
-                    f"Answer {who} prompts from the pet under Permissions.")
-        elif item.get("agent") == "codex" and req and self.app.cfg.get("codex_answers", True):
-            note = ("Codex is no longer waiting for this window, so answer in Codex (Go to window). If this happens "
-                    "right away, your Codex hooks are from an older AIPet with a short timeout: update them in the "
-                    "Codex hooks menu and trust them again with /hooks in Codex.")
-        elif req.get("source") == "transcript":
-            note = ("This session type (the VS Code extension) sends no permission events, so the pet can't answer for it. "
-                    "This is what Claude is asking, so you know what to approve there. Press Go to window to jump there.")
-        elif req:
-            if ANSWER_WAIT["v"] <= 0:
-                note = ("The pet stopped waiting for this prompt (it was closed or restarted meanwhile). "
-                        "Answer in the session window: press Go to window.")
-            else:
-                note = (f"The pet's {fmt_wait(ANSWER_WAIT['v'])} answer window has passed. "
-                        "Answer in the session window: press Go to window.")
-        else:
-            note = ("No command details were reported for this prompt, so there is nothing to answer here. "
-                    "Press Go to window to jump to the session.")
-        if question and can_answer:
-            note = ("Pick an answer (or type your own) and press Send answer, or answer in the session window "
-                    "(Go to window). If you do neither, Claude Code asks you itself.")
-        elif question and self.sent:
-            note = f"Sent your answer. {who} will carry on in a moment."
-        elif question and req.get("source") == "codex-question":
-            note = ("Codex is waiting for your answer in its own window: press Go to window and answer there "
-                    "(the pet can't type into Codex).")
-        elif question:
-            note = f"Answer this in {who}: press Go to window."
-        self.note.config(text=note)
-        self.answer_row.pack_forget()
-        self.q_row.pack_forget()
-        if can_answer:
-            (self.q_row if question else self.answer_row).pack(fill="x", after=self.note)
-        self._req_id = req.get("id")
-        if req and not self.sent and req.get("source") != "transcript":
-            self.clearlink.pack(fill="x", pady=(0, 6), after=self.note)
-        else:
-            self.clearlink.pack_forget()
-        if can_answer and not question:
-            grant = timed_grants().get(str(item.get("session_id")))
-            self.timedlink.config(text=(f"Auto approving this session \u00b7 {fmt_left(grant['until'] - time.time())} left"
-                                        if grant else
-                                        f"Auto approve this session for {self.app.timed_minutes()} min\u2026"))
-            self.timedlink.pack(fill="x", pady=(0, 4), after=self.note)
-        else:
-            self.timedlink.pack_forget()
-        if can_answer or self.sent:  # small link while the answer buttons (or the "sent" note) are showing
-            self.golink.pack(side="right")
-            self.go_row.pack_forget()
-        else:  # nothing to answer from here: the big button
-            self.golink.pack_forget()
-            self.go_row.pack(fill="x", after=self.note)
-        self._place()
-
-    def _show_questions(self, req):
-        """Build the question blocks once per prompt (the card refreshes every poll: keep what was picked)."""
-        self.qframe.pack(fill="x")
-        readonly = not hook_waiting({"request": req}) or not self.app.answers_enabled(self._item or {})
-        if self._qid == (req.get("id"), readonly):
-            return
-        self._qid, self._qvars = (req.get("id"), readonly), []
-        for child in self.qframe.winfo_children():
-            child.destroy()
-        bg, fg, muted = T["bubble_bg"], T["bubble_fg"], T["bubble_muted"]
-        for i, q in enumerate(req.get("questions") or []):
-            block = tk.Frame(self.qframe, bg=bg)
-            block.pack(fill="x", pady=(0 if i == 0 else 12, 0))
-            if q.get("header"):
-                tk.Label(block, text=q["header"].upper(), bg=bg, fg=self.ACCENT, anchor="w",
-                         font=self.f(8, "bold")).pack(fill="x")
-            tk.Label(block, text=q["question"], bg=bg, fg=fg, anchor="w", justify="left", wraplength=430,
-                     font=self.f(11, "bold")).pack(fill="x", pady=(2, 4))
-            multi = bool(q.get("multiSelect"))
-            picks = {}
-            # Single choice starts on the first option. Never "" as the value: that is Tk's tristate value, which
-            # draws every radio button as selected
-            first = next((o["label"] for o in q.get("options") or []), NO_CHOICE)
-            choice = tk.StringVar(master=self.win, value=NO_CHOICE if multi else first)
-            for opt in q.get("options") or []:
-                row = tk.Frame(block, bg=bg)
-                row.pack(fill="x", pady=1)
-                if readonly:  # answered in the session's own window (Codex, or answering from the pet is off)
-                    tk.Label(row, text="\u2022 " + opt["label"], bg=bg, fg=fg, anchor="w", justify="left",
-                             wraplength=420, font=self.f(10, "bold")).pack(fill="x")
-                    if opt.get("description"):
-                        tk.Label(row, text=opt["description"], bg=bg, fg=muted, anchor="w", justify="left",
-                                 wraplength=400, font=self.f(8)).pack(fill="x", padx=(14, 0))
-                    continue
-                if multi:
-                    var = picks[opt["label"]] = tk.BooleanVar(master=self.win, value=False)
-                    box = tk.Checkbutton(row, text=opt["label"], variable=var, anchor="w")
-                else:
-                    # tristatevalue: Tk draws every radio button as "half selected" while the variable holds its
-                    # tristate value, "" by default - exactly the empty "nothing picked yet" value used here
-                    box = tk.Radiobutton(row, text=opt["label"], variable=choice, value=opt["label"], anchor="w",
-                                         tristatevalue="\x00none")
-                box.configure(bg=bg, fg=fg, activebackground=bg, activeforeground=fg, selectcolor=T["entry_bg"],
-                              highlightthickness=0, font=self.f(10, "bold"), cursor="hand2")
-                box.pack(fill="x")
-                if opt.get("description"):
-                    tk.Label(row, text=opt["description"], bg=bg, fg=muted, anchor="w", justify="left",
-                             wraplength=400, font=self.f(8)).pack(fill="x", padx=(24, 0))
-            if readonly:
-                continue
-            # Your own answer has its own radio button (check box for multi-select), so it is plain what gets sent:
-            # typing selects it, picking an option deselects it again (the typed text stays, but isn't sent)
-            own = tk.StringVar(master=self.win, value="")
-            own_on = tk.BooleanVar(master=self.win, value=False)
-            other = tk.Frame(block, bg=bg)
-            other.pack(fill="x", pady=(4, 0))
-            if multi:
-                pick = tk.Checkbutton(other, text="Your own answer:", variable=own_on, anchor="w")
-            else:
-                pick = tk.Radiobutton(other, text="Your own answer:", variable=choice, value=OWN_CHOICE, anchor="w",
-                                      tristatevalue="\x00none")
-            pick.configure(bg=bg, fg=fg, activebackground=bg, activeforeground=fg, selectcolor=T["entry_bg"],
-                           highlightthickness=0, font=self.f(10, "bold"), cursor="hand2")
-            pick.pack(side="left")
-            entry = tk.Entry(other, textvariable=own, bg=T["entry_bg"], fg=T["entry_fg"], relief="flat",
-                             insertbackground=T["entry_fg"], highlightthickness=1, highlightbackground=T["border"],
-                             highlightcolor=T["primary"], font=self.f(9))
-            entry.pack(side="left", fill="x", expand=True, padx=(6, 0))
-            if multi:
-                own.trace_add("write", lambda *_, v=own_on, o=own: v.set(True) if o.get().strip() else None)
-            else:
-                own.trace_add("write", lambda *_, c=choice, o=own: c.set(OWN_CHOICE) if o.get().strip() else None)
-                pick.configure(command=lambda e=entry: e.focus_set())
-            self._qvars.append((q, multi, choice, picks, own, own_on))
-        self.win.after(60, self.apply_scale)
-
-    def question_answers(self):
-        """{question text: label} (single choice) or {question text: [labels]} (multi-select); typed answers count
-        as a label, but only while its own radio button (check box) is selected. None until every question has an
-        answer."""
-        answers = {}
-        for q, multi, choice, picks, own, own_on in self._qvars:
-            typed = own.get().strip()
-            if multi:
-                value = [label for label, var in picks.items() if var.get()] + ([typed] if typed and own_on.get() else [])
-            elif choice.get() == OWN_CHOICE:
-                value = typed
-            else:
-                value = choice.get() if choice.get() != NO_CHOICE else ""
-            if not value:
-                return None
-            answers[q["question"]] = value
-        return answers or None
-
-    def send_answers(self):
-        answers = self.question_answers()
-        if not answers:
-            self.note.config(text="Answer every question first (pick an option or type your own).")
-            return
-        item = next((i for i in self.app._last_items if i["key"] == self.key), {})
-        if self.app.send_answer(self.key, "allow", answers=answers):
-            self.sent = "Answer"
-            self._sent_id = (item.get("request") or {}).get("id")
-            self.update(item or {"request": {}})
-
-    def _update_status(self, item):
-        """A session that isn't asking anything: show what it's doing, with no answer buttons."""
-        state = item.get("state")
-        self.status.config(text=LABELS.get(state, state or ""), fg=COLORS.get(state, self.ACCENT))
-        self.head.config(text=item.get("title", "session"))
-        self.where.config(text=" · ".join(x for x in (item.get("where"), item.get("detail")) if x))
-        for widget in (self.ask, self.desc, self.code):
-            widget.pack_forget()
-        if item.get("message"):
-            self.ask.config(text=item["message"])
-            self.ask.pack(fill="x")
-        self.wait.config(text=f"since {ago(item['changed'])}" if item.get("changed") else "")
-        self.note.config(text="Press Go to window to jump to the session.")
-        self.answer_row.pack_forget()
-        self.q_row.pack_forget()
-        self.qframe.pack_forget()
-        self.timedlink.pack_forget()
-        self.golink.pack_forget()
-        self.go_row.pack(fill="x", after=self.note)
-        self._place()
-
-    # ---- size
-    def zoom_by(self, step):
-        """Ctrl + plus / minus (step 1 / -1) and Ctrl + 0 (back to 100%) on the card."""
-        value = 1.0 if step == 0 else clamp_card_scale(CARD_SCALE["v"] + step * CARD_SCALE_STEP)
-        if value != CARD_SCALE["v"]:
-            self.app.set_card_scale(value)
-        return "break"
-
-    def apply_scale(self):
-        """Follow CARD_SCALE: fonts resize by themselves (shared named fonts); wrap widths, the robot and the
-        slider are set here."""
-        sc = CARD_SCALE["v"]
-        try:
-            self.size_var.set(sc)
-            self.size_label.configure(text=f"{int(round(sc * 100))}%")
-            if self.robot is not None:
-                self.robot.configure(width=int(140 * sc), height=int(212 * sc))
-                self.robot.pack_configure(pady=(int(12 * sc), 0))
-            stack = [self.win]
-            while stack:
-                w = stack.pop()
-                stack.extend(w.winfo_children())
-                if w.winfo_class() == "Label":
-                    base = getattr(w, "_base_wrap", None)
-                    if base is None:
-                        base = w._base_wrap = int(str(w.cget("wraplength")) or 0)
-                    if base:
-                        w.configure(wraplength=int(base * sc))
-            self._size = None
-            self._place()
-        except tk.TclError:
-            pass
-
-    def allow_and_whitelist(self):
-        """Allow this prompt and add it to the auto-approve whitelist of the session's hook config, so the same
-        request is approved by itself next time."""
-        item = next((i for i in self.app._last_items if i["key"] == self.key), {})
-        added = self.app.whitelist_request(item)
-        self.answer("allow")
-        if added:
-            self.note.config(text=added)
-
-    def go(self):
-        """Bring the session's window to the front and dismiss this popup (Codex: its own prompt shows there)."""
-        self.app.go_to_prompt(self.key)
-        self.close()
-
-    def clear_prompt(self):
-        self.app.clear_prompt(self.key, getattr(self, "_req_id", None))  # the next poll moves the card on / closes it
-
-    def auto_approve_for_a_while(self):
-        """Start the timed auto approve for this session (after its confirmation), and allow the prompt on screen."""
-        item = next((i for i in self.app._last_items if i["key"] == self.key), {})
-        if timed_grants().get(str(item.get("session_id"))):
-            self.answer("allow")
-            return
-        if self.app.start_timed_approve(item):
-            self.answer("allow")
-
-    def answer(self, behavior):
-        item = next((i for i in self.app._last_items if i["key"] == self.key), {})
-        if self.app.send_answer(self.key, behavior):
-            self.sent = "Allow once" if behavior == "allow" else "Deny"
-            self._sent_id = (item.get("request") or {}).get("id")
-            self.update(next((i for i in self.app._last_items if i["key"] == self.key), {"request": {}}))
-
-    def close(self):
-        self.app.details.pop(self.key, None)
-        try:
-            if self._after:
-                self.win.after_cancel(self._after)
-            self.win.destroy()
-        except tk.TclError:
-            pass
-
-    def destroy(self):
-        self.close()
+        super().__init__(self.services, app, key, item)
 
 
 # --------------------------------------------------------------------------- app
@@ -3477,18 +1844,13 @@ class PetApp:
 
     # ---- resizing (the Size... slider in the right-click menu)
     def set_size(self, size):
-        self.set_scale(float(size) * SCALE_UNIT)
-        self.reposition()
-        self.cfg["size"] = round(SCALE["v"] / SCALE_UNIT, 2)
-        save_setting("size", self.cfg["size"])
+        return appearance_controls.set_size(self, sys.modules[__name__], size)
 
     def tooltip_text_scale(self):
-        return max(0.5, min(2.5, float(self.cfg.get("tooltip_text_scale", 1.0))))
+        return tooltips.tooltip_text_scale(self, sys.modules[__name__])
 
     def set_tooltip_text_scale(self, scale):
-        self.cfg["tooltip_text_scale"] = round(max(0.5, min(2.5, float(scale))), 2)
-        save_setting("tooltip_text_scale", self.cfg["tooltip_text_scale"])
-        self.hide_tip()
+        return tooltips.set_tooltip_text_scale(self, sys.modules[__name__], scale)
 
     def set_answer_wait(self, seconds):
         ANSWER_WAIT["v"] = clamp_wait(round(float(seconds) / 15) * 15)
@@ -3507,239 +1869,25 @@ class PetApp:
         save_setting("health_check_seconds", HEALTH["v"])
 
     def set_scale(self, v):
-        v = clamp_scale(v)
-        if abs(v - SCALE["v"]) < 0.005:
-            return
-        SCALE["v"] = v
-        for pet in self.pets.values():
-            pet.canvas.config(width=px(CANVAS_W + getattr(pet, "gutter", 0) + getattr(pet, "usage_extra", 0)), height=px(CANVAS_H))
-        self._sync_usage_padding()
+        return appearance_controls.set_scale(self, sys.modules[__name__], v)
 
     def _place_above_pet(self, w):
-        """Put a small window directly above the pet overlay, centred on it (just below it if there is no room)."""
-        w.update_idletasks()
-        self.root.update_idletasks()
-        ww, wh = w.winfo_reqwidth(), w.winfo_reqheight()
-        ox, oy, ow, oh = self.root.winfo_x(), self.root.winfo_y(), self.root.winfo_width(), self.root.winfo_height()
-        ref = (ox + ow // 2, oy + oh // 2)  # the pet's monitor
-        area = work_area(*ref, w)
-        x, y = ox + ow // 2 - ww // 2, oy - wh - 10
-        if area and y < area[1]:
-            y = oy + oh + 10  # no room above: just below
-        w.geometry(geo(*fit_on_screen(x, y, ww, wh, ref, w, margin=10)))
+        return appearance_controls._place_above_pet(self, sys.modules[__name__], w)
 
     def open_size_slider(self):
-        """A small window with a slider (30% - 300%; 100% = SCALE_UNIT). The pet follows it live, saved on release."""
-        if self.size_win is not None:
-            try:
-                self.size_win.lift()
-                return
-            except tk.TclError:
-                self.size_win = None
-        from tkinter import ttk
-        w = self.size_win = tk.Toplevel(self.root)
-        w.title("Pet size")
-        w.attributes("-topmost", True)
-        w.resizable(False, False)
-        var = tk.DoubleVar(value=SCALE["v"] / SCALE_UNIT)
-        pct = tk.Label(w, width=6, font=(UI_FONT, 12, "bold"))
-
-        def apply(_v=None):
-            self.set_scale(var.get() * SCALE_UNIT)
-            self.reposition()
-            pct.config(text=f"{int(round(SCALE['v'] / SCALE_UNIT * 100))}%")
-
-        def commit(_e=None):
-            self.set_size(var.get())
-            if self.size_win is not None:
-                self._place_above_pet(w)  # the pet grew/shrank: stay directly above it
-
-        def reset():
-            var.set(1.0)
-            apply()
-            commit()
-
-        def close():
-            commit()
-            self.size_win = None
-            w.destroy()
-
-        tk.Label(w, text="Pet size", font=(UI_FONT, 10, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
-        scale = ttk.Scale(w, from_=0.3, to=3.0, orient="horizontal", length=260, variable=var, command=apply)
-        scale.grid(row=1, column=0, padx=(14, 6), pady=8)
-        scale.bind("<ButtonRelease-1>", commit)
-        pct.grid(row=1, column=1, padx=(0, 14))
-        row = tk.Frame(w)
-        row.grid(row=2, column=0, columnspan=2, sticky="e", padx=14, pady=(0, 12))
-        tk.Button(row, text="100%", width=8, command=reset).pack(side="left", padx=(0, 6))
-        tk.Button(row, text="Done", width=8, command=close, default="active").pack(side="left")
-        w.protocol("WM_DELETE_WINDOW", close)
-        w.bind("<Escape>", lambda e: close())
-        apply()
-        theme_window(w)
-        self._place_above_pet(w)
+        return appearance_controls.open_size_slider(self, sys.modules[__name__])
 
     def open_tooltip_text_slider(self):
-        """The context menu's text-size slider; settings embeds the same control."""
-        existing = getattr(self, "tooltip_text_win", None)
-        if existing is not None:
-            try:
-                existing.lift()
-                return
-            except tk.TclError:
-                self.tooltip_text_win = None
-        from tkinter import ttk
-        w = self.tooltip_text_win = tk.Toplevel(self.root)
-        w.title("Tooltip text size")
-        w.attributes("-topmost", True)
-        w.resizable(False, False)
-        var = tk.DoubleVar(w, value=self.tooltip_text_scale())
-        pct = tk.Label(w, width=6, font=(UI_FONT, 12, "bold"))
-
-        def preview(_v=None):
-            pct.config(text=f"{round(var.get() * 100)}%")
-
-        def commit(_e=None):
-            self.set_tooltip_text_scale(var.get())
-
-        def reset():
-            var.set(1.0)
-            preview()
-            commit()
-
-        def close():
-            commit()
-            self.tooltip_text_win = None
-            w.destroy()
-
-        tk.Label(w, text="Tooltip text size", font=(UI_FONT, 10, "bold")).grid(
-            row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
-        slider = ttk.Scale(w, from_=0.5, to=2.5, orient="horizontal", length=260,
-                           variable=var, command=preview)
-        slider.grid(row=1, column=0, padx=(14, 6), pady=8)
-        slider.bind("<ButtonRelease-1>", commit)
-        slider.bind("<KeyRelease>", commit)
-        pct.grid(row=1, column=1, padx=(0, 14))
-        row = tk.Frame(w)
-        row.grid(row=2, column=0, columnspan=2, sticky="e", padx=14, pady=(0, 12))
-        tk.Button(row, text="100%", width=8, command=reset).pack(side="left", padx=(0, 6))
-        tk.Button(row, text="Done", width=8, command=close, default="active").pack(side="left")
-        w.protocol("WM_DELETE_WINDOW", close)
-        w.bind("<Escape>", lambda e: close())
-        preview()
-        theme_window(w)
-        self._place_above_pet(w)
+        return appearance_controls.open_tooltip_text_slider(self, sys.modules[__name__])
 
     def open_answer_slider(self):
-        """Slider for how long a permission prompt can be answered from the pet: 0 (off) to 5 minutes."""
-        if getattr(self, "answer_win", None) is not None:
-            try:
-                self.answer_win.lift()
-                return
-            except tk.TclError:
-                self.answer_win = None
-        from tkinter import ttk
-        w = self.answer_win = tk.Toplevel(self.root)
-        w.title("Answer timeout")
-        w.attributes("-topmost", True)
-        w.resizable(False, False)
-        var = tk.DoubleVar(value=ANSWER_WAIT["v"])
-        val = tk.Label(w, width=10, font=(UI_FONT, 12, "bold"))
-
-        def apply(_v=None):
-            ANSWER_WAIT["v"] = clamp_wait(round(var.get() / 15) * 15)  # steps of 15 s
-            val.config(text=fmt_wait(ANSWER_WAIT["v"]))
-
-        def commit(_e=None):
-            apply()
-            self.set_answer_wait(ANSWER_WAIT["v"])
-
-        def reset():
-            var.set(180)
-            commit()
-
-        def close():
-            commit()
-            self.answer_win = None
-            w.destroy()
-
-        tk.Label(w, text="Answer permission prompts from the pet for up to:", font=(UI_FONT, 10, "bold")
-                 ).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
-        scale = ttk.Scale(w, from_=0, to=MAX_WAIT, orient="horizontal", length=260, variable=var, command=apply)
-        scale.grid(row=1, column=0, padx=(14, 6), pady=8)
-        scale.bind("<ButtonRelease-1>", commit)
-        val.grid(row=1, column=1, padx=(0, 14))
-        tk.Label(w, justify="left", wraplength=360, fg="#6b7280", font=(UI_FONT, 8),
-                 text="0 means no limit: the pet waits until you answer (or until it is closed). "
-                      "While the pet waits, Claude Code's own prompt is still shown and the first answer wins, "
-                      "except for background subagents, where Claude Code may hold its prompt until this time is up "
-                      "- with no limit, until you answer from the pet."
-                 ).grid(row=2, column=0, columnspan=2, sticky="w", padx=14)
-        row = tk.Frame(w)
-        row.grid(row=3, column=0, columnspan=2, sticky="e", padx=14, pady=(8, 12))
-        tk.Button(row, text="Default (3 min)", command=reset).pack(side="left", padx=(0, 6))
-        tk.Button(row, text="Done", width=8, command=close, default="active").pack(side="left")
-        w.protocol("WM_DELETE_WINDOW", close)
-        w.bind("<Escape>", lambda e: close())
-        apply()
-        theme_window(w)
-        self._place_above_pet(w)
+        return appearance_controls.open_answer_slider(self, sys.modules[__name__])
 
     def open_done_slider(self):
-        """Slider for how long a finished session's pet stays: 0 (never cleared) to 30 minutes."""
-        if getattr(self, "done_win", None) is not None:
-            try:
-                self.done_win.lift()
-                return
-            except tk.TclError:
-                self.done_win = None
-        from tkinter import ttk
-        w = self.done_win = tk.Toplevel(self.root)
-        w.title("Clear finished sessions")
-        w.attributes("-topmost", True)
-        w.resizable(False, False)
-        var = tk.DoubleVar(value=DONE_TIMEOUT["v"])
-        val = tk.Label(w, width=10, font=(UI_FONT, 12, "bold"))
-
-        def apply(_v=None):
-            DONE_TIMEOUT["v"] = clamp_done(var.get())  # whole minutes
-            val.config(text="never" if DONE_TIMEOUT["v"] <= 0 else f"{DONE_TIMEOUT['v']} min")
-
-        def commit(_e=None):
-            apply()
-            self.set_done_timeout(DONE_TIMEOUT["v"])
-
-        def reset():
-            var.set(3)
-            commit()
-
-        def close():
-            commit()
-            self.done_win = None
-            w.destroy()
-
-        tk.Label(w, text="Clear a finished session's pet after:", font=(UI_FONT, 10, "bold")
-                 ).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
-        scale = ttk.Scale(w, from_=0, to=MAX_WAIT // 60, orient="horizontal", length=260, variable=var, command=apply)
-        scale.grid(row=1, column=0, padx=(14, 6), pady=8)
-        scale.bind("<ButtonRelease-1>", commit)
-        val.grid(row=1, column=1, padx=(0, 14))
-        tk.Label(w, justify="left", wraplength=360, fg="#6b7280", font=(UI_FONT, 8),
-                 text="Counted from when the session finished. 0 keeps finished pets until you dismiss them "
-                      "(right-click > Dismiss / Clear finished). A new message brings a cleared session back."
-                 ).grid(row=2, column=0, columnspan=2, sticky="w", padx=14)
-        row = tk.Frame(w)
-        row.grid(row=3, column=0, columnspan=2, sticky="e", padx=14, pady=(8, 12))
-        tk.Button(row, text="Default (3 min)", command=reset).pack(side="left", padx=(0, 6))
-        tk.Button(row, text="Done", width=8, command=close, default="active").pack(side="left")
-        w.protocol("WM_DELETE_WINDOW", close)
-        w.bind("<Escape>", lambda e: close())
-        apply()
-        theme_window(w)
-        self._place_above_pet(w)
+        return appearance_controls.open_done_slider(self, sys.modules[__name__])
 
     def reset_scale(self):
-        self.set_size(1.0)
+        return appearance_controls.reset_scale(self, sys.modules[__name__])
 
     def focus_key(self, key):
         pet = self.pets.get(key)
@@ -3791,58 +1939,7 @@ class PetApp:
             log_error(f"mark as finished: {e!r}")
 
     def open_health_slider(self):
-        """Slider for how often a working session's process is checked: 0 (off) to 5 minutes."""
-        if getattr(self, "health_win", None) is not None:
-            try:
-                self.health_win.lift()
-                return
-            except tk.TclError:
-                self.health_win = None
-        from tkinter import ttk
-        w = self.health_win = tk.Toplevel(self.root)
-        w.title("Health check")
-        w.attributes("-topmost", True)
-        w.resizable(False, False)
-        var = tk.DoubleVar(value=HEALTH["v"])
-        val = tk.Label(w, width=10, font=(UI_FONT, 12, "bold"))
-
-        def apply(_v=None):
-            HEALTH["v"] = clamp_health(round(var.get() / 5) * 5)  # steps of 5 s
-            val.config(text="off" if HEALTH["v"] <= 0 else fmt_wait(HEALTH["v"]))
-
-        def commit(_e=None):
-            apply()
-            self.set_health_interval(HEALTH["v"])
-
-        def reset():
-            var.set(15)
-            commit()
-
-        def close():
-            commit()
-            self.health_win = None
-            w.destroy()
-
-        tk.Label(w, text="Check that working sessions are still running every:", font=(UI_FONT, 10, "bold")
-                 ).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
-        scale = ttk.Scale(w, from_=0, to=MAX_HEALTH, orient="horizontal", length=260, variable=var, command=apply)
-        scale.grid(row=1, column=0, padx=(14, 6), pady=8)
-        scale.bind("<ButtonRelease-1>", commit)
-        val.grid(row=1, column=1, padx=(0, 14))
-        tk.Label(w, justify="left", wraplength=360, fg="#6b7280", font=(UI_FONT, 8),
-                 text="A working or waiting session whose Claude Code / Codex process has ended (the app was closed, or "
-                      "the conversation moved to a new session) is shown as finished. 0 turns the check off. Sessions in "
-                      "WSL can't be checked; use right-click > Mark as finished for those."
-                 ).grid(row=2, column=0, columnspan=2, sticky="w", padx=14)
-        row = tk.Frame(w)
-        row.grid(row=3, column=0, columnspan=2, sticky="e", padx=14, pady=(8, 12))
-        tk.Button(row, text="Default (15 s)", command=reset).pack(side="left", padx=(0, 6))
-        tk.Button(row, text="Done", width=8, command=close, default="active").pack(side="left")
-        w.protocol("WM_DELETE_WINDOW", close)
-        w.bind("<Escape>", lambda e: close())
-        apply()
-        theme_window(w)
-        self._place_above_pet(w)
+        return appearance_controls.open_health_slider(self, sys.modules[__name__])
 
     def dismiss_menu_pet(self):
         if self.menu_pet and self.menu_pet.key != "_none":
@@ -4345,37 +2442,10 @@ class PetApp:
             self.root.after(1200, lambda: open_uri(uri))
 
     def show_tip(self, pet):
-        if getattr(self, "_menu_open", False):
-            return
-        self.hide_tip()
-        if not self.cfg.get("session_tooltips", True):
-            return
-        d = pet.data
-        lines = [d.get("title", ""), f"{d.get('where') or SOURCE_NAMES.get(d.get('source'), '')} · {LABELS.get(d.get('state'), d.get('state'))}".strip(" ·")]
-        if d.get("everyone"):  # compact mode: every session, the one in front first
-            lines += [""] + [f"{'> ' if m['key'] == d.get('focus') else '   '}{m.get('title', '')} · "
-                             f"{LABELS.get(m.get('state'), m.get('state'))}" for m in d["everyone"][:12]]
-        if d.get("message"):
-            lines.append(d["message"][:200])
-        if d.get("detail"):
-            lines.append(d["detail"])
-        if d.get("changed"):
-            lines.append("since " + ago(d["changed"]))
-        if d.get("pid"):
-            lines.append(f"PID {d['pid']}" + (" (WSL)" if d.get("env") == "wsl" else ""))
-        if d.get("auto_what") and time.time() - (d.get("auto_t") or 0) < 120:
-            lines.append(f"Auto-approved {ago(d['auto_t'])}: {d['auto_what'][:90]}")
-        if d.get("auto_approved"):
-            lines.append(f"Auto-approved {d['auto_approved']} permission prompt{'s' if d['auto_approved'] != 1 else ''}")
-        self._show_tooltip(pet, "\n".join(lines))
+        return tooltips.show_tip(self, sys.modules[__name__], pet)
 
     def show_usage_tip(self, pet, detail):
-        if getattr(self, "_menu_open", False):
-            return
-        self.hide_tip()
-        if not self.cfg.get("usage_tooltips", True):
-            return
-        self._show_tooltip(pet, usage.tooltip(detail), usage_detail=detail)
+        return tooltips.show_usage_tip(self, sys.modules[__name__], pet, detail)
 
     def set_card_scale(self, value):
         """Size of the permission / question cards (all open ones follow at once); saved as card_scale."""
@@ -4415,95 +2485,16 @@ class PetApp:
                 + (" Your blacklist still asks for it, though." if blocked else ""))
 
     def set_tooltip(self, kind, on):
-        if kind not in ("session", "usage"):
-            return
-        self.cfg[kind + "_tooltips"] = bool(on)
-        save_setting(kind + "_tooltips", bool(on))
-        var = getattr(self, "tooltip_vars", {}).get(kind)
-        if var is not None:
-            var.set(bool(on))
-        self.hide_tip()
-        for pet in self.pets.values():
-            pet._usage_hover = None
+        return tooltips.set_tooltip(self, sys.modules[__name__], kind, on)
 
     def _show_tooltip(self, pet, text, usage_detail=None):
-        if getattr(self, "_menu_open", False):
-            return
-        if IS_MAC:
-            import mac_statusbar as mac
-            with mac.passive_window_mapping():
-                self._build_tooltip(pet, text, usage_detail)
-        else:
-            self._build_tooltip(pet, text, usage_detail)
+        return tooltips._show_tooltip(self, sys.modules[__name__], pet, text, usage_detail)
 
     def _build_tooltip(self, pet, text, usage_detail):
-        tip = self.tip = MacOverlayWindow(self.root) if IS_MAC else tk.Toplevel(self.root)
-        # Configure the native panel and position it before it becomes visible.
-        tip.withdraw()
-        # Cocoa can retain a closed panel through the next event cycle. A unique
-        # title keeps native configuration from finding an earlier hover panel.
-        tip.title(f"AIPet tooltip {time.monotonic_ns()}")
-        if IS_MAC:
-            tip.attributes("-alpha", 0.0)
-        tip.overrideredirect(True)
-        tip.attributes("-topmost", True)
-        tip.configure(bg=TRANSPARENT)
-        try:
-            tip.attributes("-transparent", True) if IS_MAC else tip.attributes("-transparentcolor", TRANSPARENT)
-        except tk.TclError:
-            pass
-        c = tk.Canvas(tip, bg=TRANSPARENT, highlightthickness=0, bd=0)
-        c.pack()
-        title, _, body = text.partition("\n")
-        title = title.strip() or "Session details"
-        data = usage_detail if usage_detail is not None else getattr(pet, "data", {})
-        agent = data.get("agent")
-        accent = "#5b8def" if agent == "codex" else "#d98960" if agent == "claude" or data.get("source") == "CC" else T["tag_fg"]
-        text_scale = self.tooltip_text_scale()
-        wrap_width = round(320 * text_scale)
-        head = c.create_text(12, 10, text=title, font=(MONO_FAMILY, round(9 * text_scale), "bold"),
-                             fill=accent, anchor="nw", width=wrap_width)
-        header_box = c.bbox(head)
-        w, h = header_box[2] + 12, header_box[3] + 10
-        if body.strip():
-            content = c.create_text(12, header_box[3] + 6, text=body, font=(MONO_FAMILY, round(8 * text_scale)),
-                                    fill=T["tag_fg"], anchor="nw", width=wrap_width)
-            box = c.bbox(content)
-            w, h = max(header_box[2], box[2]) + 12, box[3] + 10
-        border = c.create_polygon(6, 1, w - 6, 1, w - 6, 3, w - 3, 3, w - 3, 6, w - 1, 6,
-                                 w - 1, h - 6, w - 3, h - 6, w - 3, h - 3, w - 6, h - 3, w - 6, h - 1,
-                                 6, h - 1, 6, h - 3, 3, h - 3, 3, h - 6, 1, h - 6, 1, 6, 3, 6, 3, 3, 6, 3,
-                                 fill=T["tag_bg"], outline=T["tag_outline"], width=2)
-        c.tag_lower(border)
-        c.config(width=w, height=h)
-        tip.update_idletasks()
-        # Both session and usage details belong above the pet, clear of its body
-        # and badges. Centre on the pet itself, excluding the usage badge gutter.
-        x = pet.canvas.winfo_rootx() + px(BADGE_GUTTER + getattr(pet, "gutter", 0) + PET_W / 2) - tip.winfo_reqwidth() // 2
-        y = pet.canvas.winfo_rooty() - tip.winfo_reqheight() - 6
-        tip.geometry(geo(*fit_on_screen(x, y, tip.winfo_reqwidth(), tip.winfo_reqheight(),
-                                        (pet.canvas.winfo_rootx() + 10, pet.canvas.winfo_rooty() + 10), tip)))
-        tip.deiconify()
-        if IS_MAC:
-            import mac_statusbar as mac
-            # Tk creates/resets the native window on mapping. Keep it invisible
-            # until its Space and mouse behavior have been applied.
-            tip.update_idletasks()
-            mac.set_all_spaces(tip.title(), self.cfg.get("all_spaces", True))
-            window = mac.window_titled(tip.title())
-            if window:
-                parent = mac.window_titled(self.root.title())
-                if parent:
-                    level = mac.send(parent, "level", restype=mac.c_long)
-                    mac.send(window, "setLevel:", level + 1, restype=None, argtypes=[mac.c_long])
-                # Hover text must never intercept clicks or become the key window.
-                mac.send(window, "setIgnoresMouseEvents:", True, restype=None, argtypes=[mac.c_bool])
-            tip.attributes("-alpha", 1.0)
+        return tooltips._build_tooltip(self, sys.modules[__name__], pet, text, usage_detail)
 
     def hide_tip(self):
-        if self.tip:
-            self.tip.destroy()
-            self.tip = None
+        return tooltips.hide_tip(self, sys.modules[__name__])
 
 
 # --------------------------------------------------------------------------- entry points
