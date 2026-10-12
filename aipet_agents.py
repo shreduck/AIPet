@@ -8,14 +8,17 @@ Codex writes each spawned agent its own rollout file; its first line (session_me
 (parent_thread_id), a nickname and the task path. Model and effort come from turn_context lines, the context from
 token_count events (with the model's context window).
 
-Everything here is read-only and works without Tk, so it can be tested on its own. Files are read from their tail and
-only again when they changed.
+Everything here is read-only and works without Tk. The background tracker reads each transcript once, then consumes
+every appended complete record, keeping history current even while the view is closed. A view opened before the
+tracker catches up can initially read the transcript tail.
 """
 import datetime
 import glob
+import itertools
 import json
 import os
 import re
+import threading
 import time
 
 import aipet as core
@@ -26,8 +29,9 @@ MAX_LOG = 240
 RECENT = 4.0  # a subagent file written this recently counts as working
 SKIP_TEXT = ("<", "[Request interrupted", "[Image", "Caveat:")
 
-_TAILS = {}  # path -> ((mtime_ns, size), parsed)
+_TAILS = {}  # normalized path -> ((mtime_ns, size), parsed, complete-line offset, file identity)
 _CODEX_META = {}  # rollout path -> its session_meta payload (never changes)
+_CACHE_LOCK = threading.RLock()
 
 
 # --------------------------------------------------------------------------- small helpers
@@ -123,36 +127,106 @@ def _read_tail(path, size):
     return out
 
 
-def _cached(path, size, parse):
+def _read_updates(path, size, offset=None):
+    """Read complete JSONL records since the last read, keeping partial lines for the next poll."""
+    cursor = {"offset": offset or 0, "cut": False}
+
+    def records():
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            end = f.tell()
+            start = (max(0, end - size) if size is not None else 0) if offset is None else offset
+            f.seek(start)
+            cursor["cut"] = offset is None and start > 0
+            if offset is None and start:
+                f.readline()  # skip the first cut line of an initial tail read
+            cursor["offset"] = f.tell()
+            while True:
+                raw = f.readline()
+                if not raw or not raw.endswith(b"\n"):
+                    break
+                cursor["offset"] = f.tell()
+                try:
+                    entry = json.loads(raw.decode("utf-8", "replace"))
+                except ValueError:
+                    continue
+                if isinstance(entry, dict):
+                    yield entry
+
+    return records(), cursor
+
+
+def _merge_info(previous, current):
+    before = (previous["lines"] if previous else []) + current["lines"]
+    results = _primary_results({"lines": before, "final_lines": current["final_lines"],
+                                "state": "done" if current["done"] is True else "working"})
+    current["final_lines"] = list(dict.fromkeys((previous["final_lines"] if previous else []) +
+                                                sorted(results, key=lambda row: row[0])))[-MAX_LOG:]
+    current["queries"] = list(dict.fromkeys((previous["queries"] if previous else []) + current["queries"]))[-MAX_LOG:]
+    if not previous:
+        current["lines"] = current["lines"][-MAX_LOG:]
+        return current
+    for key in ("model", "effort", "ctx", "ctx_max", "last_prompt_t", "closed_t"):
+        current[key] = current.get(key) or previous.get(key) or current[key]
+    current["first_t"] = previous["first_t"] or current["first_t"]
+    if current["done"] is None:
+        current["done"] = previous["done"]
+    current["lines"] = sorted(dict.fromkeys(previous["lines"] + current["lines"]), key=lambda row: row[0])[-MAX_LOG:]
+    return current
+
+
+def _cached(path, size, parse, bootstrap=False):
     try:
         st = os.stat(path)
     except OSError:
         return None
     stamp = (st.st_mtime_ns, st.st_size)
-    hit = _TAILS.get(path)
+    key = str(path)
+    if os.name == "nt":
+        if key.startswith("\\\\?\\UNC\\"):
+            key = "\\\\" + key[8:]
+        elif key.startswith("\\\\?\\"):
+            key = key[4:]
+        key = os.path.normcase(os.path.abspath(key))
+    identity = (st.st_dev, st.st_ino)
+    hit = _TAILS.pop(key, None)
+    if hit and (hit[3] != identity or st.st_size < hit[0][1]):
+        hit = None  # the transcript was replaced or truncated; do not mix sessions
+    if bootstrap and hit and hit[1].get("cut"):
+        hit = None  # fill any history missed by an earlier foreground tail read
     if hit and hit[0] == stamp:
+        _TAILS[key] = hit
         return hit[1]
     try:
-        parsed = parse(_read_tail(path, size))
+        entries, cursor = _read_updates(path, None if bootstrap else size, hit[2] if hit else None)
+        parsed = hit[1] if hit else None
+        while True:
+            batch = list(itertools.islice(entries, 128))
+            if not batch:
+                break
+            update = parse(batch)
+            update["tool_calls"] = _merge_tool_calls(parsed["tool_calls"] if parsed else [], update["tool_calls"])
+            parsed = _merge_info(parsed, update)
+        parsed = parsed or _empty()
     except OSError:
+        if hit:
+            _TAILS[key] = hit
         return None
-    parsed["tool_calls"] = _merge_tool_calls((hit[1].get("tool_calls") or []) if hit else [],
-                                              parsed.get("tool_calls") or [])
     closed = parsed.get("closed_t") or (parsed.get("last_prompt_t") if parse is parse_claude else 0) or 0
     for call in parsed["tool_calls"]:
         if not call.get("finished_t") and call.get("started_t", closed) < closed:
             call["finished_t"] = closed  # a later turn cannot reactivate a tool with no recorded result
     parsed["mtime"] = st.st_mtime
-    parsed["cut"] = st.st_size > size  # only the file's tail was read
-    if len(_TAILS) > 128:
-        _TAILS.clear()
-    _TAILS[path] = (stamp, parsed)
+    parsed["cut"] = cursor["cut"] or bool(hit and hit[1].get("cut"))
+    if len(_TAILS) >= 128:
+        _TAILS.pop(next(iter(_TAILS)))  # evict one old file rather than discard every active history
+    _TAILS[key] = (stamp, parsed, cursor["offset"], identity)
     return parsed
 
 
 def _empty():
     return {"model": "", "effort": "", "ctx": 0, "ctx_max": 0, "lines": [], "last_prompt_t": 0.0, "done": None,
-            "first_t": 0.0, "tool_calls": [], "closed_t": 0.0}
+            "first_t": 0.0, "tool_calls": [], "closed_t": 0.0, "final_lines": [], "queries": []}
 
 
 def _tool_text(value):
@@ -246,6 +320,7 @@ def parse_claude(entries):
                     text = str(c.get("text", "")).strip()
                     if text and not text.startswith(SKIP_TEXT) and not e.get("isMeta"):
                         lines.append((t, "you", short(text, 160)))
+                        info["queries"].append((t, short(text, 160)))
                         info["last_prompt_t"] = t
     info["tool_calls"] = _merge_tool_calls([], info["tool_calls"])
     return info
@@ -301,8 +376,11 @@ def parse_codex(entries):
                     continue
                 if role == "assistant":
                     lines.append((t, "say", full(text)))
+                    if p.get("phase") == "final":
+                        info["final_lines"].append((t, full(text)))
                 elif role == "user":
                     lines.append((t, "you", short(text, 160)))
+                    info["queries"].append((t, short(text, 160)))
                     info["last_prompt_t"] = t
         elif kind == "response_item" and sub == "reasoning":
             for s in p.get("summary") or []:
@@ -402,7 +480,12 @@ def codex_subagent_files(rollout, thread_id):
 
 
 # --------------------------------------------------------------------------- the network
-def read_network(item, now=None, include_tools=False):
+def read_network(item, now=None, include_tools=False, bootstrap=False):
+    with _CACHE_LOCK:
+        return _read_network(item, now=now, include_tools=include_tools, bootstrap=bootstrap)
+
+
+def _read_network(item, now=None, include_tools=False, bootstrap=False):
     """{"agents": [agent...], "log": [(t, index, kind, text)]} for one session item of the pet.
     agent: {"id", "name", "main", "model", "effort", "ctx", "ctx_max", "state", "thought", "lines", "kind"}
     state: working / needs_input / waiting (main agent waiting on subagents) / done / idle."""
@@ -416,7 +499,7 @@ def read_network(item, now=None, include_tools=False):
             matches = glob.glob(os.path.join(os.path.dirname(transcript), f"rollout-*{suffix}"))
             transcript = max(matches, key=os.path.getmtime) if matches else ""
     parse = parse_codex if codex else parse_claude
-    main_info = (_cached(transcript, MAIN_TAIL, parse) if transcript else None) or _empty()
+    main_info = (_cached(transcript, MAIN_TAIL, parse, bootstrap=bootstrap) if transcript else None) or _empty()
     session_state = item.get("state") or "idle"
     running = dict(item.get("agent_ids") or {})
     wait_agent = str(item.get("wait_agent") or "")
@@ -429,7 +512,7 @@ def read_network(item, now=None, include_tools=False):
     # the task started before the part of a transcript that was read: the stats can miss its older entries
     missing = bool(main_info.get("cut") and not main_info["last_prompt_t"])
     for aid, path, meta in files:
-        info = _cached(path, SUB_TAIL, parse)
+        info = _cached(path, SUB_TAIL, parse, bootstrap=bootstrap)
         if not info:
             continue
         if codex:
@@ -452,6 +535,8 @@ def read_network(item, now=None, include_tools=False):
         subs.append({"id": aid, "name": name, "main": False, "kind": kind if kind != name else "", "path": path,
                      "parent": parent,
                      "tool_calls": info["tool_calls"],
+                     "final_lines": info["final_lines"],
+                     "queries": info["queries"],
                      "_missing": bool(info.get("cut") and (info["first_t"] or 0) > turn_start + 1),
                      "state": state, "mtime": info["mtime"], "first_t": info["first_t"] or info["mtime"], **{
                          k: info[k] for k in ("model", "effort", "ctx", "ctx_max", "lines")}})
@@ -505,6 +590,8 @@ def read_network(item, now=None, include_tools=False):
         main_state = "waiting"
     main = {"id": "", "name": "main", "main": True, "kind": "Codex" if codex else "Claude", "path": transcript,
             "state": main_state, "tool_calls": main_info["tool_calls"],
+            "final_lines": main_info["final_lines"],
+            "queries": main_info["queries"],
             **{k: main_info[k] for k in ("model", "effort", "ctx", "ctx_max", "lines")}}
     agents = [main] + subs
     if include_tools:
@@ -541,20 +628,124 @@ def tool_nodes(agents, now, retention):
             rows = []
             for call in calls:
                 if "input" in call:
-                    rows.append((call.get("started_t", 0), "input", f"call {call['id']}\n{call['input']}"))
+                    rows.append((call.get("started_t", 0), "input",
+                                 f"{short(call['input'], 120)}\ncall {call['id']}\n{call['input']}"))
                 if "output" in call:
                     rows.append((call.get("finished_t", 0), "error" if call.get("error") else "output",
-                                 f"call {call['id']}\n{call['output']}"))
+                                 f"{short(call['output'], 120)}\ncall {call['id']}\n{call['output']}"))
             latest_call = max(calls, key=lambda c: c.get("finished_t") or c.get("started_t") or 0)
             state = "working" if busy else ("error" if latest_call.get("error") else "done")
             nodes.append({"id": "tool:" + json.dumps([agent["id"], name]), "name": name,
                           "tab_name": f"{name} · {agent['name']}", "main": False, "tool": True,
+                          "mcp": is_mcp_tool(name),
                           "parent": agent["id"], "depth": agent.get("depth", 0) + 1,
                           "kind": f"{len(calls)} calls · {agent['name']}", "path": agent["path"],
                           "state": state, "mtime": latest, "first_t": min(c.get("started_t") or latest for c in calls),
                           "model": "", "effort": "", "ctx": 0, "ctx_max": 0,
                           "lines": sorted(rows, key=lambda r: r[0])[-MAX_LOG:]})
     return nodes
+
+
+def is_mcp_tool(name):
+    return bool(re.search(r"(?:^|[._])mcp(?:[._]|$)", str(name), re.IGNORECASE))
+
+
+def default_log_filters():
+    return {"show_tools": True, "primary": False, "tools": None, "mcp": None, "only_tool": None}
+
+
+def available_log_tools(net, selected=-1, mcp=False):
+    agents = net.get("agents", [])
+    owner = agents[selected]["id"] if 0 <= selected < len(agents) else None
+    return sorted({a["name"] for a in agents if a.get("tool") and
+                   (owner is None or a["parent"] == owner) and is_mcp_tool(a["name"]) == mcp}, key=str.lower)
+
+
+def _primary_results(agent):
+    results = set(agent.get("final_lines") or [])
+    candidate = None
+    for t, kind, text in agent.get("lines", []):
+        if kind == "you":
+            if candidate:
+                results.add(candidate)
+            candidate = None
+        elif kind == "say":
+            candidate = (t, text)
+        elif kind in ("tool", "spawn"):
+            candidate = None  # a reply followed by more tool work was commentary
+    if candidate and agent.get("state") in ("done", "idle", "error"):
+        results.add(candidate)
+    return results
+
+
+def filtered_log_rows(net, selected, filters):
+    """Filter before clipping history, so tool traffic cannot bury queries and final results."""
+    agents = net.get("agents", [])
+    owner = agents[selected]["id"] if 0 <= selected < len(agents) else None
+    tools_by_owner = {}
+    for a in agents:
+        if a.get("tool"):
+            tools_by_owner.setdefault(a["parent"], set()).add(a["name"])
+    rows = []
+    for i, a in enumerate(agents):
+        if owner is not None and (a["parent"] if a.get("tool") else a["id"]) != owner:
+            continue
+        if a.get("tool"):
+            if not filters["show_tools"] or filters["primary"]:
+                continue
+            name = a["name"]
+            if filters.get("only_tool") and name != filters["only_tool"]:
+                continue
+            allowed = filters["mcp" if is_mcp_tool(name) else "tools"]
+            if allowed is not None and name not in allowed:
+                continue
+            rows.extend((t, i, kind, text) for t, kind, text in a["lines"])
+            continue
+        if filters.get("only_tool") and not filters["primary"]:
+            continue
+        results = _primary_results(a) if filters["primary"] else set()
+        if filters["primary"]:
+            queries = a.get("queries") or [(t, text) for t, kind, text in a.get("lines", []) if kind == "you"]
+            rows.extend((t, i, "you", text) for t, text in queries)
+            rows.extend((t, i, "say", text) for t, text in results)
+            continue
+        for t, kind, text in a.get("lines", []):
+            if kind in ("tool", "spawn", "error"):
+                if not filters["show_tools"] or filters["tools"] is not None or filters["mcp"] is not None:
+                    continue
+                recorded = tools_by_owner.get(a["id"], set())
+                if (kind == "tool" and text.partition("(")[0] in recorded) or (kind != "tool" and recorded):
+                    continue  # the structured input/output rows already represent this call
+            rows.append((t, i, kind, text))
+    return sorted(rows, key=lambda row: row[0])[-MAX_LOG:]
+
+
+class NetworkTracker(threading.Thread):
+    """Keep agent and tool history warm for every live Claude/Codex session without any Tk window."""
+    def __init__(self, get_items, interval=0.7):
+        super().__init__(name="AIPet agent tracker", daemon=True)
+        self.get_items, self.interval = get_items, interval
+        self._stop_event = threading.Event()
+
+    def poll(self):
+        for item in list(self.get_items()):
+            if item.get("source") != "CC" or not item.get("session_id"):
+                continue
+            try:
+                read_network(item, include_tools=True, bootstrap=True)
+            except Exception as exc:
+                core.log_error(f"agent tracker: {exc!r}")
+
+    def run(self):
+        while not self._stop_event.is_set():
+            try:
+                self.poll()
+            except Exception as exc:
+                core.log_error(f"agent tracker: {exc!r}")
+            self._stop_event.wait(self.interval)
+
+    def stop(self):
+        self._stop_event.set()
 
 
 def network_stats(net):

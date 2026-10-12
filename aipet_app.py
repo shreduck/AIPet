@@ -23,6 +23,7 @@ from tkinter import messagebox
 
 import aipet as core
 import aipet_agents_window
+from aipet_agents import NetworkTracker
 import aipet_guide
 import aipet_settings
 import aipet_update as upd
@@ -330,6 +331,8 @@ class TrayApp:
         self._icon_key = None
 
         self.pet.on_alert = self.on_alert
+        self.agent_tracker = NetworkTracker(lambda: list(self.pet._agent_items))
+        self.agent_tracker.start()
         self.cowork_win = None
         # One menu definition serves the pet, macOS menu bar and Windows tray.
         self.pet.context_menu_spec = self._context_menu_spec
@@ -1967,6 +1970,8 @@ class TrayApp:
         open_path(core.HOME_DIR)
 
     def quit(self):
+        if getattr(self, "agent_tracker", None):
+            self.agent_tracker.stop()
         if getattr(self, "status_item", None):
             self.status_item.remove()
         if self.icon:

@@ -319,8 +319,8 @@ A live map of one session: the main agent and every subagent it started, Claude 
   column further right, linked to the subagent that started it (Claude Code records it in the subagent's
   `.meta.json`, Codex in the rollout's `parent_thread_id`).
 - **Tool nodes** sit under the agent that called them, with a gear icon. Each unique tool, including MCP tools,
-  gets one node and log tab per calling agent. Repeated calls share that tab, with their inputs and outputs
-  matched by call ID. The graph settings include a **tool calls** toggle. Tool nodes do not count as subagents
+  gets one node per calling agent. Clicking it selects the calling agent and filters its log to that tool's inputs
+  and outputs, matched by call ID. The graph settings include a **tool calls** toggle. Tool nodes do not count as subagents
   or add model context to the stats.
 - Finished subagents remain visible across new messages until unused for **80% of Clear finished after**
   (3 minutes means 2 minutes 24 seconds). Reuse resets the timer; active agents and their parent branches stay
@@ -332,7 +332,10 @@ A live map of one session: the main agent and every subagent it started, Claude 
   copy; what an agent said is there in full, its final reply being its result; long entries show their first line
   with `›`: click to unfold, `‹` to fold, right-click for expand / collapse, copy text and open in a window, a plain
   text window titled after the reply, with a copy button): *[all]* merges every agent's activity into one log (prompts, what each one said, tool calls,
-  results), each line in its agent's colour; the other tabs show one agent each.
+  results), each line in its agent's colour; the other tabs select one agent, including its tool calls.
+- **Log filters** have their own bar below the agent tabs: **show tools**, **primary** (user queries and final results),
+  and separate **tools** and **MCP** dropdowns with a checkbox per unique tool. Agent and session title clicks keep
+  the filters; **clear filters** at the far right restores the full log. Tool nodes do not add tabs to the agent bar.
 - **Prompts**: when an agent needs you, a small warning shows (*Plan needs your input*). Click it (or press Space) and
   it opens over the log with the prompt or question and its answers (side by side when they fit, one per line when
   they don't); Esc folds it back. A question's answers are a pick-one list with *Your own answer:* as the last one:
@@ -364,7 +367,7 @@ A live map of one session: the main agent and every subagent it started, Claude 
   how many times), *context* (the sum; its drop-down lists every agent call in order with its model and context, not
   grouped by name) and *tools* (every tool and how often, and the skills used). Click a line for its read-only
   drop-down; Esc or a click elsewhere folds it. A small `ⓘ` (hover it) shows when the task began before the part of a
-  transcript AIPet reads (its last 256 KB, 128 KB for a subagent): older entries may be missing then.
+  transcript initially available to the view: older entries may be missing while the background tracker catches up.
 - **Zoom and pan** the graph: `[-] 100% [+] [reset] [center] [fit all]` at its top left, Ctrl + mouse wheel (at the pointer),
   + / - and 0; drag to pan, the wheel scrolls (Shift: sideways). The stats node and zoom controls stay put. Panning,
   scrolling and zooming stop where at least one node is still in sight (inside a 10% margin), and a view with no
@@ -385,6 +388,10 @@ A live map of one session: the main agent and every subagent it started, Claude 
 - Data comes from the session's transcript files: Claude Code keeps each subagent's in
   `<transcript>/subagents/agent-<id>.jsonl`, Codex writes each spawned agent its own rollout file. Read-only; nothing is
   sent anywhere.
+- **Background tracking** stays active while AIPet runs, even with the agent view closed. It reads each transcript
+  once, then only appended records, including sessions beyond the visible pet limit. Opening the view midway uses
+  this cached history. Existing expiry rules still apply; history is bounded to 240 log entries per agent and 120
+  completed calls per unique tool. Queries and final results have separate history so tool traffic does not bury them.
 
 ## Auto approve
 **Permissions → Auto approve** (pet right-click, the tray icon's menu, or the macOS menu-bar icon) lists every hook config: *This PC /

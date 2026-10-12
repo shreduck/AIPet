@@ -483,6 +483,7 @@ class AgentNetworkWindow:
         self._content, self._center_next, self._panned = None, True, False
         self._bands, self._leaving, self._titles, self._animating = {}, {}, [], False
         self._entries, self._expanded = [], set()  # log entries shown / unfolded
+        self._log_filters = agents.default_log_filters()
         self.u = self.opts["scale"] / 100
         self.s = 1.5 * self.u
         # window attributes as set (only touched when they change). Starts at Tk's own defaults: setting -alpha or
@@ -1002,6 +1003,30 @@ class AgentNetworkWindow:
         self.logbox = tk.Frame(self.body)
         self.tabs = tk.Frame(self.logbox)
         self.tabs.pack(fill="x", padx=self.px(6))
+        self.filterbar = tk.Frame(self.logbox)
+        self.filterbar.pack(fill="x", padx=self.px(6), pady=(0, self.px(3)))
+        self.clear_filters_btn = tk.Label(self.filterbar, text="[clear filters]", font=self.f_small,
+                                          cursor="hand2", padx=self.px(3))
+        self.clear_filters_btn.pack(side="right")
+        self.clear_filters_btn.bind("<Button-1>", lambda e: self.clear_log_filters())
+        self.show_tools_var = tk.BooleanVar(master=self.win, value=True)
+        self.primary_var = tk.BooleanVar(master=self.win, value=False)
+        self.show_tools_btn = tk.Checkbutton(self.filterbar, text="show tools", font=self.f_small,
+                                             variable=self.show_tools_var, bd=0, highlightthickness=0,
+                                             command=lambda: self.set_log_filter("show_tools", self.show_tools_var.get()))
+        self.show_tools_btn.pack(side="left")
+        self.primary_btn = tk.Checkbutton(self.filterbar, text="primary", font=self.f_small,
+                                          variable=self.primary_var, bd=0, highlightthickness=0,
+                                          command=lambda: self.set_log_filter("primary", self.primary_var.get()))
+        self.primary_btn.pack(side="left")
+        self.tool_filter_btn = tk.Label(self.filterbar, text="[tools ▾]", font=self.f_small,
+                                        cursor="hand2", padx=self.px(3))
+        self.tool_filter_btn.pack(side="left")
+        self.tool_filter_btn.bind("<Button-1>", lambda e: self.open_tool_filters(False))
+        self.mcp_filter_btn = tk.Label(self.filterbar, text="[MCP ▾]", font=self.f_small,
+                                       cursor="hand2", padx=self.px(3))
+        self.mcp_filter_btn.pack(side="left")
+        self.mcp_filter_btn.bind("<Button-1>", lambda e: self.open_tool_filters(True))
         self.log = tk.Text(self.logbox, height=6, width=40, wrap="word", bd=0, highlightthickness=0,
                            font=self.f_main, padx=self.px(8), pady=self.px(4), cursor="xterm", takefocus=0,
                            exportselection=True)
@@ -1282,7 +1307,7 @@ class AgentNetworkWindow:
             return
         self.theme = name
         P = self.P
-        for wdg in (self.win, self.body, self.tabs):
+        for wdg in (self.win, self.body, self.tabs, self.filterbar):
             wdg.configure(bg=P["bg"])
         for wdg in (self.head, self.title, self.prev_btn, self.next_btn, self.count, self.foot, self.footbar,
                     self.grip, self.close_btn, self.prompt_mark):
@@ -1300,6 +1325,7 @@ class AgentNetworkWindow:
         self.zoombar.configure(bg=P["bar"], highlightbackground=P["line"])
         for lab in self.zoom_btns:
             lab.configure(bg=P["bar"], fg=P["mu"] if lab is self.zoom_label else P["tx"])
+        self._update_log_filters()
         self._statc_sig = None
         self.overlay.configure(bg=P["node"], highlightbackground=P["red"], highlightthickness=1, bd=0)
         try:
@@ -1392,24 +1418,32 @@ class AgentNetworkWindow:
             self.sel = -1
         self._draw_graph()
         self._draw_tabs()
+        self._update_log_filters()
         self._draw_log()
         self._draw_prompt()
         self._maybe_auto_fit()
 
     # ---- selection
     def select(self, i):
+        if 0 <= i < len(self.net["agents"]) and self.net["agents"][i].get("tool"):
+            tool = self.net["agents"][i]
+            self._log_filters.update(show_tools=True, primary=False, only_tool=tool["name"],
+                                     tools=set() if agents.is_mcp_tool(tool["name"]) else {tool["name"]},
+                                     mcp={tool["name"]} if agents.is_mcp_tool(tool["name"]) else set())
+            i = next((j for j, a in enumerate(self.net["agents"]) if a["id"] == tool["parent"]), -1)
         self.sel = i
         self._graph_sig = self._log_sig = None
         self._draw_graph()
         self._draw_tabs()
+        self._update_log_filters()
         self._draw_log()
         return "break"
 
     def step_agent(self, d):
-        n = len(self.net["agents"])
-        if n:
-            i = self.sel + 1 + d  # -1 (all) .. n-1 -> 0 .. n
-            self.select((i % (n + 1)) - 1)
+        choices = [-1] + [i for i, a in enumerate(self.net["agents"]) if not a.get("tool")]
+        if len(choices) > 1:
+            at = choices.index(self.sel) if self.sel in choices else 0
+            self.select(choices[(at + d) % len(choices)])
         return "break"
 
     def color(self, i):
@@ -1723,7 +1757,9 @@ class AgentNetworkWindow:
             border = P[status_col] if a["state"] != "idle" else P["line"]
             if a["main"] and a["state"] == "waiting":
                 border = P["amb"]
-            picked = current and i == self.sel
+            focused = a.get("tool") and a["name"] == self._log_filters.get("only_tool") and \
+                0 <= self.sel < len(ags) and a["parent"] == ags[self.sel]["id"]
+            picked = current and (i == self.sel or focused)
             fill = P["sel"] if picked else P["node"]
             tag = f"node{b}_{i}" if b >= 0 else "gone"
             if b >= 0:
@@ -2008,9 +2044,8 @@ class AgentNetworkWindow:
             sc.create_text(w - self.px(6), self.px(4), text="ⓘ", anchor="ne", fill=P["mu"], font=self.f_bold,
                            tags="warn")
             sc.tag_bind("warn", "<Enter>", lambda e: self._show_tip(
-                "For your info: this task started a long way back. AIPet reads only the last part of each transcript (about 256 KB "
-                "for the main agent, 128 KB for a subagent), so older subagents, tool calls and skills may be "
-                "missing from these lists.", sc, w))
+                "Background tracking is catching up with this transcript. Older subagents and tool calls may "
+                "be missing temporarily. Logs keep a bounded history after tracking catches up.", sc, w))
             sc.tag_bind("warn", "<Leave>", lambda e: self._hide_tip())
         n_calls = sum(n for _, n in st["subagents"])
         tool_calls = sum(n for _, n in st["tools"])
@@ -2146,11 +2181,81 @@ class AgentNetworkWindow:
         self._anim = self.win.after(FRAME_MS, self._animate)
 
     # ---- tabs and log
+    def set_log_filter(self, key, value):
+        self._log_filters[key] = value
+        self._log_sig = None
+        self._update_log_filters()
+        self._draw_log()
+
+    def clear_log_filters(self):
+        self._log_filters = agents.default_log_filters()
+        self._log_sig = self._graph_sig = None
+        self._update_log_filters()
+        self._draw_graph()
+        self._draw_log()
+        return "break"
+
+    def _update_log_filters(self):
+        P, filters = self.P, self._log_filters
+        self.show_tools_var.set(filters["show_tools"])
+        self.primary_var.set(filters["primary"])
+        for button in (self.show_tools_btn, self.primary_btn):
+            button.configure(bg=P["bar"], fg=P["tx"], selectcolor=P["bar"],
+                             activebackground=P["bar"], activeforeground=P["hi"])
+        self.filterbar.configure(bg=P["bar"])
+        for button, group, label in ((self.tool_filter_btn, "tools", "tools"), (self.mcp_filter_btn, "mcp", "MCP")):
+            chosen = filters[group]
+            count = "" if chosen is None else f" {len(chosen)}"
+            button.configure(text=f"[{label}{count} ▾]", bg=P["bar"], fg=P["blue"] if chosen is not None else P["tx"])
+        self.clear_filters_btn.configure(bg=P["bar"], fg=P["blue"])
+
+    def _choose_tools(self, group, selected):
+        self._log_filters[group] = selected
+        self._log_filters["only_tool"] = None
+        self._graph_sig = self._log_sig = None
+        self._update_log_filters()
+        self._draw_graph()
+        self._draw_log()
+
+    def _toggle_log_tool(self, name, mcp):
+        group = "mcp" if mcp else "tools"
+        selected = self._log_filters[group]
+        selected = set(agents.available_log_tools(self.net, self.sel, mcp)) if selected is None else set(selected)
+        if name in selected:
+            selected.remove(name)
+        else:
+            selected.add(name)
+        self._choose_tools(group, selected)
+
+    def open_tool_filters(self, mcp):
+        group = "mcp" if mcp else "tools"
+        P = self.P
+        menu = tk.Menu(self.win, tearoff=0, bg=P["bar"], fg=P["tx"], activebackground=P["sel"],
+                       activeforeground=P["hi"], font=self.f_small)
+        menu.add_command(label="Show all", command=lambda: self._choose_tools(group, None))
+        menu.add_command(label="Hide all", command=lambda: self._choose_tools(group, set()))
+        menu.add_separator()
+        selected = self._log_filters[group]
+        menu._variables = []
+        names = agents.available_log_tools(self.net, self.sel, mcp)
+        for name in names:
+            var = tk.BooleanVar(master=self.win, value=selected is None or name in selected)
+            menu._variables.append(var)
+            menu.add_checkbutton(label=name, variable=var, command=lambda n=name: self._toggle_log_tool(n, mcp))
+        if not names:
+            menu.add_command(label="No MCP calls recorded" if mcp else "No tool calls recorded", state="disabled")
+        button = self.mcp_filter_btn if mcp else self.tool_filter_btn
+        try:
+            menu.tk_popup(button.winfo_rootx(), button.winfo_rooty() + button.winfo_height())
+        finally:
+            menu.grab_release()
+        return "break"
+
     def _draw_tabs(self):
         P = self.P
-        names = ["all"] + [a.get("tab_name", a["name"]) for a in self.net["agents"]]
+        choices = [(-1, "all")] + [(i, a["name"]) for i, a in enumerate(self.net["agents"]) if not a.get("tool")]
         width = max(self.px(200), self.tabs.winfo_width())
-        sig = (tuple(names), width, self.sel, self.theme, self.s)
+        sig = (tuple(choices), width, self.sel, self.theme, self.s)
         if self._tabs_sig == sig:
             return
         self._tabs_sig = sig
@@ -2170,8 +2275,7 @@ class AgentNetworkWindow:
         strip.create_window(0, 0, window=row, anchor="nw")
         row.bind("<Configure>", lambda e: strip.configure(scrollregion=strip.bbox("all")))
         selected = None
-        for k, name in enumerate(names):
-            i = k - 1
+        for i, name in choices:
             on = i == self.sel
             col = P["hi"] if i < 0 else self.color(i)
             label = f"[{agents.short(name, 45)}]"
@@ -2199,12 +2303,9 @@ class AgentNetworkWindow:
         """keep: the scroll position to stay at (folding an entry), instead of following the newest line."""
         P, log = self.P, self.log
         ags = self.net["agents"]
-        if self.sel < 0:
-            rows = self.net["log"][-160:]
-        else:
-            a = ags[self.sel]
-            rows = [(t, self.sel, kind, text) for t, kind, text in a["lines"][-160:]]
-        sig = (self.sel, self.theme, self.s, len(rows), rows[-1] if rows else None, len(ags))
+        rows = agents.filtered_log_rows(self.net, self.sel, self._log_filters)[-160:]
+        filter_sig = tuple((k, tuple(sorted(v)) if isinstance(v, set) else v) for k, v in self._log_filters.items())
+        sig = (self.sel, self.theme, self.s, tuple(rows), len(ags), filter_sig)
         if sig == self._log_sig:
             return
         switched = (self._log_sig or (None,))[0] != sig[0]
@@ -2232,9 +2333,9 @@ class AgentNetworkWindow:
             log.insert("end", "# " + info + (f" · {a['kind']}" if a["kind"] and not a["main"] else "") + "\n", "mu")
         if not rows:
             log.insert("end", "(nothing logged yet)", "mu")
-        width = max((len(a["name"]) for a in ags), default=4)
+        width = min(32, max((len(a["name"]) for a in ags), default=4))
         # long and multi-line entries (a full reply) wrap under their text, not under the time stamp
-        hang = 9 + ((width + 3) if self.sel < 0 else 0)
+        hang = 9 + width + 3
         log.tag_configure("hang", lmargin2=self.f_main.measure(" " * (hang + 2)))
         log.tag_configure("fold", foreground=P["blue"])
         log.tag_configure("odd", background=mix(P["bar"], P["bg"], 0.35))  # every other entry shaded
@@ -2260,9 +2361,8 @@ class AgentNetworkWindow:
             if n in finals:
                 log.insert("end", "▍", "finalmark")
             log.insert("end", time.strftime("%H:%M:%S ", time.localtime(t)) if t else " " * 9, "mu")
-            if self.sel < 0:
-                log.insert("end", ags[i]["name"].ljust(width)[:width], f"a{i}")
-                log.insert("end", " │ ", "mu")
+            log.insert("end", ags[i]["name"].ljust(width)[:width], f"a{i}")
+            log.insert("end", " │ ", "mu")
             mark = KIND_MARK.get(kind, "")
             if mark:
                 log.insert("end", mark + " ", "mu" if kind in ("tool", "say") else kind)

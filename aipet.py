@@ -3859,6 +3859,7 @@ class PetApp:
         self.details = {}
         self._slots, self._slot_n = {}, 0
         self._last_items, self._last_size = [], None
+        self._agent_items = []  # all tracked Claude/Codex sessions, including ones beyond the visible pet limit
         self.ack, self.reminded = {}, {}  # per session: acknowledged (clicked) / last reminder time
         self.badges_expanded = False  # compact mode: the merged badge is expanded into one badge per session
         self.first_refresh = True
@@ -3959,6 +3960,7 @@ class PetApp:
         now = time.time()
         items = [i for i in items
                  if not (hide and i["state"] in ("done", "idle") and i.get("changed") and now - i["changed"] > hide)]
+        self._agent_items = [i for i in items if i.get("source") == "CC"]
         disambiguate_titles(items)
         # Stable slots: a pet keeps its place for as long as it exists, whatever its state does. New sessions join
         # on the left, so the pets already on screen don't move (the overlay is anchored bottom-right).
