@@ -309,7 +309,8 @@ When Claude Code or Codex asks for permission, the popup (click the bubble) show
 
 ## Agent network window
 A live map of one session: the main agent and every subagent it started, Claude Code and Codex alike.
-- **Nodes** carry a small copy of the pet's robot (red when that agent needs you), the agent's name, model, reasoning
+- **Nodes** carry a small copy of the pet's robot (red when that agent needs you), the agent's name (a Claude Code
+  subagent's description, e.g. *Find the callers*, with its type under it; Codex's own nickname), model, reasoning
   effort and (on its own line) context size when the transcript records them, and its state. Edges show what is going on: blue with dots
   flowing out while a subagent works, amber while the main agent waits on it, green with a dot flowing back once it
   handed back its result (what each one says and does is in the logs). An agent started by a subagent sits in a

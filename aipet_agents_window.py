@@ -1709,7 +1709,8 @@ class AgentNetworkWindow:
             c.create_text(tx, y + self.gpx(5), text=self._fit(a["name"], inner, self.g_bold), anchor="nw",
                           fill=mix(self.color(i), P0["bg"], fade) if fade else self.color(i), font=self.g_bold,
                           tags=tag)
-            info = " · ".join(v for v in (a["model_label"], a["effort"]) if v)
+            # a subagent's type (general-purpose, Explore...) when its name is its description, then model and effort
+            info = " · ".join(v for v in ((a.get("kind") if not a["main"] else ""), a["model_label"], a["effort"]) if v)
             ctx = agents.fmt_tokens(a["ctx"])
             ctx_line = (f"ctx {ctx}" + (f"/{agents.fmt_tokens(a['ctx_max'])}" if a["ctx_max"] else "")) if ctx else ""
             rows = [info, ctx_line]  # the context always on a line of its own (what it says: in the logs)

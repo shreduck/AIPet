@@ -81,14 +81,15 @@ class ClaudeNetworkTests(unittest.TestCase):
     def test_main_and_subagents_with_model_effort_and_context(self):
         net = agents.read_network(self.item(), now=self.now)
         by = {a["name"]: a for a in net["agents"]}
-        self.assertEqual(list(by), ["main", "Explore", "Plan"])  # the old turn's agent is left out
+        self.assertEqual(list(by), ["main", "find callers", "Plan"])  # named after their description, else type
+        self.assertEqual((by["find callers"]["kind"], by["Plan"]["kind"]), ("Explore", ""))
         main = by["main"]
         self.assertEqual((main["model_label"], main["effort"], agents.fmt_tokens(main["ctx"])), ("opus-5.5", "high", "84k"))
         self.assertEqual(main["state"], "waiting")  # the prompt on screen is Plan's
         self.assertEqual(by["Plan"]["state"], "needs_input")
-        self.assertEqual(by["Explore"]["state"], "done")
-        self.assertEqual(by["Explore"]["thought"], "found 3 callers of refreshToken()")
-        self.assertEqual(by["Explore"]["model_label"], "haiku-5.5")
+        self.assertEqual(by["find callers"]["state"], "done")
+        self.assertEqual(by["find callers"]["thought"], "found 3 callers of refreshToken()")
+        self.assertEqual(by["find callers"]["model_label"], "haiku-5.5")
         self.assertIn("waiting for Plan", main["thought"])
 
     def test_shared_log_is_in_time_order_with_each_agents_lines(self):
@@ -98,7 +99,7 @@ class ClaudeNetworkTests(unittest.TestCase):
         self.assertEqual(rows[:2], [("main", "you", "old question"), ("main", "you", "fix the login loop")])
         self.assertIn(("main", "spawn", "started Explore: find callers"), rows)
         self.assertIn(("main", "error", "boom"), rows)
-        self.assertIn(("Explore", "tool", "Grep(refreshToken()"), rows)
+        self.assertIn(("find callers", "tool", "Grep(refreshToken()"), rows)
         self.assertIn(("Plan", "tool", "Bash(npm test -- auth)"), rows)
         self.assertEqual([r[0] for r in net["log"]], sorted(r[0] for r in net["log"]))
         self.assertNotIn("earlier", [r[2] for r in rows])  # the old turn's subagent stays out of the log too
@@ -106,7 +107,7 @@ class ClaudeNetworkTests(unittest.TestCase):
     def test_stats_list_subagents_every_context_and_tools(self):
         stats = agents.network_stats(agents.read_network(self.item(), now=self.now))
         self.assertEqual(stats["subagents"], [("Explore", 1), ("Plan", 1)])
-        self.assertEqual([c[0] for c in stats["calls"]], ["main", "Explore", "Plan"])  # one row per agent, in order
+        self.assertEqual([c[0] for c in stats["calls"]], ["main", "find callers", "Plan"])  # one row per agent, in order
         self.assertEqual(stats["ctx_total"], 84002 + 23002 + 12002)
         self.assertEqual(dict(stats["tools"]), {"Agent": 1, "Grep": 1, "Bash": 1})
         self.assertEqual(stats["skills"], [])
@@ -142,6 +143,8 @@ class ClaudeNetworkTests(unittest.TestCase):
         sub = os.path.join(self.dir.name, "sess", "subagents")
         with open(os.path.join(sub, "agent-bbb.meta.json"), "w") as f:
             json.dump({"agentType": "Explore"}, f)
+        with open(os.path.join(sub, "agent-aaa.meta.json"), "w") as f:
+            json.dump({"agentType": "Explore"}, f)  # no descriptions: named after the type, numbered
         names = [a["name"] for a in agents.read_network(self.item(), now=self.now)["agents"]]
         self.assertEqual(names, ["main", "Explore #1", "Explore #2"])
 

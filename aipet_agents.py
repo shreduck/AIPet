@@ -356,9 +356,12 @@ def read_network(item, now=None):
         if codex:
             nick, task = meta.get("agent_nickname") or "", str(meta.get("agent_path") or "").rsplit("/", 1)[-1]
             name = f"{nick} ({task})" if nick and task else (nick or task or "agent")
+            kind = str(meta.get("agent_role") or "")
             busy = aid in running or info["done"] is False or (info["done"] is None and now - info["mtime"] < RECENT)
         else:
-            name = meta.get("agentType") or running.get(aid) or "subagent"
+            # its name: the short description it was started with ("Find the callers"), else its type
+            kind = str(meta.get("agentType") or running.get(aid) or "subagent")
+            name = " ".join(str(meta.get("description") or "").split())[:60] or kind
             busy = aid in running or now - info["mtime"] < RECENT
         state = "working" if busy and session_state in ("working", "needs_input") else "done"
         if session_state == "needs_input" and wait_agent and wait_agent == aid:
@@ -367,7 +370,7 @@ def read_network(item, now=None):
         parent = str(meta.get("parentAgentId") or meta.get("parent_thread_id") or "")
         if parent == str(item.get("session_id") or ""):
             parent = ""
-        subs.append({"id": aid, "name": name, "main": False, "kind": meta.get("description") or "", "path": path,
+        subs.append({"id": aid, "name": name, "main": False, "kind": kind if kind != name else "", "path": path,
                      "parent": parent,
                      "_missing": bool(info.get("cut") and (info["first_t"] or 0) > turn_start + 1),
                      "state": state, "mtime": info["mtime"], "first_t": info["first_t"] or info["mtime"], **{
@@ -448,7 +451,7 @@ def network_stats(net):
     for a in net.get("agents", []):
         calls.append((a["name"], a.get("model_label") or "", int(a.get("ctx") or 0)))
         if not a["main"]:
-            base = a["name"].rsplit(" #", 1)[0]
+            base = a.get("kind") or a["name"].rsplit(" #", 1)[0]  # by type: general-purpose ×3
             types[base] = types.get(base, 0) + 1
         for t, kind, text in a.get("lines", []):
             if kind not in ("tool", "spawn") or (t and t < start - 1):
