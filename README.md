@@ -312,7 +312,7 @@ A live map of one session: the main agent and every subagent it started, Claude 
 - **Nodes** carry a small copy of the pet's robot (red when that agent needs you), the agent's name, model, reasoning
   effort and (on its own line) context size when the transcript records them, and its state. Edges show what is going on: blue with dots
   flowing out while a subagent works, amber while the main agent waits on it, green with a dot flowing back once it
-  handed back its result. Next to each subagent: its latest thought or words. An agent started by a subagent sits in a
+  handed back its result (what each one says and does is in the logs). An agent started by a subagent sits in a
   column further right, linked to the subagent that started it (Claude Code records it in the subagent's
   `.meta.json`, Codex in the rollout's `parent_thread_id`).
 - **Logs** below the graph, or above, left or right of it (settings: *logs position*). Every other entry is shaded,

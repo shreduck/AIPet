@@ -87,10 +87,10 @@ def needed_size(n_subs, scale, line, small, compact=False, side="bottom", depth=
     s = 1.5 * scale
     cols = depth if depth > 1 else (1 if n_subs <= 4 else 2)
     rows = n_subs if cols == 1 else math.ceil(n_subs / cols)
-    graph_w = 10 + 150 + (70 + cols * 200 + (110 if cols == 1 else 0) if n_subs else 10)
+    graph_w = 10 + 150 + (70 + cols * 200 if n_subs else 10)
     width = max(380, graph_w) * s
     main_h = line * 4 + 10 * s
-    sub_h = line * (4 if cols == 1 else 5) + 14 * s
+    sub_h = line * 4 + 14 * s
     graph_h = max(main_h, rows * sub_h) + 20 * s
     head = line + 10 * s
     height = head + graph_h
@@ -1447,7 +1447,7 @@ class AgentNetworkWindow:
         rows = max((len(c) for c in cols), default=0)
         lh = self.g_main.metrics("linespace")
         main_h = lh * 4 + self.gpx(10)
-        sub_h = lh * (4 if beside else 5) + self.gpx(8)
+        sub_h = lh * 4 + self.gpx(8)
         return int(max(main_h, rows * (sub_h + self.gpx(6))) + 2 * self.gpx(10) + lh * 1.6)
 
     def _layout(self, net, W, H, reserve=None):
@@ -1463,7 +1463,7 @@ class AgentNetworkWindow:
         if not cols:
             return boxes, False
         sub_w = self.gpx(140)
-        sub_h = lh * (4 if beside else 5) + self.gpx(8)
+        sub_h = lh * 4 + self.gpx(8)
         x0 = pad + main_w + self.gpx(70)
         gap_x = sub_w + self.gpx(60)
         if reserve and x0 + (len(cols) - 1) * gap_x + sub_w > reserve[0] - pad:
@@ -1481,7 +1481,7 @@ class AgentNetworkWindow:
         W, H = max(50, c.winfo_width()), max(50, c.winfo_height())
         blocks = self.blocks
         sig = (W, H, self.gz, self.sel, self.key, self.theme, self.s, self.opts["node_alpha"], self.in_window,
-               tuple((k, tuple((a["name"], a["state"], a["model_label"], a["effort"], a["ctx"], a["thought"])
+               tuple((k, tuple((a["name"], a["state"], a["model_label"], a["effort"], a["ctx"], a["thought"] if a["main"] else "")
                                for a in net["agents"])) for k, _, net in blocks))
         if sig == self._graph_sig and not force:
             self._draw_stats()
@@ -1706,9 +1706,7 @@ class AgentNetworkWindow:
             info = " · ".join(v for v in (a["model_label"], a["effort"]) if v)
             ctx = agents.fmt_tokens(a["ctx"])
             ctx_line = (f"ctx {ctx}" + (f"/{agents.fmt_tokens(a['ctx_max'])}" if a["ctx_max"] else "")) if ctx else ""
-            rows = [info, ctx_line]  # the context always on a line of its own
-            if not a["main"] and not beside:
-                rows.append(a["thought"])
+            rows = [info, ctx_line]  # the context always on a line of its own (what it says: in the logs)
             ly = y + self.gpx(5) + lh
             for row in rows:
                 if row:
@@ -1722,16 +1720,6 @@ class AgentNetworkWindow:
                 label = "… " + a["thought"]
             c.create_text(x + self.gpx(8), y + h - self.gpx(4), text=self._fit(label, w - self.gpx(14), self.g_small),
                           anchor="sw", fill=P[status_col], font=self.g_small, tags=tag)
-            if not a["main"] and beside and a["thought"]:
-                right = ox + W
-                if reserve and y + h / 2 > oy + reserve[1] - self.gpx(4):
-                    right = ox + reserve[0] - self.gpx(8)  # not under the stats node
-                room = right - (x + w) - self.gpx(18)
-                if room > self.gpx(40):
-                    c.create_text(x + w + self.gpx(10), y + h / 2,
-                                  text=self._fit(f"› {a['thought']}", room, self.g_small), anchor="w",
-                                  fill=P[status_col] if a["state"] != "done" else P["grn"], font=self.g_small,
-                                  tags=tag)
             if b >= 0:
                 c.tag_bind(tag, "<ButtonRelease-1>", lambda e, k=key, i=i: self._click_node(e, k, i))
             c.tag_bind(tag, "<Enter>", lambda e: c.configure(cursor="hand2"))
