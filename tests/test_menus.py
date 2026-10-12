@@ -45,7 +45,7 @@ class MenuTests(unittest.TestCase):
         context, shared = app._context_menu_spec(pet), app._mac_menu_spec()
         self.assertEqual(context[0]['label'], 'AIPet menu...')  # first in every menu
         self.assertEqual(shared[0]['label'], 'AIPet menu...')
-        self.assertEqual(context[1]['label'], 'Agent network...')  # right below the AIPet menu
+        self.assertEqual(context[1]['label'], 'Agent network window')  # right below the AIPet menu
         self.assertEqual(context[2]['label'], 'Fix fast cancel')  # above This session
         self.assertEqual(context[3]['label'], 'This session')
         self.assertEqual(labels(context[5:]), labels(shared[2:]))

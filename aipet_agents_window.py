@@ -25,7 +25,8 @@ ALPHAS = (100, 90, 80, 70, 60, 50, 40, 30)  # window opacity steps, %
 NODE_ALPHAS = (100, 75, 50, 25, 0)  # node fill opacity steps, % (drawn with Tk stipples)
 STIPPLE = {75: "gray75", 50: "gray50", 25: "gray25"}
 OPTIONS_KEY = "agent_window"  # config.json: {"on_top", "alpha", "clear_bg", "node_alpha", "frameless"}
-DEFAULT_OPTIONS = {"on_top": False, "alpha": 100, "clear_bg": False, "node_alpha": 100, "frameless": False}
+DEFAULT_OPTIONS = {"on_top": False, "alpha": 100, "clear_bg": False, "node_alpha": 100, "frameless": False,
+                   "compact": False}
 
 
 def load_options(cfg):
@@ -182,6 +183,8 @@ class AgentNetworkWindow:
 
     def _place(self):
         w, h = int(620 * self.s), int(480 * self.s)
+        if self.opts["compact"]:
+            w, h = int(420 * self.s), self._compact_height()
         try:
             sw, sh = self.win.winfo_screenwidth(), self.win.winfo_screenheight()
             w, h = min(w, sw - 40), min(h, sh - 80)
@@ -206,6 +209,8 @@ class AgentNetworkWindow:
             o["alpha"] = next_step(ALPHAS, o["alpha"], d)
         elif name == "bg":
             o["clear_bg"] = not o["clear_bg"]
+        elif name == "view":
+            o["compact"] = not o["compact"]
         elif name == "nodes":
             o["node_alpha"] = next_step(NODE_ALPHAS, o["node_alpha"], d)
         self._apply_options(changed=name)
@@ -266,10 +271,13 @@ class AgentNetworkWindow:
         marks = {"close": ("✕", off), "frame": ("▭" if o["frameless"] else "▣", on if o["frameless"] else off),
                  "pin": ("pin", on if o["on_top"] else off), "alpha": (f"α{o['alpha']}%", on if o["alpha"] < 100 else off),
                  "bg": ("bg", on if o["clear_bg"] else off),
-                 "nodes": (f"node{o['node_alpha']}%", on if o["node_alpha"] < 100 else off)}
+                 "nodes": (f"node{o['node_alpha']}%", on if o["node_alpha"] < 100 else off),
+                 "view": ("compact", on if o["compact"] else off)}
         for name, lab in self.tools.items():
             text, fg = marks[name]
             lab.configure(text=text, fg=fg)
+        if changed in (None, "view"):
+            self._apply_view()
         close, rest = self.tools["close"], [t for n, t in self.tools.items() if n != "close"]
         if o["frameless"]:
             close.pack(side="right", before=rest[0])  # without a title bar: a close button of its own
@@ -278,6 +286,41 @@ class AgentNetworkWindow:
         self._graph_sig = None
         self._draw_graph(force=True)
         self._draw_tabs()
+
+    def _apply_view(self):
+        """Full: graph, tabs, logs and the key bar. Compact: only the graph (and the prompt chip), in a window sized
+        to it; the full size comes back when switching back."""
+        compact = self.opts["compact"]
+        parts = (self.sep, self.tabs, self.log)
+        try:
+            shown = self.log.winfo_manager() == "pack"
+            if compact and shown:
+                self._full_size = (self.win.winfo_width(), self.win.winfo_height())
+                for wdg in parts:
+                    wdg.pack_forget()
+                self.footbar.pack_forget()
+                if self.opts["frameless"] and not IS_MAC:
+                    self.grip.place(relx=1.0, rely=1.0, anchor="se")
+                self.win.minsize(self.px(260), self.px(120))
+                self.win.geometry(f"{max(self.px(300), int(self.win.winfo_width() * 0.75))}x{self._compact_height()}")
+            elif not compact and not shown:
+                self.grip.place_forget()
+                self.footbar.pack(side="bottom", fill="x", before=self.body)
+                for wdg in parts:
+                    wdg.pack(fill="both" if wdg is self.log else "x", padx=self.px(6) if wdg is self.tabs else 0)
+                self.win.minsize(int(560 * self.s), int(420 * self.s))
+                w, h = getattr(self, "_full_size", (int(620 * self.s), int(480 * self.s)))
+                self.win.geometry(f"{max(w, int(560 * self.s))}x{max(h, int(420 * self.s))}")
+        except tk.TclError:
+            pass
+
+    def _compact_height(self):
+        """Header plus the graph: enough rows for the subagents."""
+        n = max(0, len(self.net["agents"]) - 1)
+        lh = self.f_main.metrics("linespace")
+        rows = n if n <= 4 else math.ceil(n / 2)
+        graph = max(lh * 4 + self.px(30), rows * (lh * 3 + self.px(14)) + self.px(20))
+        return self.head.winfo_reqheight() + graph
 
     def _on_resize(self, e=None):
         self._draw_graph(force=True)
@@ -313,10 +356,10 @@ class AgentNetworkWindow:
         self.title.pack(side="left", fill="x", expand=True, pady=self.px(4))
         # window options, right-most: frameless, always on top, opacity, see-through background, node opacity
         self.tools = {}
-        tips = {"close": "Close (Esc)", "frame": "Title bar on / off (drag this bar to move, the corner to resize)",
+        tips = {"view": "Compact: just the graph, in a small window (C)", "close": "Close (Esc)", "frame": "Title bar on / off (drag this bar to move, the corner to resize)",
                 "pin": "Always on top", "alpha": "Window opacity (click, or scroll)",
                 "bg": "See-through graph background", "nodes": "Node opacity (click, or scroll)"}
-        for name in ("close", "frame", "pin", "alpha", "bg", "nodes"):
+        for name in ("close", "frame", "pin", "alpha", "bg", "nodes", "view"):
             if name == "frame" and IS_MAC:
                 continue  # a borderless window can't take the keyboard on macOS
             if name == "bg" and not (IS_MAC or sys.platform == "win32"):
@@ -331,7 +374,7 @@ class AgentNetworkWindow:
             lab.bind("<Enter>", lambda e, l=lab: self.foot.configure(text=l.tip))
             lab.bind("<Leave>", lambda e: self.foot.configure(text=self.HINT))
             self.tools[name] = lab
-        for name in ("close", "frame", "pin", "alpha", "bg", "nodes"):
+        for name in ("close", "frame", "pin", "alpha", "bg", "nodes", "view"):
             if name in self.tools:
                 self.tools[name].pack(side="right")
         self.tool_sep = tk.Label(self.head, text="│", font=self.f_small)
@@ -366,7 +409,7 @@ class AgentNetworkWindow:
         self.log = tk.Text(self.body, height=9, wrap="word", bd=0, highlightthickness=0, font=self.f_main,
                            padx=self.px(8), pady=self.px(4), cursor="arrow")
         self.log.pack(fill="both", expand=False)
-        self.log.bind("<Key>", lambda e: None if e.keysym in ("Up", "Down", "Prior", "Next") else "break")
+        self.log.configure(takefocus=0)  # read-only (disabled); keys go to the window's own bindings
 
         self.chip = tk.Label(w, font=self.f_main, cursor="hand2", padx=self.px(8), pady=self.px(2), bd=1,
                              relief="solid")
@@ -374,28 +417,46 @@ class AgentNetworkWindow:
         self.overlay = tk.Frame(w, bd=1, relief="solid")
 
     def _bind_keys(self):
+        """Keys work wherever the focus is in the window, except while typing your own answer."""
         w = self.win
         # a borderless window doesn't get the keyboard by itself on Windows: take it on any click
-        w.bind("<Button-1>", lambda e: w.focus_force() if self.opts["frameless"] else None, add="+")
-        w.bind("<Tab>", lambda e: self.step_agent(1))
+        w.bind("<Button-1>", lambda e: w.focus_force() if self.opts["frameless"] and not self._typing() else None,
+               add="+")
+
+        def key(fn, typing_too=False):
+            def handler(e):
+                if self._typing() and not typing_too:
+                    return None  # the entry gets the key
+                fn()
+                return "break"
+            return handler
+        w.bind("<Tab>", key(lambda: self.step_agent(1), True))
         for seq in ("<Shift-Tab>", "<ISO_Left_Tab>"):
             try:
-                w.bind(seq, lambda e: self.step_agent(-1))
+                w.bind(seq, key(lambda: self.step_agent(-1), True))
             except tk.TclError:
                 pass
-        w.bind("<Right>", lambda e: self.step_option(1) if self.overlay_open else self.step_agent(1))
-        w.bind("<Left>", lambda e: self.step_option(-1) if self.overlay_open else self.step_agent(-1))
-        w.bind("<Down>", lambda e: self.step_option(1) if self.overlay_open else None)
-        w.bind("<Up>", lambda e: self.step_option(-1) if self.overlay_open else None)
+        w.bind("<Right>", key(lambda: self.step_option(1) if self.overlay_open else self.step_agent(1)))
+        w.bind("<Left>", key(lambda: self.step_option(-1) if self.overlay_open else self.step_agent(-1)))
+        w.bind("<Down>", key(lambda: self.step_option(1) if self.overlay_open else self.log.yview_scroll(1, "units")))
+        w.bind("<Up>", key(lambda: self.step_option(-1) if self.overlay_open else self.log.yview_scroll(-1, "units")))
         for k in ("a", "A"):
-            w.bind(k, lambda e: self.select(-1))
-        w.bind("<Prior>", lambda e: self.step_session(-1))
-        w.bind("<Next>", lambda e: self.step_session(1))
-        w.bind("<space>", lambda e: self.open_overlay(True) if self.chip.winfo_ismapped() else None)
-        w.bind("<Escape>", lambda e: self.open_overlay(False) if self.overlay_open else self.close())
-        w.bind("<Return>", lambda e: self.choose(self.option) if self.overlay_open else None)
+            w.bind(k, key(lambda: self.select(-1)))
+        for k in ("c", "C"):
+            w.bind(k, key(lambda: self.tool("view", 1)))
+        w.bind("<Prior>", key(lambda: self.step_session(-1), True))
+        w.bind("<Next>", key(lambda: self.step_session(1), True))
+        w.bind("<space>", key(lambda: self.open_overlay(not self.overlay_open)))
+        w.bind("<Escape>", key(lambda: self.open_overlay(False) if self.overlay_open else self.close(), True))
+        w.bind("<Return>", key(lambda: self.choose(self.option) if self.overlay_open else None))
         for n in range(1, 10):
-            w.bind(str(n), lambda e, n=n: self.choose(n - 1) if self.overlay_open else None)
+            w.bind(str(n), key(lambda n=n: self.choose(n - 1) if self.overlay_open else None))
+
+    def _typing(self):
+        try:
+            return isinstance(self.win.focus_get(), tk.Entry)
+        except (tk.TclError, KeyError):
+            return False
 
     # ---- theme
     @property
@@ -754,6 +815,12 @@ class AgentNetworkWindow:
             self._place_overlay()
         else:
             self.overlay.place_forget()
+            grown, self._grown = getattr(self, "_grown", None), None
+            if grown and self.opts["compact"]:
+                try:
+                    self.win.geometry(f"{self.win.winfo_width()}x{grown}")
+                except tk.TclError:
+                    pass
             self._prompt_sig = None  # the chip comes back on the next refresh
         return "break"
 
@@ -765,7 +832,9 @@ class AgentNetworkWindow:
                 lab.configure(wraplength=width - self.px(36))
             except tk.TclError:
                 pass
-        bottom = self.footbar.winfo_y() - self.px(6)
+        compact = self.opts["compact"]
+        bottom = (self.win.winfo_height() if compact else self.footbar.winfo_y()) - self.px(6)
+        self._flow_options(width - self.px(20))
         highest = self.body.winfo_y() + self.px(6)
         top = self.body.winfo_y() + int(self.canvas.winfo_height() * 0.72)
         try:
@@ -773,6 +842,12 @@ class AgentNetworkWindow:
             need = self.overlay.winfo_reqheight() + self.px(4)
         except tk.TclError:
             need = 0
+        if compact and bottom - highest < need and not getattr(self, "_grown", None):
+            # the small window can't hold the prompt: grow it while the prompt is open
+            self._grown = self.win.winfo_height()
+            self.win.geometry(f"{self.win.winfo_width()}x{self._grown + need - (bottom - highest)}")
+            self.win.update_idletasks()
+            bottom = self.win.winfo_height() - self.px(6)
         top = max(highest, min(top, bottom - need))
         self.overlay.place(x=self.px(10), y=top, width=width, height=max(self.px(60), bottom - top))
         self.overlay.lift()
@@ -806,7 +881,8 @@ class AgentNetworkWindow:
             lab.pack(fill="x", padx=pad, pady=self.px(4))
             self._wraps.append(lab)
         answerable = core.hook_waiting(item) and self.pet.answers_enabled(item)
-        row = tk.Frame(ov, bg=P["node"])
+        self.own = None  # (question, entry) when a typed answer can be sent
+        self.radio = False  # the options are a pick-one list (a question)
         if questions:
             simple = len(questions) == 1 and not questions[0].get("multiSelect") and questions[0].get("options")
             for q in questions[:1]:
@@ -814,29 +890,58 @@ class AgentNetworkWindow:
                                justify="left", wraplength=self.px(560))
                 lab.pack(fill="x", padx=pad, pady=(self.px(4), 0))
                 self._wraps.append(lab)
+            if len(questions) > 1 or (questions and questions[0].get("multiSelect")):
+                lab = tk.Label(ov, text="Several questions or picks: answer them on the full card.", font=self.f_small,
+                               bg=P["node"], fg=P["mu"], anchor="w", justify="left")
+                lab.pack(fill="x", padx=pad)
+                self._wraps.append(lab)
             if answerable and simple:
-                q = questions[0]
-                for opt in q["options"][:6]:
+                q, self.radio = questions[0], True
+                for opt in q["options"][:8]:
                     label = str(opt.get("label") if isinstance(opt, dict) else opt)
                     self.options.append((label, lambda label=label, q=q: self._send(
                         "allow", {q["question"]: label})))
+                self.options.append(("Your own answer:", self._send_own))
         elif answerable:
             self.options = [("Allow once", lambda: self._send("allow")),
                             ("Always (add to auto approve)", self._always),
                             ("Deny", lambda: self._send("deny"))]
+        n_answers = len(self.options)
         self.options.append(("Open the full card", lambda: self.pet.open_detail(self.key)))
         codex = (item or {}).get("agent") == "codex"
         self.options.append(("Answer in Codex" if codex and answerable else "Go to window", self._go))
-        row.pack(fill="x", padx=pad, pady=self.px(6))
-        self._opt_labels = []
+        self._opt_row = tk.Frame(ov, bg=P["node"])
+        self._opt_row.pack(fill="x", padx=pad, pady=self.px(6))
+        self._opt_labels, self._opt_flow = [], None
         for n, (label, _) in enumerate(self.options):
-            lab = tk.Label(row, text=f"{n + 1} {label}", font=self.f_main, cursor="hand2", padx=self.px(6),
-                           pady=self.px(1), bg=P["node"], fg=P["tx"])
-            lab.pack(side="left", padx=(0, self.px(4)))
-            lab.bind("<Button-1>", lambda e, n=n: self.choose(n))
+            if self.radio and label == "Your own answer:":
+                own_row = tk.Frame(self._opt_row, bg=P["node"])
+                lab = tk.Label(own_row, font=self.f_main, cursor="hand2", padx=self.px(6), pady=self.px(1),
+                               bg=P["node"], fg=P["tx"], anchor="w")
+                lab.pack(side="left")
+                entry = tk.Entry(own_row, font=self.f_main, bg=P["bar"], fg=P["hi"], insertbackground=P["hi"],
+                                 relief="flat", highlightthickness=1, highlightbackground=P["line"],
+                                 highlightcolor=P["red"])
+                entry.pack(side="left", fill="x", expand=True, padx=(self.px(4), 0))
+                entry.bind("<KeyRelease>", lambda e, n=n: self._own_typed(n))
+                entry.bind("<FocusIn>", lambda e, n=n: self._pick(n))
+                entry.bind("<Return>", lambda e: (self._send_own(), "break")[1])
+                entry.bind("<Escape>", lambda e: (self.win.focus_set(), "break")[1])
+                self.own = (questions[0], entry)
+                lab.bind("<Button-1>", lambda e, n=n: self.choose(n))
+                lab._row = own_row
+            else:
+                lab = tk.Label(self._opt_row, font=self.f_main, cursor="hand2", padx=self.px(6), pady=self.px(1),
+                               bg=P["node"], fg=P["tx"], anchor="w", justify="left")
+                lab.bind("<Button-1>", lambda e, n=n: self.choose(n))
+                lab._row = None
+            lab._text = label
+            lab._answer = n < n_answers
             self._opt_labels.append(lab)
+        self._flow_options(self.px(560))
         if answerable:
-            hint = "1-9 or ←→ and Enter to answer · Esc fold"
+            hint = ("1-9 or ↑↓ and Enter to answer · type your own and press Enter · Esc fold" if self.radio
+                    else "1-9 or ←→ and Enter to answer · Esc fold")
         elif req.get("id") in self._released:
             hint = "Handed back to Codex: answer it in the Codex window now (Go to window takes you there)."
         else:
@@ -849,14 +954,60 @@ class AgentNetworkWindow:
         if self.overlay_open:
             self._place_overlay()
 
+    def _flow_options(self, width):
+        """The answers side by side when they fit, else one per line (wrapping long ones); a question's answers are
+        always one per line, like radio buttons."""
+        labels = getattr(self, "_opt_labels", [])
+        if not labels:
+            return
+        for n, lab in enumerate(labels):
+            lab.configure(wraplength=0)
+        total = sum(lab.winfo_reqwidth() + self.px(4) for lab in labels)
+        flow = "row" if not self.radio and total <= width else "column"
+        if flow == self._opt_flow and flow == "row":
+            return
+        self._opt_flow = flow
+        for lab in labels:
+            (lab._row or lab).pack_forget()
+        for lab in labels:
+            widget = lab._row or lab
+            if flow == "row":
+                widget.pack(side="left", padx=(0, self.px(4)))
+            else:
+                widget.pack(side="top", fill="x", anchor="w", pady=(0, self.px(1)))
+                if widget is lab:
+                    lab.configure(wraplength=max(self.px(120), width - self.px(30)))
+
     def _mark_option(self):
         P = self.P
         for n, lab in enumerate(getattr(self, "_opt_labels", [])):
             try:
                 on = n == self.option
-                lab.configure(bg=P["redbg"] if on else P["node"], fg=P["red"] if on else P["tx"])
-            except tk.TclError:
+                mark = ("(•) " if on else "( ) ") if self.radio and lab._answer else ""
+                lab.configure(text=f"{n + 1} {mark}{lab._text}", bg=P["redbg"] if on else P["node"],
+                              fg=P["red"] if on else P["tx"])
+            except (tk.TclError, AttributeError):
                 pass
+
+    def _pick(self, n):
+        self.option = n
+        self._mark_option()
+
+    def _own_typed(self, n):
+        if self.own and self.own[1].get().strip():
+            self._pick(n)
+
+    def _send_own(self):
+        """Send what was typed as the answer; with nothing typed yet, go to the box."""
+        if not self.own:
+            return
+        q, entry = self.own
+        text = entry.get().strip()
+        if not text:
+            entry.focus_set()
+            return
+        self.win.focus_set()
+        self._send("allow", {q["question"]: text})
 
     def step_option(self, d):
         if getattr(self, "options", None):

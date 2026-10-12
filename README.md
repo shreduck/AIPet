@@ -297,8 +297,8 @@ When Claude Code or Codex asks for permission, the popup (click the bubble) show
   (*Stop auto approve: name · 7:32 left*), one click to stop it early. It also stops when AIPet quits (the hooks only
   honour it while the pet runs). Grants are kept in `~/.aipet/auto-approve.json` under `timed`.
 - **Subagents running** lists what the session's subagents are (their agent type, e.g. `tester`).
-- **Open agent network...** (also *Agent network...* in each session's entry and right below *AIPet menu...* in the
-  pet's right-click menu) opens the agent network window, below.
+- **Agent network window** (a switch here and right below *AIPet menu...* in the pet's right-click menu; each
+  session's entry also has *Agent network...* to open it on that session) opens or closes the window below.
 
 ## Agent network window
 A live map of one session: the main agent and every subagent it started, Claude Code and Codex alike.
@@ -309,7 +309,9 @@ A live map of one session: the main agent and every subagent it started, Claude 
 - **Logs** at the bottom: *All* merges every agent's activity into one log (prompts, what each one said, tool calls,
   results), each line in its agent's colour; the other tabs show one agent each.
 - **Prompts**: when an agent needs you, a small warning shows (*Plan needs your input*). Click it (or press Space) and
-  it opens over the log with the prompt or question and its answers; Esc folds it back.
+  it opens over the log with the prompt or question and its answers (side by side when they fit, one per line when
+  they don't); Esc folds it back. A question's answers are a pick-one list with *Your own answer:* as the last one:
+  type in its box and press Enter to send exactly that. Several questions or multi-select ones go to the full card.
 - **Codex prompts and Go to window**: while AIPet's hook holds a Codex prompt, Codex waits for it and shows nothing.
   *Go to window* (on the card) and *Answer in Codex* (in the agent network) hand the prompt back, so Codex shows its own
   prompt with all its choices, like always allowing that tool. Claude Code shows its own prompt alongside the pet's
@@ -318,8 +320,11 @@ A live map of one session: the main agent and every subagent it started, Claude 
   off (without it, drag the top bar to move and the `◢` corner to resize; Windows and Linux), `pin` always on top,
   `α100%` window opacity, `bg` see-through graph background (Windows and macOS; clicks go through the empty parts),
   `node100%` node opacity. Click to change, right-click or scroll to go the other way.
-- **Keys**: Tab / → next agent, Shift+Tab / ← previous, A for the shared log, PgUp / PgDn for the previous or next
-  session, Esc to fold the prompt or close the window.
+- **Compact** (toolbar, or C): just the graph in a small window; the prompt chip still shows, and the window grows
+  while a prompt is open.
+- **Keys**: Tab / → next agent, Shift+Tab / ← previous, A shared log, ↑↓ scroll the log, PgUp / PgDn previous or
+  next session, C compact, Space open / fold the prompt, Esc fold it or close the window. With the prompt open: 1-9
+  pick and send an answer, arrows move between answers, Enter sends the highlighted one.
 - Data comes from the session's transcript files: Claude Code keeps each subagent's in
   `<transcript>/subagents/agent-<id>.jsonl`, Codex writes each spawned agent its own rollout file. Read-only; nothing is
   sent anywhere.

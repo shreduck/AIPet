@@ -1521,9 +1521,7 @@ class TrayApp:
                              "set": self.pet.set_timed_minutes, "format": lambda v: f"{int(v)} min"},
                      submenu=[item(f"{m} min", lambda m=m: self.pet.set_timed_minutes(m), checked=default == m)
                               for m in (5, 10, 15, 30, 60)]),
-                item("Open agent network...", lambda: self.show_agent_network(None), icon="link",
-                     help="A live map of a session's main agent and its subagents: what each one is doing, its "
-                          "model and context, a shared log, and prompts you can answer from there."),
+                dict(self.agent_network_item(None), icon="link"),
                 None]
         sessions = [d for d in self.pet._last_items if d.get("source") == "CC" and d.get("session_id")]
         for d in sessions:
@@ -1574,10 +1572,23 @@ class TrayApp:
         return {"label": "AIPet menu...", "action": self.show_settings, "enabled": True, "submenu": None,
                 "settings": True}
 
-    def agent_network_item(self, key=None, label="Agent network..."):
-        return {"label": label, "action": lambda: self.show_agent_network(key), "enabled": True, "submenu": None,
+    def agent_network_open(self):
+        win = getattr(self, "agents_win", None)
+        return bool(win is not None and win.alive())
+
+    def agent_network_item(self, key=None, label="Agent network window"):
+        """A switch: opens the agent network window (on this session), or closes it when it is open."""
+        return {"label": label, "action": lambda: self.toggle_agent_network(key), "enabled": True, "submenu": None,
+                "checked": self.agent_network_open(),
                 "help": "A live map of a session's main agent and its subagents: what each one is doing, its model "
                         "and context, a shared log, and prompts you can answer from there."}
+
+    def toggle_agent_network(self, key=None):
+        if self.agent_network_open():
+            self.agents_win.close()
+        else:
+            self.show_agent_network(key)
+        self.refresh_menu()
 
     def show_agent_network(self, key=None):
         """The agent network window: one per app; opening it again switches it to that session."""

@@ -85,7 +85,7 @@ class TimedApproveTests(unittest.TestCase):
         self.assertTrue(notes["submenu"][0]["label"].startswith("Auto approve for 10 min"))
         app.pet._menu_session.return_value = None
         context = app._context_menu_spec(SimpleNamespace(key="_none", data={}))
-        self.assertEqual(context[1]["label"], "Agent network...")  # right under the AIPet menu
+        self.assertEqual(context[1]["label"], "Agent network window")  # right under the AIPet menu
         self.assertTrue(context[2]["label"].startswith("⏱ Stop auto approve: esign"))  # then the countdowns
         app.refresh_menu = MagicMock()
         context[2]["action"]()
