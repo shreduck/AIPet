@@ -304,7 +304,7 @@ When Claude Code or Codex asks for permission, the popup (click the bubble) show
 ## Agent network window
 A live map of one session: the main agent and every subagent it started, Claude Code and Codex alike.
 - **Nodes** carry a small copy of the pet's robot (red when that agent needs you), the agent's name, model, reasoning
-  effort and context size when the transcript records them, and its state. Edges show what is going on: blue with dots
+  effort and (on its own line) context size when the transcript records them, and its state. Edges show what is going on: blue with dots
   flowing out while a subagent works, amber while the main agent waits on it, green with a dot flowing back once it
   handed back its result. Next to each subagent: its latest thought or words.
 - **Logs** at the bottom: *[all]* merges every agent's activity into one log (prompts, what each one said, tool calls,
@@ -319,12 +319,16 @@ A live map of one session: the main agent and every subagent it started, Claude 
   anyway, so there it only jumps to the window.
 - **Settings** drop down from the cogwheel at the top right (it turns while open), kept in `config.json` under
   `agent_window` and applied to every open agent network window: `[on ]` / `[off]` always on top, title bar (off: drag
-  the top bar to move, the `◢` corner to resize; Windows and Linux) and compact (like the pet's compact mode: one
+  the top bar to move, the edges or the `◢` corner to resize; Windows and Linux) and compact (like the pet's compact mode: one
   window for every session, switched with PgUp / PgDn; off: each session gets its own window, titled after it and
   fanned out); sliders for window opacity, background opacity (the graph's background; Windows and macOS) and node
   opacity, 30-100%, and scale, 50-150% (applied when you let go of the mouse, so the window doesn't move under it).
-  Tk can't draw half see-through, so background and node opacity are dotted patterns (75 / 50 / 25%); macOS only has
-  solid or fully see-through.
+  Background opacity shows the graph's background through a backdrop window of AIPet's own, so clicks never reach
+  what is behind. Tk can't draw half see-through nodes, so node opacity is a dotted pattern (75 / 50 / 25%).
+- **Stats node** (bottom right of the graph) for the current task, since your latest prompt: *subagents* (which kinds,
+  how many times), *context* (the sum; its drop-down lists every agent call in order with its model and context, not
+  grouped by name) and *tools* (every tool and how often, and the skills used). Click a line for its read-only
+  drop-down; Esc or a click elsewhere folds it.
 - **Reset agent network appearance** (Appearance, next to Reset pet size, in every menu and the AIPet menu window) puts the default look
   back and centres the open windows on the main screen; one window or one per session stays as it was.
 - **Size**: the window can't get smaller than what everything needs at 50% scale. Shrinking it below what the current

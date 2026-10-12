@@ -84,7 +84,7 @@ def needed_size(n_subs, scale, line, small, compact=False):
     graph_w = 10 + 150 + (70 + cols * 180 + (110 if cols == 1 else 0) if n_subs else 10)
     width = max(380, graph_w) * s
     main_h = line * 4 + 10 * s
-    sub_h = line * (3 if cols == 1 else 4) + 14 * s
+    sub_h = line * (4 if cols == 1 else 5) + 14 * s
     graph_h = max(main_h, rows * sub_h) + 20 * s
     head = line + 10 * s
     height = head + graph_h
@@ -424,8 +424,59 @@ class AgentNetworkWindow:
         if save:
             self._save("scale", delay=500)
 
+    # ---- the backdrop behind a see-through graph background
+    def _sync_backdrop(self):
+        """Show / move / restyle the backdrop window: exactly under the graph, right below this window."""
+        want = bool(self._applied.get("clear"))
+        b = getattr(self, "backdrop", None)
+        try:
+            if not want:
+                if b is not None:
+                    b.destroy()
+                self.backdrop = None
+                return
+            if b is None or not b.winfo_exists():
+                b = self.backdrop = tk.Toplevel(self.win)
+                b.withdraw()
+                b.overrideredirect(True)
+                for seq in ("<Button-1>", "<Button-3>"):
+                    b.bind(seq, lambda e: self._restack(focus=True))
+            P, o = self.P, self.opts
+            b.configure(bg=P["bg"])
+            b.attributes("-alpha", max(0.05, o["alpha"] * o["bg_alpha"] / 10000))
+            b.attributes("-topmost", bool(o["on_top"]))
+            c = self.canvas
+            x, y, w, h = c.winfo_rootx(), c.winfo_rooty(), c.winfo_width(), c.winfo_height()
+            if w > 1 and h > 1 and self.win.winfo_viewable():
+                b.geometry(f"{w}x{h}+{x}+{y}")
+                if b.state() != "normal":
+                    b.deiconify()
+                self._restack()
+            elif b.state() == "normal":
+                b.withdraw()
+        except tk.TclError:
+            pass
+
+    def _restack(self, focus=False):
+        """The backdrop right below this window (after this window was brought to the front, for instance)."""
+        b = getattr(self, "backdrop", None)
+        try:
+            if b is not None and b.winfo_exists() and b.state() == "normal":
+                b.lower(self.win)
+            if focus:
+                self.win.lift()
+                self.win.focus_force()
+        except tk.TclError:
+            pass
+
+    def _window_event(self, e):
+        if e.widget is self.win:
+            self.win.after_idle(self._sync_backdrop)
+
     def _on_window_resize(self, e):
         """Shrinking the window below what the current scale needs makes the scale follow it (down to 50%)."""
+        if e.widget is self.win and getattr(self, "backdrop", None) is not None:
+            self.win.after_idle(self._sync_backdrop)  # moved or resized: the backdrop follows
         if e.widget is not self.win or self._fitting or self.u <= SCALE_MIN / 100 + 1e-6:
             return
         nw, nh = self.needed()
@@ -444,9 +495,10 @@ class AgentNetworkWindow:
         except tk.TclError:
             pass
         bg = P["bg"]
-        # Background opacity: the graph's background colour is made see-through and repainted as a stipple pattern,
-        # so part of its pixels show what is behind (macOS can't stipple: see-through below half)
-        see_through = BG_OPACITY and dither(o["bg_alpha"]) != "" and not (IS_MAC and o["bg_alpha"] >= 50)
+        # Background opacity: the graph's background colour is made see-through, and a backdrop window of our own
+        # sits right under it at the chosen opacity. Through the hole you see the backdrop (and, faintly, what is
+        # behind it), and the backdrop takes the clicks, so nothing behind the window can be clicked by accident.
+        see_through = BG_OPACITY and o["bg_alpha"] < 100
         want = {"topmost": bool(o["on_top"]), "alpha": o["alpha"] / 100,
                 "clear": (key_color(P["bg"]) if not IS_MAC else "mac") if see_through else ""}
         try:
@@ -484,16 +536,29 @@ class AgentNetworkWindow:
             self.canvas.configure(bg=bg)  # only the graph goes see-through: the logs stay readable
         except tk.TclError:
             pass
+        self._sync_backdrop()
         frameless = o["frameless"] and not IS_MAC
         if frameless:
             self.close_btn.pack(side="right", before=self.cog)
         else:
             self.close_btn.pack_forget()
         if frameless:
+            # no title bar, so no window frame to drag: thin handles along the edges, and the corner grip
+            t = max(4, self.px(3))
+            for side, h in self.handles.items():
+                spot = {"e": dict(relx=1.0, y=0, anchor="ne", width=t, relheight=1.0),
+                        "w": dict(x=0, y=0, anchor="nw", width=t, relheight=1.0),
+                        "s": dict(x=0, rely=1.0, anchor="sw", height=t, relwidth=1.0),
+                        "sw": dict(x=0, rely=1.0, anchor="sw", width=3 * t, height=3 * t)}[side]
+                h.configure(bg=self.P["line"])
+                h.place(**spot)
+                h.lift()
             self.grip.place(relx=1.0, rely=1.0, anchor="se")
             self.grip.lift()
         else:
             self.grip.place_forget()
+            for h in self.handles.values():
+                h.place_forget()
         self._update_minsize()
         self._graph_sig = self._tabs_sig = None
         self._draw_graph(force=True)
@@ -501,6 +566,8 @@ class AgentNetworkWindow:
 
     def _on_resize(self, e=None):
         self._draw_graph(force=True)
+        if getattr(self, "backdrop", None) is not None:
+            self.win.after_idle(self._sync_backdrop)
         if self.overlay_open:
             self._place_overlay()
         if self.menu_open:
@@ -515,11 +582,17 @@ class AgentNetworkWindow:
             x0, y0, wx, wy, _, _ = self._drag
             self.win.geometry(f"+{wx + e.x_root - x0}+{wy + e.y_root - y0}")
 
-    def _resize_move(self, e):
+    def _resize_move(self, e, side="se"):
+        """Resize a window without a title bar from its edges (the left ones move it too)."""
         if self._drag:
-            x0, y0, _, _, ww, wh = self._drag
+            x0, y0, wx, wy, ww, wh = self._drag
             mw, mh = self.needed(SCALE_MIN / 100)
-            self.win.geometry(f"{max(mw, ww + e.x_root - x0)}x{max(mh, wh + e.y_root - y0)}")
+            dx, dy = e.x_root - x0, e.y_root - y0
+            w = ww + dx if "e" in side else (ww - dx if "w" in side else ww)
+            h = wh + dy if "s" in side else wh
+            w, h = max(mw, w), max(mh, h)
+            x = wx + (ww - w) if "w" in side else wx
+            self.win.geometry(f"{w}x{h}+{x}+{wy}")
 
     # ---- building
     def _build(self):
@@ -563,6 +636,17 @@ class AgentNetworkWindow:
         self.grip = tk.Label(w, text="◢", font=self.f_small, cursor="size_nw_se", padx=self.px(2), pady=0)
         self.grip.bind("<Button-1>", self._drag_start)
         self.grip.bind("<B1-Motion>", self._resize_move)
+        cursors = {"e": "sb_h_double_arrow", "w": "sb_h_double_arrow", "s": "sb_v_double_arrow",
+                   "sw": "size_ne_sw" if sys.platform == "win32" else "bottom_left_corner"}
+        self.handles = {}
+        for side, cur in cursors.items():
+            try:
+                h = tk.Frame(w, cursor=cur, bd=0, highlightthickness=0)
+            except tk.TclError:
+                h = tk.Frame(w, bd=0, highlightthickness=0)
+            h.bind("<Button-1>", self._drag_start)
+            h.bind("<B1-Motion>", lambda e, side=side: self._resize_move(e, side))
+            self.handles[side] = h
         self.body = tk.Frame(w)
         self.body.pack(fill="both", expand=True)
         self.canvas = tk.Canvas(self.body, highlightthickness=0, bd=0, height=self.px(150))
@@ -576,12 +660,23 @@ class AgentNetworkWindow:
                            padx=self.px(8), pady=self.px(4), cursor="arrow", takefocus=0)
         self.log.pack(fill="both", expand=False)
         self.win.bind("<Configure>", self._on_window_resize, add="+")
+        for seq in ("<FocusIn>", "<Map>", "<Unmap>"):  # brought to the front, minimised or restored
+            self.win.bind(seq, self._window_event, add="+")
 
         self.chip = tk.Label(w, font=self.f_main, cursor="hand2", padx=self.px(6), pady=self.px(1), bd=1,
                              relief="solid")
         self.chip.bind("<Button-1>", lambda e: self.open_overlay(True))
         self.overlay = tk.Frame(w, bd=1, relief="solid")
         self.menu = tk.Frame(w, bd=0, highlightthickness=1)
+        self.statdrop = tk.Frame(w, bd=0, highlightthickness=1)
+        self.stathead = tk.Label(self.statdrop, font=self.f_small, anchor="w", cursor="hand2")
+        self.stathead.pack(fill="x", padx=self.px(6), pady=(self.px(3), 0))
+        self.stathead.bind("<Button-1>", lambda e: self.toggle_stat(self.stat_open))
+        self.stattext = tk.Text(self.statdrop, font=self.f_small, bd=0, highlightthickness=0, wrap="none",
+                                takefocus=0, cursor="arrow", padx=self.px(6), pady=self.px(3))
+        self.stattext.pack(fill="both", expand=True)
+        self.stat_open = None
+        self.stats = agents.network_stats({"agents": []})
 
     def _bind_keys(self):
         """Keys work wherever the focus is in the window, except while typing your own answer."""
@@ -616,7 +711,9 @@ class AgentNetworkWindow:
             w.bind(str(n), key(lambda n=n: self.choose(n - 1) if self.overlay_open else None))
 
     def _escape(self):
-        if self.menu_open:
+        if self.stat_open:
+            self.toggle_stat(None)
+        elif self.menu_open:
             self.toggle_menu(False)
         elif self.overlay_open:
             self.open_overlay(False)
@@ -631,6 +728,14 @@ class AgentNetworkWindow:
             inside = True
         if self.menu_open and not inside:
             self.toggle_menu(False)
+        try:
+            in_stats = str(e.widget).startswith(str(self.statdrop)) or (
+                e.widget is self.canvas and "current" in self.canvas.gettags("current") and any(
+                    t.startswith("stat_") for t in self.canvas.gettags("current")))
+        except (tk.TclError, AttributeError):
+            in_stats = True
+        if self.stat_open and not in_stats:
+            self.toggle_stat(None)
         if self.opts["frameless"] and not self._typing():
             try:
                 self.win.focus_force()
@@ -832,6 +937,9 @@ class AgentNetworkWindow:
             self.net = agents.read_network(self.item)
         if len(self.net["agents"]) != n_before:
             self._update_minsize()
+        self.stats = agents.network_stats(self.net)
+        if self.stat_open:
+            self._fill_stat()
         if self.sel >= len(self.net["agents"]):
             self.sel = -1
         self._draw_graph()
@@ -875,8 +983,15 @@ class AgentNetworkWindow:
             self._robots[key] = core._to_photo(im)
         return self._robots[key]
 
+    def _stats_box(self, W, H):
+        """The stats node's box: bottom right of the graph."""
+        sl = self.f_small.metrics("linespace")
+        w, h = self.px(150), sl * 4 + self.px(10)
+        return (W - w - self.px(8), H - h - self.px(8), w, h)
+
     def _layout(self, W, H):
-        """Node boxes: main on the left, subagents in one column (two when there are many)."""
+        """Node boxes: main on the left, subagents in one column (two when there are many), clear of the stats
+        node at the bottom right."""
         n = len(self.net["agents"]) - 1
         lh = self.f_main.metrics("linespace")
         pad = self.px(10)
@@ -886,10 +1001,13 @@ class AgentNetworkWindow:
             return boxes, False
         cols = 1 if n <= 4 else 2
         sub_w = self.px(140)
-        sub_h = lh * (3 if cols == 1 else 4) + self.px(8)
+        sub_h = lh * (4 if cols == 1 else 5) + self.px(8)
         per_col = math.ceil(n / cols)
         x0 = pad + main_w + self.px(70)
         gap_x = sub_w + self.px(40)
+        sx, sy, _, _ = self._stats_box(W, H)
+        if x0 + (cols - 1) * gap_x + sub_w > sx - pad:  # the column would run into the stats node: stay above it
+            H = max(sub_h + 2 * pad, sy)
         for k in range(n):
             col, row = divmod(k, per_col)
             rows = min(per_col, n - col * per_col)
@@ -902,6 +1020,7 @@ class AgentNetworkWindow:
         c, P = self.canvas, self.P
         W, H = max(50, c.winfo_width()), max(50, c.winfo_height())
         sig = (W, H, self.sel, self.theme, self.s, self.opts["node_alpha"], self.opts["bg_alpha"], self.in_window,
+               repr(self.stats), self.stat_open,
                tuple((a["name"], a["state"], a["model_label"], a["effort"], a["ctx"], a["thought"])
                      for a in self.net["agents"]))
         if sig == self._graph_sig and not force:
@@ -909,8 +1028,6 @@ class AgentNetworkWindow:
         self._graph_sig = sig
         c.delete("all")
         self.edges = []
-        if self._applied.get("clear") and not IS_MAC:  # background opacity: the background as a stipple pattern
-            c.create_rectangle(0, 0, W, H, fill=P["bg"], outline="", stipple=dither(self.opts["bg_alpha"]))
         ags = self.net["agents"]
         if not ags:
             c.create_text(W // 2, H // 2, text="$ waiting for a session in claude code or codex_",
@@ -947,7 +1064,7 @@ class AgentNetworkWindow:
             info = " · ".join(v for v in (a["model_label"], a["effort"]) if v)
             ctx = agents.fmt_tokens(a["ctx"])
             ctx_line = (f"ctx {ctx}" + (f"/{agents.fmt_tokens(a['ctx_max'])}" if a["ctx_max"] else "")) if ctx else ""
-            rows = [info, ctx_line] if a["main"] else [" · ".join(v for v in (info, ctx_line) if v)]
+            rows = [info, ctx_line]  # the context always on a line of its own
             if not a["main"] and not beside:
                 rows.append(a["thought"])
             ly = y + self.px(5) + lh
@@ -964,7 +1081,9 @@ class AgentNetworkWindow:
             c.create_text(x + self.px(8), y + h - self.px(4), text=self._fit(label, w - self.px(14), self.f_small),
                           anchor="sw", fill=P[status_col], font=self.f_small, tags=tag)
             if not a["main"] and beside and a["thought"]:
-                room = W - (x + w) - self.px(18)
+                sx, sy, _, _ = self._stats_box(W, H)
+                right = sx - self.px(8) if y + h / 2 > sy - self.px(4) else W  # not under the stats node
+                room = right - (x + w) - self.px(18)
                 if room > self.px(40):
                     c.create_text(x + w + self.px(10), y + h / 2, text=self._fit(f"› {a['thought']}", room,
                                                                                  self.f_small),
@@ -973,8 +1092,86 @@ class AgentNetworkWindow:
             c.tag_bind(tag, "<Button-1>", lambda e, i=i: self.select(i))
             c.tag_bind(tag, "<Enter>", lambda e: c.configure(cursor="hand2"))
             c.tag_bind(tag, "<Leave>", lambda e: c.configure(cursor=""))
+        self._draw_stats(W, H)
         self._dots = [c.create_oval(0, 0, 0, 0, fill=col, outline="", state="hidden")
                       for pts, st, col in self.edges for _ in range(2)]
+
+    # ---- the stats node and its drop-downs
+    def _draw_stats(self, W, H):
+        c, P, st = self.canvas, self.P, self.stats
+        x, y, w, h = self._stats_box(W, H)
+        sl = self.f_small.metrics("linespace")
+        c.create_rectangle(x, y, x + w, y + h, fill=P["node"], stipple=dither(self.opts["node_alpha"]),
+                           outline=P["line"], width=max(1, self.px(1)))
+        c.create_text(x + self.px(6), y + self.px(4), text="≡ this task", anchor="nw", fill=P["hi"],
+                      font=self.f_bold)
+        n_calls = sum(n for _, n in st["subagents"])
+        tool_calls = sum(n for _, n in st["tools"])
+        rows = (("subs", f"subagents {n_calls} ▾"), ("ctx", f"context {agents.fmt_tokens(st['ctx_total']) or 0} ▾"),
+                ("tools", f"tools {len(st['tools'])} · {tool_calls} calls ▾"))
+        for k, (kind, text) in enumerate(rows):
+            tag = f"stat_{kind}"
+            on = getattr(self, "stat_open", None) == kind
+            c.create_text(x + self.px(8), y + self.px(6) + sl * (k + 1), text=self._fit(text, w - self.px(12),
+                                                                                        self.f_small),
+                          anchor="nw", fill=P["blue"] if on else P["tx"], font=self.f_small, tags=tag)
+            c.tag_bind(tag, "<Button-1>", lambda e, k=kind: self.toggle_stat(k))
+            c.tag_bind(tag, "<Enter>", lambda e: c.configure(cursor="hand2"))
+            c.tag_bind(tag, "<Leave>", lambda e: c.configure(cursor=""))
+        self._stats_xy = (x, y, w, h)
+
+    def toggle_stat(self, kind):
+        """Open (or fold) a read-only drop-down of the stats node: subagents, every context, tools and skills."""
+        if getattr(self, "stat_open", None) == kind:
+            kind = None
+        self.stat_open = kind
+        self._graph_sig = None
+        if kind is None:
+            self.statdrop.place_forget()
+        else:
+            if self.menu_open:
+                self.toggle_menu(False)
+            self._fill_stat()
+        self._draw_graph(force=True)
+        return "break"
+
+    def _stat_lines(self, kind):
+        st = self.stats
+        if kind == "subs":
+            if not st["subagents"]:
+                return [("# no subagents in this task", "mu")]
+            return [(f"{name:<22} ×{n}", "") for name, n in st["subagents"]]
+        if kind == "ctx":
+            lines = [(f"{'#':<3}{'agent':<18}{'model':<14}{'context':>8}", "mu")]
+            for k, (name, model, ctx) in enumerate(st["calls"], 1):
+                lines.append((f"{k:<3}{name[:17]:<18}{model[:13]:<14}{agents.fmt_tokens(ctx) or '-':>8}", ""))
+            lines.append((f"{'':<3}{'total':<32}{agents.fmt_tokens(st['ctx_total']) or '0':>8}", "mu"))
+            return lines
+        lines = [(f"{name:<26} ×{n}", "") for name, n in st["tools"]] or [("# no tool calls in this task", "mu")]
+        lines.append(("── skills ──", "mu"))
+        lines += [(f"{name:<26} ×{n}", "") for name, n in st["skills"]] or [("# no skills used", "mu")]
+        return lines
+
+    def _fill_stat(self):
+        P, t = self.P, self.stattext
+        lines = self._stat_lines(self.stat_open)
+        sig = (self.stat_open, tuple(lines), self.theme, self.s)
+        if sig == getattr(self, "_stat_sig", None) and self.statdrop.winfo_ismapped():
+            return
+        self._stat_sig = sig
+        title = {"subs": "subagents used", "ctx": "context per agent call", "tools": "tools and skills"}[self.stat_open]
+        self.stathead.configure(text=f"── {title} ── [esc]", bg=P["bar"], fg=P["mu"])
+        self.statdrop.configure(bg=P["bar"], highlightbackground=P["line"], highlightcolor=P["line"])
+        t.configure(state="normal", bg=P["bar"], fg=P["tx"], width=max(len(x) for x, _ in lines) + 1,
+                    height=min(14, len(lines)))
+        t.delete("1.0", "end")
+        t.tag_configure("mu", foreground=P["mu"])
+        for text, tag in lines:
+            t.insert("end", text + "\n", tag)
+        t.configure(state="disabled")
+        x, y, w, h = getattr(self, "_stats_xy", (0, 0, 0, 0))
+        self.statdrop.place(in_=self.canvas, x=x + w, y=y - self.px(4), anchor="se")
+        self.statdrop.lift()
 
     @staticmethod
     def _fit(text, width, font):

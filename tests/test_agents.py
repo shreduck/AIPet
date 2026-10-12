@@ -101,6 +101,14 @@ class ClaudeNetworkTests(unittest.TestCase):
         self.assertEqual([r[0] for r in net["log"]], sorted(r[0] for r in net["log"]))
         self.assertNotIn("earlier", [r[2] for r in rows])  # the old turn's subagent stays out of the log too
 
+    def test_stats_list_subagents_every_context_and_tools(self):
+        stats = agents.network_stats(agents.read_network(self.item(), now=self.now))
+        self.assertEqual(stats["subagents"], [("Explore", 1), ("Plan", 1)])
+        self.assertEqual([c[0] for c in stats["calls"]], ["main", "Explore", "Plan"])  # one row per agent, in order
+        self.assertEqual(stats["ctx_total"], 84002 + 23002 + 12002)
+        self.assertEqual(dict(stats["tools"]), {"Agent": 1, "Grep": 1, "Bash": 1})
+        self.assertEqual(stats["skills"], [])
+
     def test_running_agent_without_transcript_still_shows(self):
         net = agents.read_network(self.item(agent_ids={"zzz": "tester"}, wait_agent="", state="working"), now=self.now)
         tester = next(a for a in net["agents"] if a["id"] == "zzz")
