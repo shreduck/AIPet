@@ -3171,6 +3171,7 @@ def rescale_card_fonts():
 
 
 NO_CHOICE = "\x00none"  # "nothing picked" for a question's radio buttons (Tk draws "" as all of them selected)
+OWN_CHOICE = "\x00own"  # the "Your own answer" radio button: send the typed text
 
 
 class Detail:
@@ -3571,29 +3572,45 @@ class Detail:
                              wraplength=400, font=self.f(8)).pack(fill="x", padx=(24, 0))
             if readonly:
                 continue
+            # Your own answer has its own radio button (check box for multi-select), so it is plain what gets sent:
+            # typing selects it, picking an option deselects it again (the typed text stays, but isn't sent)
             own = tk.StringVar(master=self.win, value="")
+            own_on = tk.BooleanVar(master=self.win, value=False)
             other = tk.Frame(block, bg=bg)
             other.pack(fill="x", pady=(4, 0))
-            tk.Label(other, text="Or your own answer:", bg=bg, fg=muted, font=self.f(8)).pack(side="left")
+            if multi:
+                pick = tk.Checkbutton(other, text="Your own answer:", variable=own_on, anchor="w")
+            else:
+                pick = tk.Radiobutton(other, text="Your own answer:", variable=choice, value=OWN_CHOICE, anchor="w",
+                                      tristatevalue="\x00none")
+            pick.configure(bg=bg, fg=fg, activebackground=bg, activeforeground=fg, selectcolor=T["entry_bg"],
+                           highlightthickness=0, font=self.f(10, "bold"), cursor="hand2")
+            pick.pack(side="left")
             entry = tk.Entry(other, textvariable=own, bg=T["entry_bg"], fg=T["entry_fg"], relief="flat",
                              insertbackground=T["entry_fg"], highlightthickness=1, highlightbackground=T["border"],
                              highlightcolor=T["primary"], font=self.f(9))
             entry.pack(side="left", fill="x", expand=True, padx=(6, 0))
-            if not multi:  # typing replaces the picked option
-                own.trace_add("write", lambda *_, c=choice, o=own: c.set(NO_CHOICE) if o.get().strip() else None)
-            self._qvars.append((q, multi, choice, picks, own))
+            if multi:
+                own.trace_add("write", lambda *_, v=own_on, o=own: v.set(True) if o.get().strip() else None)
+            else:
+                own.trace_add("write", lambda *_, c=choice, o=own: c.set(OWN_CHOICE) if o.get().strip() else None)
+                pick.configure(command=lambda e=entry: e.focus_set())
+            self._qvars.append((q, multi, choice, picks, own, own_on))
         self.win.after(60, self.apply_scale)
 
     def question_answers(self):
         """{question text: label} (single choice) or {question text: [labels]} (multi-select); typed answers count
-        as a label. None until every question has an answer."""
+        as a label, but only while its own radio button (check box) is selected. None until every question has an
+        answer."""
         answers = {}
-        for q, multi, choice, picks, own in self._qvars:
+        for q, multi, choice, picks, own, own_on in self._qvars:
             typed = own.get().strip()
             if multi:
-                value = [label for label, var in picks.items() if var.get()] + ([typed] if typed else [])
+                value = [label for label, var in picks.items() if var.get()] + ([typed] if typed and own_on.get() else [])
+            elif choice.get() == OWN_CHOICE:
+                value = typed
             else:
-                value = typed or (choice.get() if choice.get() != NO_CHOICE else "")
+                value = choice.get() if choice.get() != NO_CHOICE else ""
             if not value:
                 return None
             answers[q["question"]] = value
