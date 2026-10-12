@@ -335,7 +335,8 @@ A live map of one session: the main agent and every subagent it started, Claude 
   results), each line in its agent's colour; the other tabs select one agent, including its tool calls.
 - **Log filters** have their own bar below the agent tabs: **show tools**, **primary** (user queries and final results),
   and separate **tools** and **MCP** dropdowns with a checkbox per unique tool. Agent and session title clicks keep
-  the filters; **clear filters** at the far right restores the full log. Tool nodes do not add tabs to the agent bar.
+  the filters; **clear filters** restores the full log. The controls wrap when the log pane is narrow.
+  Tool nodes do not add tabs to the agent bar.
 - **Prompts**: when an agent needs you, a small warning shows (*Plan needs your input*). Click it (or press Space) and
   it opens over the log with the prompt or question and its answers (side by side when they fit, one per line when
   they don't); Esc folds it back. A question's answers are a pick-one list with *Your own answer:* as the last one:
@@ -360,7 +361,9 @@ A live map of one session: the main agent and every subagent it started, Claude 
   follow; there, *tidy* draws each session as a group
   with a title bar instead, its name scrolling like the pet's name tags when it doesn't fit). A session that clears
   fades out, then the ones below slide up into its place; sliders for window opacity, background opacity (the graph's background; Windows and macOS) and node
-  opacity, 30-100%, and scale, 50-150% (applied when you let go of the mouse, so the window doesn't move under it).
+  opacity, 30-100%, window scale, 50-150%, and text scale, 50-200% relative to the window scale
+  (applied when you let go of the mouse, so the window doesn't move under it). Both scales default to 100%.
+  Text scale adjusts the graph, logs and controls without enlarging the pet drawings.
   Background opacity shows the graph's background through a backdrop window of AIPet's own, so clicks never reach
   what is behind. Tk can't draw half see-through nodes, so node opacity is a dotted pattern (75 / 50 / 25%).
 - **Stats node** (bottom right of the graph) for the current task, since your latest prompt: *subagents* (which kinds,
@@ -378,8 +381,8 @@ A live map of one session: the main agent and every subagent it started, Claude 
   or tool node is added or removed. Enabling it fits immediately; the preference is remembered across restarts.
 - **Reset agent network appearance** (Appearance, next to Reset pet size, in every menu and the AIPet menu window) puts the default look
   back and centres the open windows on the main screen; one window or one per session stays as it was.
-- **Size**: the window can't get smaller than what everything needs at 50% scale. Shrinking it below what the current
-  scale needs turns the scale down with it; raising the scale grows the window to fit.
+- **Size**: resizing preserves both scale settings. Raising the window scale grows the window to fit;
+  use the graph's zoom and pan controls to navigate its contents in a smaller window.
 - **Double-click the top bar** to maximise the window (and again to restore); maximised leaves the taskbar (or the
   menu bar and Dock) alone, also without a title bar.
 - **Keys**: Tab / → next agent, Shift+Tab / ← previous, A shared log, ↑↓ scroll the log, PgUp / PgDn previous or

@@ -27,10 +27,11 @@ IS_MAC = sys.platform == "darwin"
 ALPHA_MIN, ALPHA_STEP = 30, 5  # window opacity, %
 OPACITY_STEP = 5  # background and node opacity, % (30-100), drawn as Tk stipple patterns (see dither())
 SCALE_MIN, SCALE_MAX, SCALE_STEP = 50, 150, 5  # the window's text and drawing size, %
+TEXT_SCALE_MIN, TEXT_SCALE_MAX, TEXT_SCALE_STEP = 50, 200, 5  # text relative to the window scale, %
 ZOOM_MIN, ZOOM_MAX = 0.01, 3.0
 OPTIONS_KEY = "agent_window"  # config.json
 DEFAULT_OPTIONS = {"on_top": False, "alpha": 100, "bg_alpha": 100, "node_alpha": 100, "frameless": False,
-                   "separate": False, "tabbed": True, "tidy": False, "scale": 100, "log_lines": 6,
+                   "separate": False, "tabbed": True, "tidy": False, "scale": 100, "text_scale": 100, "log_lines": 6,
                    "log_cols": 60, "log_side": "bottom", "log_tail": True, "tools": True, "auto_fit": False}
 LOG_SIDES = ("bottom", "right", "top", "left")
 HINT = "tab/←→ agent · a all · pgup/pgdn session · space prompt · ctrl+wheel/+/- zoom · 0 reset · drag pan · esc close"
@@ -56,6 +57,7 @@ def load_options(cfg):
     opts["bg_alpha"] = _snap(opts["bg_alpha"], ALPHA_MIN, 100, OPACITY_STEP)
     opts["node_alpha"] = _snap(opts["node_alpha"], ALPHA_MIN, 100, OPACITY_STEP)
     opts["scale"] = _snap(opts["scale"], SCALE_MIN, SCALE_MAX, SCALE_STEP)
+    opts["text_scale"] = _snap(opts["text_scale"], TEXT_SCALE_MIN, TEXT_SCALE_MAX, TEXT_SCALE_STEP)
     opts["log_lines"] = _snap(opts["log_lines"], 3, 80, 1)
     opts["log_cols"] = _snap(opts["log_cols"], 20, 400, 1)
     if opts["log_side"] not in LOG_SIDES:
@@ -538,6 +540,8 @@ class AgentNetworkWindow:
             pass
 
     def close(self):
+        if self._save_job:
+            self._save("scale")  # flush a slider change even if the window is closed immediately
         for job in (self._after, self._anim, self._save_job):
             if job:
                 try:
@@ -578,10 +582,10 @@ class AgentNetworkWindow:
         self._update_minsize()
 
     def _update_minsize(self):
-        """Never smaller than everything needs at the smallest scale; between that and the current scale's needs,
-        shrinking the window shrinks the scale with it (_on_window_resize)."""
+        """Keep controls usable; graph contents can zoom and pan independently."""
         try:
-            self.win.minsize(*self.needed(SCALE_MIN / 100))
+            self.win.minsize(min(self.px(320), self.win.winfo_screenwidth() - 40),
+                             min(self.px(220), self.win.winfo_screenheight() - 80))
         except tk.TclError:
             pass
 
@@ -648,8 +652,8 @@ class AgentNetworkWindow:
         self.opts = dict(opts)
         if self.opts.get("tabbed") != old.get("tabbed"):
             self._center_next = True
-        if self.opts["scale"] != old.get("scale"):
-            self.set_scale(self.opts["scale"] / 100, save=False)
+        if any(self.opts.get(k) != old.get(k) for k in ("scale", "text_scale")):
+            self._apply_scale()
         if any(self.opts.get(k) != old.get(k) for k in ("log_side", "log_lines", "log_cols")):
             self._arrange()
         if self.opts.get("tools") != old.get("tools"):
@@ -664,7 +668,7 @@ class AgentNetworkWindow:
         self.toggle_menu(False)
         self.opts = dict(opts)
         self._arrange()
-        self.set_scale(self.opts["scale"] / 100, save=False, grow=False)
+        self._apply_scale(grow=False)
         self._apply_options()
         self.cascade, self.at = cascade, None
         self._place()
@@ -677,11 +681,30 @@ class AgentNetworkWindow:
         u = _snap(u * 100, SCALE_MIN, SCALE_MAX, SCALE_STEP) / 100
         if abs(u - self.u) < 1e-6:
             return
-        self.u, self.s = u, 1.5 * u
         self.opts["scale"] = int(round(u * 100))
-        self.f_main.configure(size=max(5, int(round(8 * self.s))))
-        self.f_bold.configure(size=max(5, int(round(8 * self.s))))
-        self.f_small.configure(size=max(5, int(round(7 * self.s))))
+        self._apply_scale(grow=grow)
+        if save:
+            self._save("scale", delay=500)
+
+    def set_text_scale(self, value, save=True):
+        value = _snap(value, TEXT_SCALE_MIN, TEXT_SCALE_MAX, TEXT_SCALE_STEP)
+        if value == self.opts["text_scale"]:
+            return
+        self.opts["text_scale"] = value
+        self._apply_scale(grow=False)
+        if save:
+            self._save("text_scale", delay=500)
+
+    def _font_scale(self):
+        return self.s * self.opts.get("text_scale", 100) / 100
+
+    def _apply_scale(self, grow=True):
+        self.u = self.opts["scale"] / 100
+        self.s = 1.5 * self.u
+        fs = self._font_scale()
+        self.f_main.configure(size=max(5, int(round(8 * fs))))
+        self.f_bold.configure(size=max(5, int(round(8 * fs))))
+        self.f_small.configure(size=max(5, int(round(7 * fs))))
         self._robots.clear()
         self._graph_sig = self._tabs_sig = self._prompt_sig = self._log_sig = None
         self._update_minsize()
@@ -701,10 +724,10 @@ class AgentNetworkWindow:
                 sl.size(self.px(150), self.f_small.metrics("linespace") + self.px(4))
             if getattr(self, "scale_slider", None):
                 self.scale_slider.set(self.opts["scale"], notify=False)
+            if getattr(self, "text_scale_slider", None):
+                self.text_scale_slider.set(self.opts["text_scale"], notify=False)
             self._place_menu()
         self._refresh()
-        if save:
-            self._save("scale", delay=500)
 
     # ---- the backdrop behind a see-through graph background
     def _sync_backdrop(self):
@@ -756,18 +779,11 @@ class AgentNetworkWindow:
             self.win.after_idle(self._sync_backdrop)
 
     def _on_window_resize(self, e):
-        """Shrinking the window below what the current scale needs makes the scale follow it (down to 50%)."""
+        """Resize the viewport without silently shrinking and saving the user's UI scale."""
         if e.widget is self.win:
             self._moving_until = time.time() + 0.3  # moved or resized: animations pause until it settles
         if e.widget is self.win and getattr(self, "backdrop", None) is not None:
             self.win.after_idle(self._sync_backdrop)  # moved or resized: the backdrop follows
-        if e.widget is not self.win or self._fitting or self.u <= SCALE_MIN / 100 + 1e-6:
-            return
-        nw, nh = self.needed()
-        if e.width >= nw - 2 and e.height >= nh - 2:
-            return
-        fit = self.u * min(e.width / max(1, nw), e.height / max(1, nh))
-        self.set_scale(max(SCALE_MIN / 100, math.floor(fit * 20) / 20), grow=False)
 
     def _apply_options(self, changed=None):
         o, P, w = self.opts, self.P, self.win
@@ -908,7 +924,7 @@ class AgentNetworkWindow:
 
     # ---- building
     def _build(self):
-        s = self.s
+        s = self._font_scale()
         self.f_main = tkfont.Font(root=self.win, family=core.UI_FONT, size=max(5, int(round(8 * s))))
         self.f_bold = tkfont.Font(root=self.win, family=core.UI_FONT, size=max(5, int(round(8 * s))), weight="bold")
         self.f_small = tkfont.Font(root=self.win, family=core.UI_FONT, size=max(5, int(round(7 * s))))
@@ -949,7 +965,8 @@ class AgentNetworkWindow:
         self.footbar.pack(side="bottom", fill="x")
         self.foot = tk.Label(self.footbar, font=self.f_small, anchor="w", padx=self.px(8), pady=self.px(3), text=HINT)
         self.foot.pack(side="left", fill="x", expand=True)
-        self.grip = tk.Label(w, text="◢", font=self.f_small, cursor="size_nw_se", padx=self.px(2), pady=0)
+        resize_cursor = "size_nw_se" if sys.platform == "win32" else "bottom_right_corner"
+        self.grip = tk.Label(w, text="◢", font=self.f_small, cursor=resize_cursor, padx=self.px(2), pady=0)
         self.grip.bind("<Button-1>", self._drag_start)
         self.grip.bind("<B1-Motion>", self._resize_move)
         cursors = {"e": "sb_h_double_arrow", "w": "sb_h_double_arrow", "s": "sb_v_double_arrow",
@@ -1005,28 +1022,25 @@ class AgentNetworkWindow:
         self.tabs.pack(fill="x", padx=self.px(6))
         self.filterbar = tk.Frame(self.logbox)
         self.filterbar.pack(fill="x", padx=self.px(6), pady=(0, self.px(3)))
-        self.clear_filters_btn = tk.Label(self.filterbar, text="[clear filters]", font=self.f_small,
-                                          cursor="hand2", padx=self.px(3))
-        self.clear_filters_btn.pack(side="right")
-        self.clear_filters_btn.bind("<Button-1>", lambda e: self.clear_log_filters())
-        self.show_tools_var = tk.BooleanVar(master=self.win, value=True)
-        self.primary_var = tk.BooleanVar(master=self.win, value=False)
-        self.show_tools_btn = tk.Checkbutton(self.filterbar, text="show tools", font=self.f_small,
-                                             variable=self.show_tools_var, bd=0, highlightthickness=0,
-                                             command=lambda: self.set_log_filter("show_tools", self.show_tools_var.get()))
-        self.show_tools_btn.pack(side="left")
-        self.primary_btn = tk.Checkbutton(self.filterbar, text="primary", font=self.f_small,
-                                          variable=self.primary_var, bd=0, highlightthickness=0,
-                                          command=lambda: self.set_log_filter("primary", self.primary_var.get()))
-        self.primary_btn.pack(side="left")
-        self.tool_filter_btn = tk.Label(self.filterbar, text="[tools ▾]", font=self.f_small,
-                                        cursor="hand2", padx=self.px(3))
-        self.tool_filter_btn.pack(side="left")
-        self.tool_filter_btn.bind("<Button-1>", lambda e: self.open_tool_filters(False))
-        self.mcp_filter_btn = tk.Label(self.filterbar, text="[MCP ▾]", font=self.f_small,
-                                       cursor="hand2", padx=self.px(3))
-        self.mcp_filter_btn.pack(side="left")
-        self.mcp_filter_btn.bind("<Button-1>", lambda e: self.open_tool_filters(True))
+        def filter_button(text, action):
+            button = tk.Label(self.filterbar, text=text, font=self.f_small, cursor="hand2",
+                              padx=self.px(3), pady=self.px(1), takefocus=1, highlightthickness=1)
+            def activate(event):
+                action()
+                return "break"
+            for event in ("<Button-1>", "<space>", "<Return>"):
+                button.bind(event, activate)
+            return button
+        self.show_tools_btn = filter_button("[x] show tools", lambda: self.set_log_filter(
+            "show_tools", not self._log_filters["show_tools"]))
+        self.primary_btn = filter_button("[ ] primary", lambda: self.set_log_filter(
+            "primary", not self._log_filters["primary"]))
+        self.tool_filter_btn = filter_button("[tools ▾]", lambda: self.open_tool_filters(False))
+        self.mcp_filter_btn = filter_button("[MCP ▾]", lambda: self.open_tool_filters(True))
+        self.clear_filters_btn = filter_button("[clear filters]", self.clear_log_filters)
+        self._filter_buttons = (self.show_tools_btn, self.primary_btn, self.tool_filter_btn,
+                                self.mcp_filter_btn, self.clear_filters_btn)
+        self.filterbar.bind("<Configure>", self._layout_log_filters)
         self.log = tk.Text(self.logbox, height=6, width=40, wrap="word", bd=0, highlightthickness=0,
                            font=self.f_main, padx=self.px(8), pady=self.px(4), cursor="xterm", takefocus=0,
                            exportselection=True)
@@ -1261,8 +1275,10 @@ class AgentNetworkWindow:
         if not o["separate"] and not self.pinned:
             toggle("tabs", "tabbed", "  tabbed (one session at a time)")
         slider("opacity", ALPHA_MIN, 100, ALPHA_STEP, o["alpha"], lambda v: self._slide("alpha", v))
-        self.scale_slider = slider("scale", SCALE_MIN, SCALE_MAX, SCALE_STEP, o["scale"],
+        self.scale_slider = slider("window scale", SCALE_MIN, SCALE_MAX, SCALE_STEP, o["scale"],
                                    lambda v: self.set_scale(v / 100), live=False)
+        self.text_scale_slider = slider("text scale", TEXT_SCALE_MIN, TEXT_SCALE_MAX, TEXT_SCALE_STEP,
+                                        o["text_scale"], self.set_text_scale, live=False)
 
         section("graph")
         toggle("auto_fit", "auto_fit", "auto fit all")
@@ -1472,8 +1488,8 @@ class AgentNetworkWindow:
         return int(round(n * self.s * self.gz))
 
     def _graph_fonts(self):
-        size = max(1, int(round(8 * self.s * self.gz)))
-        small = max(1, int(round(7 * self.s * self.gz)))
+        size = max(1, int(round(8 * self._font_scale() * self.gz)))
+        small = max(1, int(round(7 * self._font_scale() * self.gz)))
         for f, sz in ((self.g_main, size), (self.g_bold, size), (self.g_small, small)):
             if f.cget("size") != sz:
                 f.configure(size=sz)
@@ -1514,7 +1530,7 @@ class AgentNetworkWindow:
         lh = self._graph_line_height()
         main_h = lh * 4 + self.gpx(10)
         sub_h = lh * 4 + self.gpx(8)
-        return int(max(main_h, rows * (sub_h + self.gpx(6))) + 2 * self.gpx(10) + lh * 1.6)
+        return int(max(main_h, rows * (sub_h + self.gpx(12 if IS_MAC else 6))) + 2 * self.gpx(10) + lh * 1.6)
 
     def _layout(self, net, W, H, reserve=None):
         """Node boxes (one per agent, in net["agents"] order): main on the left, its subagents in a column to its
@@ -1530,13 +1546,20 @@ class AgentNetworkWindow:
             return boxes, False
         sub_w = self.gpx(140)
         sub_h = lh * 4 + self.gpx(8)
-        x0 = pad + main_w + self.gpx(70)
-        gap_x = sub_w + self.gpx(60)
+        x0 = pad + main_w + self.gpx(40 if IS_MAC else 70)
+        gap_x = sub_w + self.gpx(40 if IS_MAC else 60)
         if reserve and x0 + (len(cols) - 1) * gap_x + sub_w > reserve[0] - pad:
             H = max(sub_h + 2 * pad, reserve[1])
+        if IS_MAC:
+            # Keep siblings together on Mac instead of spreading them across the
+            # viewport. Preserve the existing Windows layout and display scaling.
+            step = sub_h + self.gpx(12)
+            H = max(H, max(len(col) for col in cols) * step + 2 * pad)
+            boxes[0] = (pad, (H - main_h) // 2, main_w, main_h)
         for c, col in enumerate(cols):
             rows = len(col)
-            step = max(sub_h + self.gpx(6), (H - 2 * pad) / max(1, rows))
+            if not IS_MAC:
+                step = max(sub_h + self.gpx(6), (H - 2 * pad) / max(1, rows))
             for row, i in enumerate(col):
                 top = pad + (H - 2 * pad - step * rows) / 2 + row * step + (step - sub_h) / 2
                 boxes[i] = (x0 + c * gap_x, int(max(pad // 2, top)), sub_w, sub_h)
@@ -2197,17 +2220,38 @@ class AgentNetworkWindow:
 
     def _update_log_filters(self):
         P, filters = self.P, self._log_filters
-        self.show_tools_var.set(filters["show_tools"])
-        self.primary_var.set(filters["primary"])
-        for button in (self.show_tools_btn, self.primary_btn):
-            button.configure(bg=P["bar"], fg=P["tx"], selectcolor=P["bar"],
-                             activebackground=P["bar"], activeforeground=P["hi"])
+        for button, key, label in ((self.show_tools_btn, "show_tools", "show tools"),
+                                   (self.primary_btn, "primary", "primary")):
+            button.configure(text=f"[{'x' if filters[key] else ' '}] {label}", bg=P["bar"],
+                             fg=P["blue"] if filters[key] else P["tx"])
         self.filterbar.configure(bg=P["bar"])
         for button, group, label in ((self.tool_filter_btn, "tools", "tools"), (self.mcp_filter_btn, "mcp", "MCP")):
             chosen = filters[group]
             count = "" if chosen is None else f" {len(chosen)}"
             button.configure(text=f"[{label}{count} ▾]", bg=P["bar"], fg=P["blue"] if chosen is not None else P["tx"])
         self.clear_filters_btn.configure(bg=P["bar"], fg=P["blue"])
+        for button in self._filter_buttons:
+            button.configure(highlightbackground=P["bar"], highlightcolor=P["blue"])
+        self._layout_log_filters()
+
+    def _layout_log_filters(self, event=None):
+        """Align filter controls using their measured size; wrap in narrow log panes."""
+        width = self.filterbar.winfo_width()
+        if width <= 1:
+            return
+        buttons = self._filter_buttons
+        height = max(button.winfo_reqheight() for button in buttons)
+        gap = self.px(2)
+        x = y = 0
+        for button in buttons:
+            wanted = min(width, button.winfo_reqwidth())
+            if x and x + wanted > width:
+                x, y = 0, y + height + gap
+            button.place(x=x, y=y, width=wanted, height=height)
+            x += wanted + gap
+        needed = y + height
+        if int(self.filterbar.cget("height")) != needed:
+            self.filterbar.configure(height=needed)
 
     def _choose_tools(self, group, selected):
         self._log_filters[group] = selected

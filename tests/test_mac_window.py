@@ -10,6 +10,152 @@ import unittest
 @unittest.skipUnless(sys.platform == "darwin" and os.environ.get("AIPET_NATIVE_WINDOW_TEST") == "1",
                      "requires an opt-in macOS GUI session")
 class MacWindowTests(unittest.TestCase):
+    def test_text_slider_is_independent_persists_and_resets_to_100(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import aipet
+        from aipet_agents_window import AgentNetworkWindow, DEFAULT_OPTIONS
+
+        root = aipet.MacPetWindow()
+        root.withdraw()
+        window = None
+        try:
+            with tempfile.TemporaryDirectory(prefix="aipet-text-scale-") as folder:
+                config = Path(folder) / "config.json"
+                with patch.object(aipet, "HOME_DIR", folder), patch.object(aipet, "CONFIG_PATH", str(config)):
+                    window = AgentNetworkWindow(root, SimpleNamespace(cfg={}, _last_items=[]))
+                    window.toggle_menu(True)
+                    root.update()
+                    self.assertEqual((window.scale_slider.value, window.text_scale_slider.value), (100, 100))
+                    normal_size = window.f_main.cget("size")
+                    normal_drawing = window.px(100)
+                    window.text_scale_slider.set(150)
+                    window.text_scale_slider._commit()
+                    root.update()
+                    self.assertEqual(window.opts["scale"], 100)
+                    self.assertEqual(window.px(100), normal_drawing)
+                    self.assertGreater(window.f_main.cget("size"), normal_size)
+                    window._graph_fonts()
+                    self.assertEqual(window.g_main.cget("size"), window.f_main.cget("size"))
+                    window.win.geometry("640x480")
+                    root.update()
+                    self.assertEqual((window.opts["scale"], window.opts["text_scale"]), (100, 150))
+                    window.close()  # immediate close must still save the pending change
+                    saved = json.loads(config.read_text())
+                    self.assertEqual(saved["agent_window"]["text_scale"], 150)
+                    window = AgentNetworkWindow(root, SimpleNamespace(cfg=saved, _last_items=[]))
+                    self.assertGreater(window.f_main.cget("size"), normal_size)
+                    window.set_options(dict(window.opts, text_scale=125))
+                    self.assertEqual(window.f_main.cget("size"), round(normal_size * 1.25))
+                    window.reset_appearance(dict(DEFAULT_OPTIONS))
+                    root.update()
+                    self.assertEqual((window.opts["scale"], window.opts["text_scale"]), (100, 100))
+                    self.assertEqual(window.f_main.cget("size"), normal_size)
+                    window.close()
+                    window = None
+        finally:
+            if window:
+                window.close()
+            root.destroy()
+
+    def test_log_filter_toolbar_aligns_and_wraps_without_overlapping_logs(self):
+        from types import SimpleNamespace
+        import aipet
+        from aipet_agents_window import AgentNetworkWindow
+
+        root = aipet.MacPetWindow()
+        root.withdraw()
+        window = None
+        try:
+            for scale in (100, 150):
+                pet = SimpleNamespace(cfg={"agent_window": {"scale": scale}}, _last_items=[])
+                window = AgentNetworkWindow(root, pet)
+                for side in ("bottom", "right", "top", "left"):
+                    window.opts.update(log_side=side, log_cols=20)
+                    window._arrange()
+                    root.update()
+                    bar = window.filterbar
+                    boxes = [(b.winfo_x(), b.winfo_y(), b.winfo_width(), b.winfo_height())
+                             for b in window._filter_buttons]
+                    self.assertEqual(len({b[3] for b in boxes}), 1)
+                    for x, y, width, height in boxes:
+                        self.assertGreaterEqual(x, 0)
+                        self.assertLessEqual(x + width, bar.winfo_width())
+                        self.assertLessEqual(y + height, bar.winfo_height())
+                    for first, second in zip(boxes, boxes[1:]):
+                        self.assertTrue(second[1] >= first[1] + first[3] or
+                                        (second[1] == first[1] and second[0] >= first[0] + first[2]))
+                    self.assertGreaterEqual(bar.winfo_y(), window.tabs.winfo_y() + window.tabs.winfo_height())
+                    self.assertGreaterEqual(window.log.winfo_y(), bar.winfo_y() + bar.winfo_height())
+                    if side in ("left", "right"):
+                        self.assertGreater(len({b[1] for b in boxes}), 1)
+                window.show_tools_btn.event_generate("<Button-1>")
+                root.update()
+                self.assertFalse(window._log_filters["show_tools"])
+                window.clear_filters_btn.event_generate("<Button-1>")
+                root.update()
+                self.assertTrue(window._log_filters["show_tools"])
+                window.close()
+                window = None
+        finally:
+            if window:
+                window.close()
+            root.destroy()
+
+    def test_agent_network_opens_with_and_without_sessions(self):
+        from types import SimpleNamespace
+        import aipet
+        from aipet_agents_window import AgentNetworkWindow
+
+        root = aipet.MacPetWindow()
+        root.withdraw()
+        callbacks = []
+        root.report_callback_exception = lambda *error: callbacks.append(error)
+        try:
+            for items in ([], [{"key": "test-network", "source": "CC", "session_id": "test-network",
+                               "agent": "codex", "title": "Isolated network test", "state": "working"}]):
+                with self.subTest(sessions=len(items)):
+                    window = AgentNetworkWindow(root, SimpleNamespace(cfg={}, _last_items=items))
+                    try:
+                        root.update()
+                        self.assertTrue(window.win.winfo_viewable())
+                        self.assertEqual(window.opts["scale"], 100)
+                        self.assertEqual(bool(window.net["agents"]), bool(items))
+                        window.toggle_menu(True)
+                        root.update()
+                        self.assertTrue(window.menu.winfo_viewable())
+                        self.assertEqual(callbacks, [])
+                    finally:
+                        window.close()
+        finally:
+            root.destroy()
+
+    def test_resize_preserves_ui_scale_and_text_size(self):
+        from types import SimpleNamespace
+        import aipet
+        from aipet_agents_window import AgentNetworkWindow
+
+        root = aipet.MacPetWindow()
+        root.withdraw()
+        pet = SimpleNamespace(cfg={}, _last_items=[])
+        window = None
+        try:
+            window = AgentNetworkWindow(root, pet)
+            root.update()
+            normal = window.f_main.metrics("linespace")
+            for size in ("640x480", "1200x800"):
+                window.win.geometry(size)
+                root.update()
+                self.assertEqual(window.opts["scale"], 100)
+                self.assertEqual(window.f_main.metrics("linespace"), normal)
+        finally:
+            if window:
+                window.close()
+            root.destroy()
+
     def test_auto_rules_persist_and_reopen_after_confirmation(self):
         import json
         import tempfile
@@ -75,7 +221,7 @@ class MacWindowTests(unittest.TestCase):
                         raise failures[0]
                     self.assertFalse(settings.winfo_exists())
                     app._auto_changed.assert_called_once()
-                    self.assertEqual(json.loads(path.read_text()), {"targets": {key: expected}})
+                    self.assertEqual(json.loads(path.read_text()), {"targets": {key: expected}, "timed": {}})
                     self.assertEqual(aipet.auto_approve_rules()[key], expected)
                     self.assertFalse(Path(str(path) + ".tmp").exists())
 
@@ -92,7 +238,7 @@ class MacWindowTests(unittest.TestCase):
                     click(reopened, "Cancel")
                     root.update()
                     self.assertFalse(reopened.winfo_exists())
-                    self.assertEqual(json.loads(path.read_text()), {"targets": {key: expected}})
+                    self.assertEqual(json.loads(path.read_text()), {"targets": {key: expected}, "timed": {}})
         finally:
             root.destroy()
 
@@ -177,6 +323,7 @@ class MacWindowTests(unittest.TestCase):
         item = {"key": "test-only", "agent": "codex", "title": "Test permission", "state": "needs_input",
                 "request": {"id": "test-only", "tool": "Test", "detail": "No command is executed"}}
         app = SimpleNamespace(root=root, cfg={"all_spaces": True}, details={}, _last_items=[item],
+                              timed_minutes=lambda: 5,
                               answers_enabled=lambda _: True, send_answer=MagicMock(return_value=False))
         detail = None
         try:

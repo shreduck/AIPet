@@ -319,6 +319,47 @@ class CodexNetworkTests(unittest.TestCase):
 
 
 class WindowLogicTests(unittest.TestCase):
+    def test_node_spacing_does_not_expand_to_fill_tall_windows(self):
+        import aipet_agents_window as win
+        view = object.__new__(win.AgentNetworkWindow)
+        view.s, view.gz = 1.5, 1.0
+        view._graph_line_height = lambda: 12 * view.s * view.gz
+        net = {"agents": [{"id": ""}] + [{"id": name, "depth": 1, "parent": "", "tool": True}
+                                        for name in ("apply_patch", "exec", "exec_command")]}
+        for scale, zoom in ((s, z) for s in (0.75, 1.0, 1.5, 2.25) for z in (0.4, 1.0, 2.0)):
+            view.s, view.gz = scale, zoom
+            relative = []
+            for height in (300, 2000):
+                with patch.object(win, "IS_MAC", True):
+                    boxes, _ = view._layout(net, 1000, height)
+                main = boxes[0]
+                children = boxes[1:]
+                relative.append([round(y - main[1], 1) for _, y, _, _ in children])
+                for upper, lower in zip(children, children[1:]):
+                    gap = lower[1] - upper[1] - upper[3]
+                    self.assertGreater(gap, 0)
+                    self.assertLessEqual(gap, view.gpx(12) + 1)
+                self.assertLessEqual(children[0][0] - main[0] - main[2], view.gpx(40))
+            for short, tall in zip(*relative):
+                self.assertAlmostEqual(short, tall, delta=1)
+
+    def test_windows_layout_keeps_existing_spacing_and_scaling(self):
+        import aipet_agents_window as win
+        view = object.__new__(win.AgentNetworkWindow)
+        view.s, view.gz = 1.5, 1.0
+        view._graph_line_height = lambda: 12 * view.s * view.gz
+        net = {"agents": [{"id": ""}] + [{"id": str(i), "depth": 1} for i in range(3)]}
+        with patch.object(win, "IS_MAC", False):
+            for scale in (1.0, 1.5, 2.0):
+                view.s = scale
+                for zoom in (0.4, 1.0, 2.0):
+                    view.gz = zoom
+                    short, _ = view._layout(net, 1000, 300)
+                    tall, _ = view._layout(net, 1000, 2000)
+                    self.assertEqual([b[2:] for b in short], [b[2:] for b in tall])
+                    self.assertEqual(tall[1][0] - tall[0][0] - tall[0][2], view.gpx(70))
+                    self.assertGreater(tall[-1][1] - tall[1][1], short[-1][1] - short[1][1])
+
     def graph_window(self):
         import aipet_agents_window as win
         view = object.__new__(win.AgentNetworkWindow)
@@ -452,6 +493,14 @@ class WindowLogicTests(unittest.TestCase):
 
 
 class WindowOptionTests(unittest.TestCase):
+    def test_both_scales_default_to_100_and_preserve_explicit_preferences(self):
+        import aipet_agents_window as win
+        for cfg in ({}, {"agent_window": {}}, {"agent_window": {"text_scale": "bad", "scale": False}}):
+            opts = win.load_options(cfg)
+            self.assertEqual((opts["scale"], opts["text_scale"]), (100, 100))
+        opts = win.load_options({"agent_window": {"scale": 75, "text_scale": 135}})
+        self.assertEqual((opts["scale"], opts["text_scale"]), (75, 135))
+
     def test_auto_fit_preference_is_saved_in_graph_options(self):
         import aipet_agents_window as win
         self.assertFalse(win.load_options({})["auto_fit"])

@@ -96,6 +96,13 @@ def start_spaces_probe(app, output):
                     "tk_window_style": str(app.root.tk.call("::tk::unsupported::MacWindowStyle", "style", app.root._w)),
                     "canvas_sizes": [(p.canvas.winfo_width(), p.canvas.winfo_height()) for p in app.pet.pets.values()]}
             import aipet as core
+            if request.get("agent_network"):
+                data["agent_windows"] = [{"visible": bool(win.win.winfo_viewable()),
+                                          "ui_scale": win.opts["scale"],
+                                          "text_scale": win.opts["text_scale"],
+                                          "control_line_height": win.f_small.metrics("linespace"),
+                                          "agents": len(win.net["agents"])}
+                                         for win in app._agent_windows().values()]
             data["pet_positions"] = {key: [p.canvas.winfo_rootx() + core.px(core.BADGE_GUTTER + getattr(p, "gutter", 0) + core.PET_W / 2),
                                             p.canvas.winfo_rooty() + core.px(90 - core.TOP_TRIM)]
                                      for key, p in app.pet.pets.items()}
@@ -140,6 +147,8 @@ def start_spaces_probe(app, output):
                         app.pet.toggle_compact(request["compact"])
                     if request.get("about"):
                         app.show_about()
+                    if request.get("agent_network"):
+                        app.show_agent_network()
                     if request.get("remap"):
                         app.root.withdraw()
                         app.root.after(100, app.root.deiconify)
