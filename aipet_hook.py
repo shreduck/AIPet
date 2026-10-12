@@ -397,6 +397,11 @@ def build_request(data):
            # whether it is a real argument (command, path, URL...) rather than the whole input as JSON
            "subject": request_subjects(data)[0][:4000] if request_subjects(data) else "",
            "primary": any(inp.get(k) for k in ("command", "file_path", "path", "url", "pattern", "query", "prompt"))}
+    # Claude Code's own choices for this prompt ("Yes, and don't ask again for ...": a rule for this session or for
+    # the project, a permission mode...), so the pet can offer them next to its own
+    suggestions = [x for x in (data.get("permission_suggestions") or []) if isinstance(x, dict)][:4]
+    if suggestions and len(json.dumps(suggestions)) < 4000:
+        req["suggestions"] = suggestions
     questions = question_list(data)
     if questions:  # Claude's AskUserQuestion: the pet shows the questions and can send the answers back
         req.update(kind="question", questions=questions, detail="", description="")
@@ -564,12 +569,15 @@ def write_stdout(text):
             pass
 
 
-def decision_output(behavior, updated_input=None):
+def decision_output(behavior, updated_input=None, updated_permissions=None):
     decision = {"behavior": behavior}
     if behavior == "deny":
         decision["message"] = "Denied from AIPet"
-    elif updated_input is not None:  # e.g. AskUserQuestion: the questions plus the answers picked on the pet
-        decision["updatedInput"] = updated_input
+    else:
+        if updated_input is not None:  # e.g. AskUserQuestion: the questions plus the answers picked on the pet
+            decision["updatedInput"] = updated_input
+        if updated_permissions:  # one of Claude Code's own "always allow" / "allow for this session" choices
+            decision["updatedPermissions"] = updated_permissions
     return json.dumps({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": decision}})
 
 
@@ -803,13 +811,19 @@ def answer_flow(base, path, aid, request_id=None, tool_input=None):
     if decision:
         updated = None
         answers = LAST_ANSWER.get("answers")
+        permissions = None
+        picked = LAST_ANSWER.get("permissions")
+        if decision == "allow" and isinstance(picked, list) and picked:
+            # only Claude Code's own suggestions for this very prompt, never anything else the answer file says
+            offered = req.get("suggestions") or []
+            permissions = [p for p in picked if p in offered] or None
         if decision == "allow" and req.get("kind") == "question":
             if not isinstance(answers, dict) or not answers:
                 return  # a question can't be "allowed" without answers: leave it to Claude Code's own dialog
             # the questions exactly as Claude Code sent them, plus {question text: label, or [labels] if multi-select}
             updated = dict(tool_input if isinstance(tool_input, dict) else {"questions": req.get("questions")},
                            answers=answers)
-        write_stdout(decision_output(decision, updated))
+        write_stdout(decision_output(decision, updated, permissions))
 
 def request_from_transcript(path, max_bytes=300000):
     """Fallback for sessions that only send a Notification (the VS Code extension): the tool call that has no result

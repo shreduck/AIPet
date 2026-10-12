@@ -319,6 +319,11 @@ A live map of one session: the main agent and every subagent it started, Claude 
   it opens over the log with the prompt or question and its answers (side by side when they fit, one per line when
   they don't); Esc folds it back. A question's answers are a pick-one list with *Your own answer:* as the last one:
   type in its box and press Enter to send exactly that. Several questions or multi-select ones go to the full card.
+  Clicking the node of the agent that is asking opens its prompt too. Next to *allow once*, *deny* and
+  *aipet: always (whitelist)* (AIPet's own auto-approve list), Claude Code prompts list Claude Code's own choices
+  when it offers them, marked *claude:* (e.g. *claude: allow Bash(npm test:\*) always, in this project*, or a
+  permission mode for this session); picking one allows the prompt and Claude Code saves that rule itself. Codex
+  doesn't offer such choices to hooks: use *answer in codex* for its own.
 - **Codex prompts and Go to window**: while AIPet's hook holds a Codex prompt, Codex waits for it and shows nothing.
   *Go to window* (on the card) and *Answer in Codex* (in the agent network) hand the prompt back, so Codex shows its own
   prompt with all its choices, like always allowing that tool. Claude Code shows its own prompt alongside the pet's

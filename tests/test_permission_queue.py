@@ -82,6 +82,26 @@ class PermissionQueueTests(unittest.TestCase):
             hook.answer_flow(self.tmp.name, self.path, "", second)
         self.assertEqual(self.record()["state"], "working")
 
+    def test_claude_code_own_always_allow_is_passed_back_only_when_it_offered_it(self):
+        rule = {"type": "addRules", "rules": [{"toolName": "Bash", "ruleContent": "rm:*"}], "behavior": "allow",
+                "destination": "localSettings"}
+        self.event("UserPromptSubmit", {"session_id": "s", "prompt": "go"})
+        rid = self.event("PermissionRequest", dict(call(1, "rm a"), permission_suggestions=[rule]))
+        self.assertEqual(self.record()["request"]["suggestions"], [rule])
+        forged = dict(rule, rules=[{"toolName": "Bash", "ruleContent": "*"}])
+        for picked, expected in (([rule], [rule]), ([forged], None)):
+            hook.LAST_ANSWER.clear()
+            hook.LAST_ANSWER.update(behavior="allow", permissions=picked)
+            with patch.object(hook, "pet_alive", return_value=True), \
+                    patch.object(hook, "answers_enabled", return_value=True), \
+                    patch.object(hook, "await_answer", return_value="allow"), patch.object(hook, "write_stdout") as out:
+                hook.answer_flow(self.tmp.name, self.path, "", rid)
+            out.assert_called_once_with(hook.decision_output("allow", None, expected))
+            if expected:
+                self.assertIn('"updatedPermissions"', out.call_args.args[0])
+            rid = self.event("PermissionRequest", dict(call(1, "rm a"), permission_suggestions=[rule]))
+        hook.LAST_ANSWER.clear()
+
     def test_waiting_hook_keeps_waiting_while_its_prompt_is_queued(self):
         first, second = self.ask_two()
         answer = os.path.join(self.tmp.name, "answers", "x.json")

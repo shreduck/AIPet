@@ -4087,9 +4087,10 @@ class PetApp:
         except OSError:
             pass
 
-    def send_answer(self, key, behavior, answers=None):
+    def send_answer(self, key, behavior, answers=None, permissions=None):
         """Hand the user's click to the waiting PermissionRequest hook. Returns True if it was written.
-        answers: for a question, {question text: label, or [labels] for multi-select}."""
+        answers: for a question, {question text: label, or [labels] for multi-select}.
+        permissions: Claude Code's own suggestions to apply with the allow (its "don't ask again" choices)."""
         item = next((i for i in self._last_items if i["key"] == key), None)
         req = (item or {}).get("request") or {}
         if not self.answers_enabled(item) or not hook_waiting(item) or behavior not in ("allow", "deny", "release"):
@@ -4099,7 +4100,8 @@ class PetApp:
             os.makedirs(answers_dir(), exist_ok=True)
             path = os.path.join(answers_dir(), name + ".json")
             with open(path + ".tmp", "w", encoding="utf-8") as f:
-                json.dump(dict({"behavior": behavior, "t": time.time()}, **({"answers": answers} if answers else {})), f)
+                json.dump(dict({"behavior": behavior, "t": time.time()}, **({"answers": answers} if answers else {}),
+                               **({"permissions": permissions} if permissions else {})), f)
             os.replace(path + ".tmp", path)
             return True
         except OSError:

@@ -94,9 +94,9 @@ def needed_size(n_subs, scale, line, small, compact=False):
 
 
 PALETTES = {
-    "light": {"bg": "#fbfaf7", "bar": "#f1efe8", "node": "#ffffff", "line": "#d3d1c7", "tx": "#2c2c2a",
-              "mu": "#888780", "hi": "#2c2c2a", "blue": "#185fa5", "amb": "#9a6410", "grn": "#3b6d11",
-              "red": "#c0362c", "ambbg": "#faeeda", "redbg": "#fcebeb", "sel": "#e6e4dc",
+    "light": {"bg": "#ffffff", "bar": "#f4f5f7", "node": "#ffffff", "line": "#d5d8dd", "tx": "#24262b",
+              "mu": "#7c818a", "hi": "#16181c", "blue": "#185fa5", "amb": "#9a6410", "grn": "#3b6d11",
+              "red": "#c0362c", "ambbg": "#fdf3e1", "redbg": "#fdeeee", "sel": "#e9edf3",
               "agents": ["#444441", "#534ab7", "#993c1d", "#0f6e56", "#993556", "#185fa5", "#854f0b", "#3b6d11",
                          "#5f5e5a"]},
     "dark": {"bg": "#15171c", "bar": "#1d2027", "node": "#1d2027", "line": "#3a3f49", "tx": "#c9ccd3",
@@ -140,6 +140,26 @@ def pick_session(items, key=None):
             if hit:
                 return hit
     return sessions[0] if sessions else None
+
+
+def suggestion_label(sug):
+    """Claude Code's own "don't ask again" choice (a permission_suggestions entry), in words."""
+    kind = sug.get("type")
+    where = {"session": "for this session", "localSettings": "always, in this project (just you)",
+             "projectSettings": "always, in this project", "userSettings": "always, everywhere"}.get(
+        sug.get("destination"), "")
+    if kind in ("addRules", "replaceRules"):
+        rules = [r for r in sug.get("rules") or [] if isinstance(r, dict)]
+        what = ", ".join(f"{r.get('toolName', '')}({r['ruleContent']})" if r.get("ruleContent") else
+                         str(r.get("toolName", "")) for r in rules[:2]) or "this"
+        verb = "allow" if sug.get("behavior", "allow") == "allow" else str(sug.get("behavior"))
+        return f"{verb} {what} {where}".strip()
+    if kind == "setMode":
+        return f"switch to {sug.get('mode', '?')} mode {where}".strip()
+    if kind == "addDirectories":
+        dirs = ", ".join(str(d) for d in (sug.get("directories") or [])[:2])
+        return f"allow access to {dirs} {where}".strip()
+    return f"{kind or 'apply'} {where}".strip()
 
 
 def prompt_agent(net, item):
@@ -242,7 +262,7 @@ class AgentNetworkWindow:
         self.net = {"agents": [], "log": []}
         self.item = None
         self.sel = -1  # -1: the shared log ("all")
-        self.overlay_open = self.menu_open = False
+        self.overlay_open = self.menu_open = self._has_prompt = False
         self.option = 0
         self._after = self._anim = self._save_job = None
         self._robots = {}
@@ -1214,6 +1234,9 @@ class AgentNetworkWindow:
         if key != self.key:
             self._pick_session(key)
         self.select(i)
+        if prompt_agent(self.net, self.item) == i:  # the agent that is asking: open its prompt
+            self._draw_prompt()
+            self.open_overlay(True)
 
     def _pick_session(self, key):
         if self._panned or key == self.key:
@@ -1515,6 +1538,7 @@ class AgentNetworkWindow:
     def _draw_prompt(self):
         item = self.item
         who = prompt_agent(self.net, item) if self.net["agents"] else None
+        self._has_prompt = who is not None
         if who is None:
             if self.in_window is not None:
                 self.in_window = None
@@ -1542,7 +1566,7 @@ class AgentNetworkWindow:
             self._build_overlay(name, req, item)
 
     def open_overlay(self, show):
-        self.overlay_open = bool(show) and self.chip.winfo_ismapped()
+        self.overlay_open = bool(show) and self._has_prompt
         if self.overlay_open:
             if self.menu_open:
                 self.toggle_menu(False)
@@ -1627,9 +1651,13 @@ class AgentNetworkWindow:
                         "allow", {q["question"]: label})))
                 self.options.append(("your own answer:", self._send_own))
         elif answerable:
-            self.options = [("allow once", lambda: self._send("allow")),
-                            ("always (aipet whitelist)", self._always),
-                            ("deny", lambda: self._send("deny"))]
+            self.options = [("allow once", lambda: self._send("allow"))]
+            for sug in (req.get("suggestions") or [])[:3]:  # the AI's own "don't ask again" choices
+                agent_name = "codex" if (item or {}).get("agent") == "codex" else "claude"
+                self.options.append((f"{agent_name}: {suggestion_label(sug)}",
+                                     lambda sug=sug: self._send("allow", permissions=[sug])))
+            self.options += [("aipet: always (whitelist)", self._always),
+                             ("deny", lambda: self._send("deny"))]
         n_answers = len(self.options)
         self.options.append(("full card", lambda: self.pet.open_detail(self.key)))
         codex = (item or {}).get("agent") == "codex"
@@ -1745,8 +1773,9 @@ class AgentNetworkWindow:
             self.options[n][1]()
         return "break"
 
-    def _send(self, behavior, answers=None):
-        ok = self.pet.send_answer(self.key, behavior, answers=answers)
+    def _send(self, behavior, answers=None, permissions=None):
+        ok = (self.pet.send_answer(self.key, behavior, answers=answers, permissions=permissions) if permissions
+              else self.pet.send_answer(self.key, behavior, answers=answers))
         self.note.configure(text="# sent" if ok else "# couldn't send it: the prompt may have been answered already")
         if ok:
             self.win.after(600, lambda: self.open_overlay(False))
