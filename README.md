@@ -19,7 +19,7 @@ AIPet helps you keep track of your AI threads (Claude Code, Claude Cowork and Co
 calls for your attention when one needs you. One little robot per session sits at the edge of your screen; it lives in
 the system tray (Windows) or the menu bar (macOS) and installs its own hooks.
 
-- **Settings window** with search and an explanation for every option; settings live in one `config.json` that applies
+- **AIPet menu window** with search and an explanation for every option; settings live in one `config.json` that applies
   as soon as you save it
 - **States at a glance**: working, needs you, a question, done, error / usage limit, idle
 - **Sounds**: soft two-note chimes for done, needs you and error (or your system's sounds)
@@ -86,14 +86,14 @@ Both menus share these sections; right-clicking a pet adds **This session** for 
 marking it finished, and dismissing it. On macOS, right-click and Control-click open a native context menu without
 activating the pet or switching away from a full-screen app.
 
-**Settings...** is the first item of every menu. It opens a settings window with the same options grouped by section
-(General, Appearance, Behavior, Integrations, Permissions, Help), each with an icon and a short explanation, plus a search
+**AIPet menu...** (it used to be called *Settings...*) is the first item of every menu. It opens a window with the same
+options grouped by section (General, Live Management, Appearance, Behavior, Integrations, Permissions, Help), each with an icon and a short explanation, plus a search
 box. Every switch and button runs exactly the menu's action, and the window stays in step with changes made from the menus.
 Its size is adjustable (Appearance → Window scale, or Ctrl + plus / minus / 0 and Ctrl + mouse wheel; Command on a Mac).
 
 **Settings files.** Everything lives in `~/.aipet` (`%USERPROFILE%\.aipet` on Windows); *Open config and data folder*
 (General) opens it. Hand edits of `config.json` apply within about two seconds (a few keys such as `workbench` need a
-restart, and the app says so). *Copy settings guide for AI* (Settings → General) puts a Markdown guide on the clipboard:
+restart, and the app says so). *Copy settings guide for AI* (AIPet menu → General) puts a Markdown guide on the clipboard:
 the folder, which files may be edited, every `config.json` key with its current value and allowed values, and the
 `auto-approve.json` format. Paste it into Claude, Codex or another assistant and ask it to change AIPet for you.
 
@@ -115,7 +115,7 @@ an allow rule) or that belonged to a subagent that stopped no longer leave a pet
   the Workbench status.
 - **Permissions**: auto-approve rules grouped by agent, and separate Claude Code and Codex toggles for answering prompts from the pet.
 - **Help**: About, updates and diagnostics.
-- **Settings...**, **Show / Hide pet**, **Clear finished sessions**, **Open config and data folder** and **Quit AIPet**
+- **AIPet menu...**, **Show / Hide pet**, **Clear finished sessions**, **Open config and data folder** and **Quit AIPet**
   stay at the top level. Left-clicking the Windows tray icon toggles visibility. On Windows the pet's right-click menu is
   a native menu, like the tray's.
 
@@ -288,15 +288,33 @@ When Claude Code or Codex asks for permission, the popup (click the bubble) show
   lengthens that delay (with no limit, until you answer from the pet); lower the slider if you notice it.
 
 ## Live Management and timed auto approve
-**Live Management** (any menu, and its own page in the settings window) lists your running sessions. For each one:
+**Live Management** (any menu, and its own page in the AIPet menu window) lists your running sessions. For each one:
 - **Auto approve for N min...** approves every permission prompt from that session by itself until the timer ends,
   after a confirmation (Enter doesn't confirm it). Other sessions keep asking, and questions from the AI still wait for
   you. The prompt card has the same thing as a link: *Auto approve this session for N min...* (it also allows the
-  prompt on screen). The length is a slider in the settings window (1 - 120 min, default 10; `timed_approve_minutes`).
+  prompt on screen). The length is a slider in the AIPet menu window (1 - 120 min, default 10; `timed_approve_minutes`).
 - While one runs, its countdown shows in Live Management and at the top of the pet's right-click menu
   (*Stop auto approve: name · 7:32 left*), one click to stop it early. It also stops when AIPet quits (the hooks only
   honour it while the pet runs). Grants are kept in `~/.aipet/auto-approve.json` under `timed`.
 - **Subagents running** lists what the session's subagents are (their agent type, e.g. `tester`).
+- **Open agent network...** (also *Agent network...* in each session's entry and right below *AIPet menu...* in the
+  pet's right-click menu) opens the agent network window, below.
+
+## Agent network window
+A live map of one session: the main agent and every subagent it started, Claude Code and Codex alike.
+- **Nodes** carry a small copy of the pet's robot (red when that agent needs you), the agent's name, model, reasoning
+  effort and context size when the transcript records them, and its state. Edges show what is going on: blue with dots
+  flowing out while a subagent works, amber while the main agent waits on it, green with a dot flowing back once it
+  handed back its result. Next to each subagent: its latest thought or words.
+- **Logs** at the bottom: *All* merges every agent's activity into one log (prompts, what each one said, tool calls,
+  results), each line in its agent's colour; the other tabs show one agent each.
+- **Prompts**: when an agent needs you, a small warning shows (*Plan needs your input*). Click it (or press Space) and
+  it opens over the log with the prompt or question and its answers; Esc folds it back.
+- **Keys**: Tab / → next agent, Shift+Tab / ← previous, A for the shared log, PgUp / PgDn for the previous or next
+  session, Esc to fold the prompt or close the window.
+- Data comes from the session's transcript files: Claude Code keeps each subagent's in
+  `<transcript>/subagents/agent-<id>.jsonl`, Codex writes each spawned agent its own rollout file. Read-only; nothing is
+  sent anywhere.
 
 ## Auto approve
 **Permissions → Auto approve** (pet right-click, the tray icon's menu, or the macOS menu-bar icon) lists every hook config: *This PC /
@@ -408,7 +426,9 @@ From source, the Windows hook runs via `pythonw` and the script, so no exe is ne
 |---|---|
 | `aipet_app.py` | Entry point: tray, the shared menu, autostart, config watcher |
 | `aipet.py` | The pet window, permission / question cards, sounds, session reading, Workbench poller |
-| `aipet_settings.py` | The settings window (built from the same menu definition) |
+| `aipet_settings.py` | The AIPet menu window (built from the same menu definition) |
+| `aipet_agents.py` | Reads a session's agents (main + subagents) from Claude Code transcripts and Codex rollouts |
+| `aipet_agents_window.py` | The agent network window |
 | `aipet_guide.py` | The settings guide for AI assistants (Copy settings guide for AI) |
 | `aipet_hook.py` | The hook Claude Code and Codex run on each event |
 | `hooks_installer.py` | settings.json / hooks.json merge and remove, backups and restore, the Cowork plugin |

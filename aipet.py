@@ -1330,6 +1330,9 @@ def read_claude_code_sessions(cfg):
             "hwnd": rec.get("hwnd"),
             "subagents": _active_agents(rec),
             "transcript_path": rec.get("transcript_path", ""),
+            "agent_ids": {a: (rec.get("agent_types") or {}).get(a) or "" for a, ts in (rec.get("agents") or {}).items()
+                          if time.time() - ts < 900} if rec.get("state") in ("working", "needs_input") else {},
+            "wait_agent": rec.get("wait_agent", ""),
             "agent_types": [((rec.get("agent_types") or {}).get(a) or "subagent")
                             for a, ts in (rec.get("agents") or {}).items() if time.time() - ts < 900]
             if rec.get("state") in ("working", "needs_input") else [],

@@ -1,4 +1,4 @@
-"""AIPet settings window.
+"""The AIPet menu window (settings, Live Management and the rest of the menu, with explanations).
 
 Built from the same menu spec as the pet's right-click menu, the Windows tray menu and the macOS menu bar, so every
 switch and button here runs exactly the action the menu item runs. Spec entries may carry extra keys that only this
@@ -165,7 +165,7 @@ class SettingsWindow:
         self._sig, self._after, self._wrap = None, None, []
         w = self.win = tk.Toplevel(root)
         w.withdraw()
-        w.title("AIPet settings")
+        w.title("AIPet menu")
         w.minsize(int(560 * BASE_SCALE), int(380 * BASE_SCALE))
         w.protocol("WM_DELETE_WINDOW", self.close)
         w.bind("<Escape>", lambda e: self.close())
@@ -295,7 +295,7 @@ class SettingsWindow:
         head = tk.Frame(side, bg=self.side_bg)
         head.pack(fill="x", padx=16, pady=(18, 12))
         tk.Label(head, text="AIPet", bg=self.side_bg, fg=T["win_fg"], font=self.font(16, "bold"), anchor="w").pack(fill="x")
-        tk.Label(head, text=f"Settings · {self.version}" if self.version else "Settings", bg=self.side_bg, fg=T["muted"],
+        tk.Label(head, text=f"Menu · {self.version}" if self.version else "Menu", bg=self.side_bg, fg=T["muted"],
                  font=self.font(9), anchor="w").pack(fill="x")
 
         box = tk.Frame(side, bg=T["entry_bg"], highlightthickness=1, highlightbackground=T["border"],

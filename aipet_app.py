@@ -22,6 +22,7 @@ import webbrowser
 from tkinter import messagebox
 
 import aipet as core
+import aipet_agents_window
 import aipet_guide
 import aipet_settings
 import aipet_update as upd
@@ -1265,9 +1266,10 @@ class TrayApp:
                       ("working", "needs_input", "error"))),
             item("Dismiss this pet", self.pet.dismiss_menu_pet, real_pet),
         ]
-        shared = self._mac_menu_spec()  # starts with Settings... and a separator
+        shared = self._mac_menu_spec()  # starts with AIPet menu... and a separator
         timers = self._timed_countdown_items()
-        return shared[:1] + timers + [self._fast_cancel_item(pet, session),
+        network = self.agent_network_item(pet.data.get("focus", pet.key) if real_pet else None)
+        return shared[:1] + [network] + timers + [self._fast_cancel_item(pet, session),
                                       {"label": "This session", "submenu": session_actions}, None] + shared[2:]
 
     def _fast_cancel_item(self, pet, session):
@@ -1519,6 +1521,9 @@ class TrayApp:
                              "set": self.pet.set_timed_minutes, "format": lambda v: f"{int(v)} min"},
                      submenu=[item(f"{m} min", lambda m=m: self.pet.set_timed_minutes(m), checked=default == m)
                               for m in (5, 10, 15, 30, 60)]),
+                item("Open agent network...", lambda: self.show_agent_network(None), icon="link",
+                     help="A live map of a session's main agent and its subagents: what each one is doing, its "
+                          "model and context, a shared log, and prompts you can answer from there."),
                 None]
         sessions = [d for d in self.pet._last_items if d.get("source") == "CC" and d.get("session_id")]
         for d in sessions:
@@ -1537,6 +1542,7 @@ class TrayApp:
             entries += [None, item(f"Subagents running: {len(agents)}" if agents else "No subagents running",
                                    enabled=False)]
             entries += [item(f"• {a}", enabled=False) for a in agents]
+            entries += [None, item("Agent network...", lambda k=d.get("key"): self.show_agent_network(k))]
             said = core.last_said(d)  # the newest reply phrase or your latest prompt, from the transcript
             who = "Codex" if d.get("agent") == "codex" else "Claude"
             said_text = (f"{who if said[0] == 'ai' else 'You'}: “{said[1]}”" if said else "")
@@ -1565,8 +1571,22 @@ class TrayApp:
                  "action": lambda sid=sid: self._stop_timed(sid), "enabled": True} for sid, g in grants.items()]
 
     def settings_item(self):
-        return {"label": "Settings...", "action": self.show_settings, "enabled": True, "submenu": None,
+        return {"label": "AIPet menu...", "action": self.show_settings, "enabled": True, "submenu": None,
                 "settings": True}
+
+    def agent_network_item(self, key=None, label="Agent network..."):
+        return {"label": label, "action": lambda: self.show_agent_network(key), "enabled": True, "submenu": None,
+                "help": "A live map of a session's main agent and its subagents: what each one is doing, its model "
+                        "and context, a shared log, and prompts you can answer from there."}
+
+    def show_agent_network(self, key=None):
+        """The agent network window: one per app; opening it again switches it to that session."""
+        win = getattr(self, "agents_win", None)
+        if win is not None and win.alive():
+            win.show_session(key)
+            win.raise_()
+            return
+        self.agents_win = aipet_agents_window.AgentNetworkWindow(self.root, self.pet, key)
 
     def show_settings(self):
         if getattr(self, "settings_win", None) is not None and self.settings_win.alive():

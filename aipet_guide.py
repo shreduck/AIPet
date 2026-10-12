@@ -1,6 +1,6 @@
 """A Markdown guide to AIPet's settings files, written for an AI assistant.
 
-Settings > General > "Copy settings guide for AI" puts it on the clipboard, so a user can paste it into Claude, Codex or
+AIPet menu > General > "Copy settings guide for AI" puts it on the clipboard, so a user can paste it into Claude, Codex or
 any other assistant and then ask it to change AIPet's configuration for them. Built from the running app, so the folder
 path and the current values are the user's own.
 """
@@ -43,7 +43,7 @@ CONFIG_KEYS = {
     "timed_approve_minutes": ("number 1 - 120 (default 10)",
                               "How long a timed auto approve lasts (Live Management / the prompt card). Starting one "
                               "always asks the user to confirm; don't start one yourself.", "live"),
-    "settings_zoom": ("number 0.5 - 1.5", "Size of the settings window (1.0 = 100%).", "live"),
+    "settings_zoom": ("number 0.5 - 1.5", "Size of the AIPet menu window (1.0 = 100%).", "live"),
     "card_scale": ("number 0.5 - 1.5", "Size of the permission / question card.", "live"),
     "vscode_open_conversation": ("true / false",
                                  "Clicking a VS Code session also opens its conversation tab.", "live"),
@@ -146,5 +146,5 @@ Lets AIPet approve permission prompts automatically. Format:
 - Hooks live in each tool's own settings (`~/.claude/settings.json`, Codex's `hooks.json`, also inside WSL). Don't
   edit AIPet's hook entries by hand; the app installs and updates them.
 - Starting with the OS is a setting in the app's menu (Behavior > Start with Windows / Start at login), not a file.
-- After editing, the user can check the result in AIPet's menu or Settings window, which show the current values.
+- After editing, the user can check the result in AIPet's menus or its AIPet menu window, which show the current values.
 """

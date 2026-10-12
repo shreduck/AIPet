@@ -13,7 +13,7 @@ import aipet_settings as settings
 def spec():
     act = MagicMock()
     return [
-        {"label": "Settings...", "action": act, "settings": True}, None,
+        {"label": "AIPet menu...", "action": act, "settings": True}, None,
         {"label": "Hide pet", "action": act, "help": "Hides it."},
         None,
         {"label": "Appearance", "icon": "palette", "help": "Looks.", "submenu": [

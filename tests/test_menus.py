@@ -43,11 +43,12 @@ class MenuTests(unittest.TestCase):
             return [(entry['label'], labels(entry['submenu']) if entry.get('submenu') else [])
                     for entry in spec if entry is not None]
         context, shared = app._context_menu_spec(pet), app._mac_menu_spec()
-        self.assertEqual(context[0]['label'], 'Settings...')  # first in every menu
-        self.assertEqual(shared[0]['label'], 'Settings...')
-        self.assertEqual(context[1]['label'], 'Fix fast cancel')  # above This session
-        self.assertEqual(context[2]['label'], 'This session')
-        self.assertEqual(labels(context[4:]), labels(shared[2:]))
+        self.assertEqual(context[0]['label'], 'AIPet menu...')  # first in every menu
+        self.assertEqual(shared[0]['label'], 'AIPet menu...')
+        self.assertEqual(context[1]['label'], 'Agent network...')  # right below the AIPet menu
+        self.assertEqual(context[2]['label'], 'Fix fast cancel')  # above This session
+        self.assertEqual(context[3]['label'], 'This session')
+        self.assertEqual(labels(context[5:]), labels(shared[2:]))
         menu = {e['label']: e for e in app._mac_menu_spec() if e}
         self.assertTrue({'Appearance', 'Behavior', 'Integrations', 'Permissions', 'Help'} <= menu.keys())
         self.assertNotIn('checked', menu['Hide pet'])
@@ -56,14 +57,14 @@ class MenuTests(unittest.TestCase):
         self.assertTrue(claude_toggle['checked'])
         claude_toggle['action']()
         app.pet.set_claude_answers.assert_called_once_with(False)
-        session = app._context_menu_spec(pet)[2]['submenu']
+        session = app._context_menu_spec(pet)[3]['submenu']
         next(e for e in session if e and e['label'] == 'Go to session window')['action']()
         app.pet.focus_session.assert_called_once_with(pet)
         app.pet.cfg['compact'] = True
         appearance = next(e for e in app._mac_menu_spec() if e and e['label'] == 'Appearance')['submenu']
         self.assertTrue(next(e for e in appearance if e and e['label'].startswith('Compact'))['checked'])
         app.pet._menu_session.return_value = None
-        idle = app._context_menu_spec(SimpleNamespace(key='_none', data={}))[2]['submenu']
+        idle = app._context_menu_spec(SimpleNamespace(key='_none', data={}))[3]['submenu']
         self.assertTrue(all(not e['enabled'] for e in idle if e))
 
     @patch.object(aipet_app.hi, 'list_backups', return_value=[])
@@ -74,16 +75,16 @@ class MenuTests(unittest.TestCase):
         done = {'key': 'cc:b', 'source': 'CC', 'state': 'done', 'title': 'notes', 'path': 'b'}
         pet = SimpleNamespace(key='cc:a', data=dict(working))
         app.pet._menu_session.return_value = working
-        fix = app._context_menu_spec(pet)[1]
+        fix = app._context_menu_spec(pet)[2]
         self.assertTrue(fix['enabled'])
         fix['action']()
         app.pet.finish_session.assert_called_once_with(working)
         app.pet._menu_session.return_value = done  # nothing busy: nothing to fix
-        self.assertFalse(app._context_menu_spec(SimpleNamespace(key='cc:b', data=dict(done)))[1]['enabled'])
+        self.assertFalse(app._context_menu_spec(SimpleNamespace(key='cc:b', data=dict(done)))[2]['enabled'])
         # compact mode: one pet for all, so pick the session
         app.pet._last_items = [working, done]
         compact = SimpleNamespace(key='compact', data={'members': [working, done], 'source': 'CC'})
-        choices = app._context_menu_spec(compact)[1]['submenu']
+        choices = app._context_menu_spec(compact)[2]['submenu']
         self.assertEqual([c['label'] for c in choices], ['ai-pet \u00b7 Fix bug'])
         app.pet.finish_session.reset_mock()
         choices[0]['action']()
