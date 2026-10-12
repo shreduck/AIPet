@@ -310,6 +310,10 @@ A live map of one session: the main agent and every subagent it started, Claude 
   results), each line in its agent's colour; the other tabs show one agent each.
 - **Prompts**: when an agent needs you, a small warning shows (*Plan needs your input*). Click it (or press Space) and
   it opens over the log with the prompt or question and its answers; Esc folds it back.
+- **Codex prompts and Go to window**: while AIPet's hook holds a Codex prompt, Codex waits for it and shows nothing.
+  *Go to window* (on the card) and *Answer in Codex* (in the agent network) hand the prompt back, so Codex shows its own
+  prompt with all its choices, like always allowing that tool. Claude Code shows its own prompt alongside the pet's
+  anyway, so there it only jumps to the window.
 - **Window options** (right of the session arrows, kept in `config.json` under `agent_window`): `▣` title bar on /
   off (without it, drag the top bar to move and the `◢` corner to resize; Windows and Linux), `pin` always on top,
   `α100%` window opacity, `bg` see-through graph background (Windows and macOS; clicks go through the empty parts),

@@ -78,6 +78,26 @@ class AnswerToggleTests(unittest.TestCase):
             self.assertIsNone(result)
             sleep.assert_called_once()
 
+    def test_release_lets_go_so_codex_shows_its_own_prompt(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(hook, 'AGENT', 'codex'), \
+                patch.object(hook, 'pet_alive', return_value=True):
+            Path(folder, 'codex-answers').touch()
+            answer = Path(folder, 'answer.json')
+            answer.write_text('{"behavior": "release"}')
+            self.assertIsNone(hook._await(str(answer), str(Path(folder, 'waiting')), folder, 5, None, None))
+            self.assertFalse(answer.exists())
+
+    def test_go_to_window_releases_only_codex_prompts(self):
+        app = object.__new__(aipet.PetApp)
+        app.send_answer, app.focus_key = MagicMock(), MagicMock()
+        app._last_items = [{'key': 'cx', 'agent': 'codex', 'state': 'needs_input'},
+                           {'key': 'cc', 'agent': 'claude', 'state': 'needs_input'}]
+        app.go_to_prompt('cx')
+        app.send_answer.assert_called_once_with('cx', 'release')
+        app.go_to_prompt('cc')
+        app.send_answer.assert_called_once()  # Claude Code shows its own prompt alongside: nothing to let go
+        self.assertEqual([c.args[0] for c in app.focus_key.call_args_list], ['cx', 'cc'])
+
     def test_disabled_claude_cannot_submit_an_answer_to_a_stale_dialog(self):
         app = object.__new__(aipet.PetApp)
         app.cfg = {'claude_answers': False, 'codex_answers': True}

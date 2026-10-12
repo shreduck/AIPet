@@ -813,7 +813,8 @@ class AgentNetworkWindow:
                             ("Always (add to auto approve)", self._always),
                             ("Deny", lambda: self._send("deny"))]
         self.options.append(("Open the full card", lambda: self.pet.open_detail(self.key)))
-        self.options.append(("Go to window", lambda: self.pet.focus_key(self.key)))
+        codex = (item or {}).get("agent") == "codex"
+        self.options.append(("Answer in Codex" if codex and answerable else "Go to window", self._go))
         row.pack(fill="x", padx=pad, pady=self.px(6))
         self._opt_labels = []
         for n, (label, _) in enumerate(self.options):
@@ -859,6 +860,12 @@ class AgentNetworkWindow:
         self.note.configure(text="Sent." if ok else "Couldn't send it: the prompt may have been answered already.")
         if ok:
             self.win.after(600, lambda: self.open_overlay(False))
+
+    def _go(self):
+        """Go to the session's window. Codex: AIPet lets go of the prompt, so Codex shows its own one there (with
+        choices the pet doesn't have, like always allowing that tool)."""
+        self.pet.go_to_prompt(self.key)
+        self.open_overlay(False)
 
     def _always(self):
         added = self.pet.whitelist_request(self.item)

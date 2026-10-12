@@ -3463,6 +3463,9 @@ class Detail:
         who = "Codex" if item.get("agent") == "codex" else "Claude Code"
         if self.sent:
             note = f"Sent: {self.sent}. {who} will carry on in a moment."
+        elif can_answer and item.get("agent") == "codex":
+            note = ("Allow once or Deny answers this prompt right from here. Go to window hands it back to Codex, "
+                    "which then shows its own prompt there (with its other choices, like always allowing a tool).")
         elif can_answer:
             note = ("Allow once or Deny answers this prompt right from here, or answer in the session window "
                     "(Go to window). If you do neither, the normal prompt appears.")
@@ -3691,8 +3694,8 @@ class Detail:
             self.note.config(text=added)
 
     def go(self):
-        """Bring the session's window to the front and dismiss this popup."""
-        self.app.focus_key(self.key)
+        """Bring the session's window to the front and dismiss this popup (Codex: its own prompt shows there)."""
+        self.app.go_to_prompt(self.key)
         self.close()
 
     def clear_prompt(self):
@@ -4038,7 +4041,7 @@ class PetApp:
         answers: for a question, {question text: label, or [labels] for multi-select}."""
         item = next((i for i in self._last_items if i["key"] == key), None)
         req = (item or {}).get("request") or {}
-        if not self.answers_enabled(item) or not hook_waiting(item) or behavior not in ("allow", "deny"):
+        if not self.answers_enabled(item) or not hook_waiting(item) or behavior not in ("allow", "deny", "release"):
             return False
         name = answer_name(item)
         try:
@@ -4050,6 +4053,15 @@ class PetApp:
             return True
         except OSError:
             return False
+
+    def go_to_prompt(self, key):
+        """Go to window for a session that is asking: Codex shows its own prompt only once AIPet's hook lets go of
+        it, so let go first (its own prompt has choices the pet doesn't, like always allowing a tool). Claude Code
+        shows its prompt alongside anyway, so the pet's buttons stay."""
+        item = next((i for i in self._last_items if i["key"] == key), None)
+        if item and item.get("agent") == "codex" and item.get("state") == "needs_input":
+            self.send_answer(key, "release")
+        self.focus_key(key)
 
     def timed_minutes(self):
         try:

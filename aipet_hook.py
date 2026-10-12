@@ -675,7 +675,8 @@ MAX_WAIT = 1800.0  # the pet's slider: 0 (no limit) to 30 minutes
 
 
 def await_answer(base, key, seconds, session_path=None, request_id=None):
-    """Wait for the pet to drop <pet dir>/answers/<key>.json ({"behavior": "allow"|"deny"}). None = no answer.
+    """Wait for the pet to drop <pet dir>/answers/<key>.json ({"behavior": "allow"|"deny"|"release"}). None = no
+    answer ("release": the user went to the session's window to answer there).
     seconds <= 0 waits with no limit. Also gives up once the session has moved past this prompt (answered in
     Claude Code itself), so a waiting hook never outlives its prompt."""
     path = os.path.join(base, "answers", key + ".json")
@@ -721,6 +722,8 @@ def _await(path, waiting, base, seconds, session_path, request_id):
                 os.remove(path)
             except OSError:
                 pass
+            if data.get("behavior") == "release":
+                return None  # "Go to window" (Codex): let go, so the agent shows its own prompt with all its choices
             if data.get("behavior") in ("allow", "deny"):
                 LAST_ANSWER.clear()
                 LAST_ANSWER.update(data)  # answers to a question travel with the click
