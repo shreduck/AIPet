@@ -97,7 +97,7 @@ def _script_arg(script):
     return short(text.strip().splitlines()[0] if text.strip() else "", 70)
 
 
-def full(text, limit=6000):
+def full(text, limit=60000):
     """A whole message for the log (what an agent said, its full result), trimmed only when huge."""
     text = str(text or "").strip()
     return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"

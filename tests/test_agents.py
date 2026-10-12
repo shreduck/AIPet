@@ -234,7 +234,8 @@ class FullReplyTests(unittest.TestCase):
         info = agents.parse_claude([claude_assistant(time.time(), [
             {"type": "text", "text": "Summary: 3 callers.\n\nDetails below.\nTo retry, ask again."}])])
         self.assertEqual(info["lines"][0][2], "Summary: 3 callers.\n\nDetails below.\nTo retry, ask again.")
-        self.assertEqual(agents.full("x" * 7000)[-1], "…")
+        self.assertEqual(agents.full("x" * 70000)[-1], "…")
+        self.assertEqual(agents.full("x" * 7000), "x" * 7000)  # long results are kept whole
 
 
 class HelperTests(unittest.TestCase):

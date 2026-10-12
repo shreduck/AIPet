@@ -185,6 +185,180 @@ def prompt_agent(net, item):
     return 0
 
 
+# ---- window helpers shared by the agent network window and its text pop-ups
+def set_caption(win, show):
+    """Windows: a window's title bar on or off. Only the caption goes: the window keeps its resizable frame and its
+    taskbar button (a borderless Tk window, overrideredirect, would lose both)."""
+    try:
+        import ctypes
+        u = ctypes.windll.user32
+        hwnd = int(win.wm_frame(), 16)
+        GWL_STYLE, WS_CAPTION, WS_THICKFRAME = -16, 0x00C00000, 0x00040000
+        style = u.GetWindowLongW(hwnd, GWL_STYLE)
+        new = ((style | WS_CAPTION) if show else (style & ~WS_CAPTION)) | WS_THICKFRAME
+        if new != style:
+            u.SetWindowLongW(hwnd, GWL_STYLE, ctypes.c_long(new & 0xFFFFFFFF).value if new > 0x7FFFFFFF else new)
+            u.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0004 | 0x0020)  # keep size / place / order
+    except Exception as e:
+        core.log_error(f"agent network title bar: {e!r}")
+
+
+def has_caption(win):
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+        return bool(ctypes.windll.user32.GetWindowLongW(int(win.wm_frame(), 16), -16) & 0x00C00000)
+    except Exception:
+        return True
+
+
+def work_area(win):
+    """(left, top, right, bottom) of the usable part of the window's monitor: without the taskbar (Windows);
+    None elsewhere."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT),
+                        ("dwFlags", wintypes.DWORD)]
+        u = ctypes.windll.user32
+        u.MonitorFromWindow.restype = wintypes.HANDLE
+        mon = u.MonitorFromWindow(wintypes.HWND(int(win.wm_frame(), 16)), 2)  # MONITOR_DEFAULTTONEAREST
+        info = MONITORINFO()
+        info.cbSize = ctypes.sizeof(MONITORINFO)
+        if not u.GetMonitorInfoW(mon, ctypes.byref(info)):
+            return None
+        r = info.rcWork
+        return r.left, r.top, r.right, r.bottom
+    except Exception:
+        return None
+
+
+def toggle_maximize(win, holder):
+    """Maximise a window, or back. Maximised fills the screen but leaves the taskbar (Windows) or the menu bar and
+    the Dock (macOS) alone. A window without a title bar is placed over the work area by hand, since Windows would
+    otherwise cover the taskbar. holder: an object that remembers the size to go back to."""
+    try:
+        if sys.platform == "win32" and not has_caption(win):
+            if getattr(holder, "_restore_geo", None):
+                win.geometry(holder._restore_geo)
+                holder._restore_geo = None
+                return "break"
+            area = work_area(win)
+            if area:
+                import ctypes
+                holder._restore_geo = win.geometry()
+                left, top, right, bottom = area
+                ctypes.windll.user32.SetWindowPos(int(win.wm_frame(), 16), 0, left, top, right - left,
+                                                  bottom - top, 0x0004 | 0x0010)  # NOZORDER | NOACTIVATE
+                return "break"
+        if sys.platform == "win32" or IS_MAC:
+            win.state("normal" if win.state() == "zoomed" else "zoomed")
+        elif not win.overrideredirect():
+            win.attributes("-zoomed", not win.attributes("-zoomed"))
+        elif getattr(holder, "_restore_geo", None):  # a borderless window on Linux: by hand
+            win.geometry(holder._restore_geo)
+            holder._restore_geo = None
+        else:
+            holder._restore_geo = win.geometry()
+            win.geometry(f"{win.winfo_screenwidth()}x{win.winfo_screenheight()}+0+0")
+    except tk.TclError:
+        pass
+    return "break"
+
+
+class TextPopup:
+    """A reply in a window of its own: selectable text, a copy button at the top right, and its own minimise /
+    maximise / close buttons when title bars are off. Its title (and taskbar entry) is the reply's first line."""
+
+    def __init__(self, owner, title, text):
+        self.owner, self.text = owner, text
+        P, s = owner.P, owner.s
+        frameless = owner.opts.get("frameless") and not IS_MAC
+        w = self.win = tk.Toplevel(owner.root)
+        w.withdraw()
+        w.title(title)
+        w.configure(bg=P["bg"])
+        bar = tk.Frame(w, bg=P["bar"])
+        bar.pack(fill="x")
+        head = tk.Label(bar, text="▍" + title, font=owner.f_bold, bg=P["bar"], fg=P["hi"], anchor="w", width=1)
+        buttons = [("[copy]", self.copy)]
+        if frameless:
+            buttons += [("–", lambda: w.iconify()), ("□", lambda: toggle_maximize(w, self)), ("✕", self.close)]
+        for text_, fn in reversed(buttons):
+            lab = tk.Label(bar, text=text_, font=owner.f_small if text_ == "[copy]" else owner.f_bold, bg=P["bar"],
+                           fg=P["tx"], cursor="hand2", padx=owner.px(5))
+            lab.pack(side="right")
+            lab.bind("<Button-1>", lambda e, fn=fn: fn())
+            if text_ == "[copy]":
+                self.copy_btn = lab
+        head.pack(side="left", fill="x", expand=True, padx=owner.px(4), pady=owner.px(3))
+        for wdg in (bar, head):
+            wdg.bind("<Button-1>", self._drag_start)
+            wdg.bind("<B1-Motion>", self._drag_move)
+            wdg.bind("<Double-Button-1>", lambda e: toggle_maximize(w, self))
+        body = tk.Frame(w, bg=P["bg"])
+        body.pack(fill="both", expand=True)
+        sb = tk.Scrollbar(body)
+        sb.pack(side="right", fill="y")
+        t = self.t = tk.Text(body, wrap="word", bd=0, highlightthickness=0, font=owner.f_main, bg=P["bg"],
+                             fg=P["tx"], padx=owner.px(10), pady=owner.px(8), cursor="xterm",
+                             selectbackground=mix(P["blue"], P["bg"], 0.65), selectforeground=P["hi"],
+                             inactiveselectbackground=mix(P["blue"], P["bg"], 0.75), yscrollcommand=sb.set)
+        t.pack(side="left", fill="both", expand=True)
+        sb.configure(command=t.yview)
+        t.insert("1.0", text)
+        t.configure(state="disabled")
+        t.bind("<Control-c>", lambda e: owner._copy(t))
+        t.bind("<Control-a>", lambda e: (t.tag_add("sel", "1.0", "end"), "break")[1])
+        t.bind("<Button-1>", lambda e: t.focus_set(), add="+")
+        w.bind("<Escape>", lambda e: self.close())
+        width, height = owner.px(460), owner.px(320)
+        try:
+            x = owner.win.winfo_rootx() + owner.px(40)
+            y = owner.win.winfo_rooty() + owner.px(40)
+            w.geometry(f"{width}x{height}+{x}+{y}")
+        except tk.TclError:
+            pass
+        w.deiconify()
+        if frameless and sys.platform == "win32":
+            set_caption(w, False)
+        try:
+            core.titlebar_theme(w)
+        except Exception:
+            pass
+        w.lift()
+        w.focus_force()
+
+    def copy(self):
+        try:
+            self.win.clipboard_clear()
+            self.win.clipboard_append(self.text)
+            self.copy_btn.configure(text="[copied]")
+            self.win.after(1200, lambda: self.copy_btn.configure(text="[copy]"))
+        except tk.TclError:
+            pass
+
+    def close(self):
+        try:
+            self.win.destroy()
+        except tk.TclError:
+            pass
+
+    def _drag_start(self, e):
+        self._drag = (e.x_root, e.y_root, self.win.winfo_x(), self.win.winfo_y())
+
+    def _drag_move(self, e):
+        if getattr(self, "_restore_geo", None):
+            return  # maximised
+        x0, y0, wx, wy = getattr(self, "_drag", (e.x_root, e.y_root, self.win.winfo_x(), self.win.winfo_y()))
+        self.win.geometry(f"+{wx + e.x_root - x0}+{wy + e.y_root - y0}")
+
+
 class Slider:
     """A terminal-looking slider: [██████░░░░] 70%. Click or drag to set, scroll to step.
     live=False: the value is only applied when the mouse button is let go (or a moment after scrolling), for
@@ -287,6 +461,7 @@ class AgentNetworkWindow:
         self.blocks = []  # (key, item, net) of every session the graph shows (several when compact and not tabbed)
         self._content, self._center_next, self._panned = None, True, False
         self._bands, self._leaving, self._titles, self._animating = {}, {}, [], False
+        self._entries, self._expanded = [], set()  # log entries shown / unfolded
         self.u = self.opts["scale"] / 100
         self.s = 1.5 * self.u
         self._applied = {}  # window attributes last set (only touched when they change)
@@ -619,39 +794,11 @@ class AgentNetworkWindow:
         self._draw_tabs()
 
     def _win_caption(self, show):
-        """Windows: the title bar on or off. Only the caption goes: the window keeps its resizable frame and its
-        taskbar button (a borderless Tk window, overrideredirect, would lose both)."""
-        try:
-            import ctypes
-            u = ctypes.windll.user32
-            hwnd = int(self.win.wm_frame(), 16)
-            GWL_STYLE, WS_CAPTION, WS_THICKFRAME = -16, 0x00C00000, 0x00040000
-            style = u.GetWindowLongW(hwnd, GWL_STYLE)
-            new = ((style | WS_CAPTION) if show else (style & ~WS_CAPTION)) | WS_THICKFRAME
-            if new != style:
-                u.SetWindowLongW(hwnd, GWL_STYLE, ctypes.c_long(new & 0xFFFFFFFF).value if new > 0x7FFFFFFF else new)
-                u.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0004 | 0x0020)  # keep size / place / order
-        except Exception as e:
-            core.log_error(f"agent network title bar: {e!r}")
+        set_caption(self.win, show)
 
     def toggle_maximize(self, e=None):
-        """Double-click the top bar: maximise, or back."""
-        w = self.win
-        try:
-            if sys.platform == "win32" or IS_MAC:
-                w.state("normal" if w.state() == "zoomed" else "zoomed")
-            elif not w.overrideredirect():
-                w.attributes("-zoomed", not w.attributes("-zoomed"))
-            else:  # a borderless window on Linux: by hand
-                if getattr(self, "_restore_geo", None):
-                    w.geometry(self._restore_geo)
-                    self._restore_geo = None
-                else:
-                    self._restore_geo = w.geometry()
-                    w.geometry(f"{w.winfo_screenwidth()}x{w.winfo_screenheight()}+0+0")
-        except tk.TclError:
-            pass
-        return "break"
+        """Double-click the top bar: maximise (leaving the taskbar / Dock alone), or back."""
+        return toggle_maximize(self.win, self)
 
     def _on_resize(self, e=None):
         if not getattr(self, "_user_moved", False):
@@ -670,7 +817,7 @@ class AgentNetworkWindow:
 
     def _drag_move(self, e):
         try:
-            if self.win.state() == "zoomed":
+            if self.win.state() == "zoomed" or getattr(self, "_restore_geo", None):
                 return  # maximised: stays put (double-click the bar to restore)
         except tk.TclError:
             pass
@@ -1734,7 +1881,8 @@ class AgentNetworkWindow:
             lab.pack(side="left", padx=(0, self.px(3)), pady=self.px(2))
             lab.bind("<Button-1>", lambda e, i=i: self.select(i))
 
-    def _draw_log(self):
+    def _draw_log(self, keep=None):
+        """keep: the scroll position to stay at (folding an entry), instead of following the newest line."""
         P, log = self.P, self.log
         ags = self.net["agents"]
         if self.sel < 0:
@@ -1774,7 +1922,17 @@ class AgentNetworkWindow:
         # long and multi-line entries (a full reply) wrap under their text, not under the time stamp
         hang = 9 + ((width + 3) if self.sel < 0 else 0)
         log.tag_configure("hang", lmargin2=self.f_main.measure(" " * (hang + 2)))
-        for t, i, kind, text in rows:
+        log.tag_configure("fold", foreground=P["blue"])
+        self._entries = []
+        for n, (t, i, kind, text) in enumerate(rows):
+            # long entries show their first line with ›: click (or right-click) to unfold them, ‹ to fold again
+            key = (t, ags[i]["name"], kind, hash(text))
+            big = "\n" in text.strip() or len(text) > 220
+            first = text.strip().split("\n", 1)[0]
+            shown = text if not big or key in self._expanded else (first[:220].rstrip() + "…" if len(first) > 220
+                                                                    else first)
+            self._entries.append((key, text, ags[i]["name"], big))
+            start = log.index("end-1c")
             log.insert("end", time.strftime("%H:%M:%S ", time.localtime(t)) if t else " " * 9, "mu")
             if self.sel < 0:
                 log.insert("end", ags[i]["name"].ljust(width)[:width], f"a{i}")
@@ -1782,10 +1940,64 @@ class AgentNetworkWindow:
             mark = KIND_MARK.get(kind, "")
             if mark:
                 log.insert("end", mark + " ", "mu" if kind in ("tool", "say") else kind)
-            log.insert("end", text + "\n", (kind if kind in ("think", "you", "error", "spawn") else "say", "hang"))
+            log.insert("end", shown, (kind if kind in ("think", "you", "error", "spawn") else "say", "hang"))
+            if big:
+                log.insert("end", "  ‹" if key in self._expanded else "  ›", ("fold", "hang"))
+            log.insert("end", "\n")
+            log.tag_add(f"entry{n}", start, "end-1c")
+            log.tag_bind(f"entry{n}", "<ButtonRelease-1>", lambda e, n=n: self._entry_click(n))
+            for b in ("<Button-3>",) + (("<Button-2>", "<Control-Button-1>") if IS_MAC else ()):
+                log.tag_bind(f"entry{n}", b, lambda e, n=n: self._entry_menu(e, n))
         log.configure(state="disabled")
-        if at_end or switched:
+        if keep is not None:
+            log.yview_moveto(keep)
+        elif at_end or switched:
             log.see("end")
+
+    # ---- log entries: fold / unfold, copy, open in a window
+    def _entry_click(self, n):
+        try:
+            if self.log.tag_ranges("sel"):
+                return  # that was a selection, not a click
+        except tk.TclError:
+            pass
+        self._toggle_entry(n)
+
+    def _toggle_entry(self, n):
+        if n >= len(self._entries) or not self._entries[n][3]:
+            return
+        key = self._entries[n][0]
+        try:
+            self.log.tag_remove("sel", "1.0", "end")
+        except tk.TclError:
+            pass
+        if key in self._expanded:
+            self._expanded.discard(key)
+        else:
+            self._expanded.add(key)
+        self._log_sig = None
+        self._draw_log(keep=self.log.yview()[0])
+
+    def _entry_menu(self, e, n):
+        if n >= len(self._entries):
+            return "break"
+        key, text, who, big = self._entries[n]
+        P = self.P
+        menu = tk.Menu(self.win, tearoff=0, bg=P["bar"], fg=P["tx"], activebackground=P["sel"],
+                       activeforeground=P["hi"], font=self.f_small)
+        if big:
+            menu.add_command(label="collapse" if key in self._expanded else "expand",
+                             command=lambda: self._toggle_entry(n))
+        menu.add_command(label="copy text", command=lambda: (self.win.clipboard_clear(),
+                                                             self.win.clipboard_append(text)))
+        first = text.strip().split("\n", 1)[0]
+        title = f"{who} · {first[:70]}" + ("…" if len(first) > 70 else "")
+        menu.add_command(label="open in a window", command=lambda: TextPopup(self, title, text))
+        try:
+            menu.tk_popup(e.x_root, e.y_root)
+        finally:
+            menu.grab_release()
+        return "break"
 
     # ---- the prompt
     def _draw_prompt(self):
