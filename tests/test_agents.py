@@ -212,6 +212,13 @@ class WindowOptionTests(unittest.TestCase):
         self.assertEqual(win.load_options({"agent_window": {"alpha": 5, "scale": 10}})["alpha"], 30)
         self.assertEqual(win.key_color("#fbfaf7"), "#fbfaf6")  # see-through key: one notch off the background
 
+    def test_logs_beside_the_graph_need_width_not_height(self):
+        import aipet_agents_window as win
+        below, beside = win.needed_size(2, 1, 18, 16), win.needed_size(2, 1, 18, 16, side="right")
+        self.assertGreater(beside[0], below[0])
+        self.assertLess(beside[1], below[1])
+        self.assertEqual(win.load_options({"agent_window": {"log_side": "up"}})["log_side"], "bottom")
+
     def test_geometry_kept_when_switching_compact(self):
         import aipet_agents_window as win
         self.assertEqual(win.parse_geometry("620x480+100+-20"), (620, 480, 100, -20))

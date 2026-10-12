@@ -29,7 +29,9 @@ OPACITY_STEP = 5  # background and node opacity, % (30-100), drawn as Tk stipple
 SCALE_MIN, SCALE_MAX, SCALE_STEP = 50, 150, 5  # the window's text and drawing size, %
 OPTIONS_KEY = "agent_window"  # config.json
 DEFAULT_OPTIONS = {"on_top": False, "alpha": 100, "bg_alpha": 100, "node_alpha": 100, "frameless": False,
-                   "separate": False, "tabbed": True, "tidy": False, "scale": 100, "log_lines": 6}
+                   "separate": False, "tabbed": True, "tidy": False, "scale": 100, "log_lines": 6,
+                   "log_cols": 60, "log_side": "bottom"}
+LOG_SIDES = ("bottom", "right", "top", "left")
 HINT = "tab/←→ agent · a all · pgup/pgdn session · space prompt · ctrl+wheel/+/- zoom · 0 reset · drag pan · esc close"
 BG_OPACITY = IS_MAC or sys.platform == "win32"  # a see-through background needs Windows' or macOS' window support
 
@@ -54,6 +56,9 @@ def load_options(cfg):
     opts["node_alpha"] = _snap(opts["node_alpha"], ALPHA_MIN, 100, OPACITY_STEP)
     opts["scale"] = _snap(opts["scale"], SCALE_MIN, SCALE_MAX, SCALE_STEP)
     opts["log_lines"] = _snap(opts["log_lines"], 3, 80, 1)
+    opts["log_cols"] = _snap(opts["log_cols"], 20, 400, 1)
+    if opts["log_side"] not in LOG_SIDES:
+        opts["log_side"] = "bottom"
     return opts
 
 
@@ -76,7 +81,7 @@ def dither(opacity):
     return "gray25"
 
 
-def needed_size(n_subs, scale, line, small, compact=False):
+def needed_size(n_subs, scale, line, small, compact=False, side="bottom"):
     """(width, height) in pixels the window needs to show everything at this scale (s = 1.5 * scale), given the
     line heights of its main and small fonts at that scale."""
     s = 1.5 * scale
@@ -89,7 +94,10 @@ def needed_size(n_subs, scale, line, small, compact=False):
     graph_h = max(main_h, rows * sub_h) + 20 * s
     head = line + 10 * s
     height = head + graph_h
-    if not compact:
+    if not compact and side in ("left", "right"):  # the logs beside the graph: wider, not taller
+        width += 260 * s
+        height += small + 8 * s
+    elif not compact:
         height += (small + 6 * s) + (line * 4 + 10 * s) + (small + 8 * s)  # tabs, 4 log lines, key bar
     return int(width), int(height)
 
@@ -543,7 +551,8 @@ class AgentNetworkWindow:
         u = self.u if u is None else u
         r = u / self.u
         n = max(0, len(self.net["agents"]) - 1)
-        return needed_size(n, u, self.f_main.metrics("linespace") * r, self.f_small.metrics("linespace") * r)
+        return needed_size(n, u, self.f_main.metrics("linespace") * r, self.f_small.metrics("linespace") * r,
+                           side=self.opts.get("log_side", "bottom"))
 
     def _place(self):
         w, h = self.needed()
@@ -580,6 +589,10 @@ class AgentNetworkWindow:
             o[toggles[name]] = not o[toggles[name]]
         elif name == "alpha":
             o["alpha"] = _snap(o["alpha"] + d * ALPHA_STEP, ALPHA_MIN, 100, ALPHA_STEP)
+        elif name == "logs":
+            o["log_side"] = LOG_SIDES[(LOG_SIDES.index(o.get("log_side", "bottom")) + d) % len(LOG_SIDES)]
+            self._arrange()
+            self._center_next = True
         elif name == "nodes":
             o["node_alpha"] = _snap(o["node_alpha"] + d * OPACITY_STEP, ALPHA_MIN, 100, OPACITY_STEP)
         self._spin_until = time.time() + 0.6  # the cog turns a little on every change
@@ -622,12 +635,15 @@ class AgentNetworkWindow:
             self._center_next = True
         if self.opts["scale"] != old.get("scale"):
             self.set_scale(self.opts["scale"] / 100, save=False)
+        if any(self.opts.get(k) != old.get(k) for k in ("log_side", "log_lines", "log_cols")):
+            self._arrange()
         self._apply_options()
 
     def reset_appearance(self, opts, cascade=0):
         """Default look again, centred on the main screen (the AIPet menu's Reset agent network appearance)."""
         self.toggle_menu(False)
         self.opts = dict(opts)
+        self._arrange()
         self.set_scale(self.opts["scale"] / 100, save=False, grow=False)
         self._apply_options()
         self.cascade, self.at = cascade, None
@@ -927,8 +943,7 @@ class AgentNetworkWindow:
             self.handles[side] = h
         self.body = tk.Frame(w)
         self.body.pack(fill="both", expand=True)
-        self.canvas = tk.Canvas(self.body, highlightthickness=0, bd=0, height=self.px(150))
-        self.canvas.pack(fill="both", expand=True)
+        self.canvas = tk.Canvas(self.body, highlightthickness=0, bd=0, height=self.px(150), width=self.px(200))
         self.canvas.bind("<Configure>", self._on_resize)
         self.canvas.bind("<ButtonPress-1>", self._pan_start)
         self.canvas.bind("<B1-Motion>", self._pan_move)
@@ -952,19 +967,19 @@ class AgentNetworkWindow:
         self.statc = tk.Canvas(self.canvas, bd=0, highlightthickness=1)
         self.statc.place(relx=1.0, rely=1.0, x=-self.px(6), y=-self.px(6), anchor="se")
         self.tip = tk.Label(w, font=self.f_small, justify="left", anchor="w", padx=self.px(6), pady=self.px(3))
-        self.sep = tk.Frame(self.body, height=1)
-        self.sep.pack(fill="x")
-        self.tabs = tk.Frame(self.body)
-        self.tabs.pack(fill="x", padx=self.px(6))
         # the split between graph and logs: drag it (the logs get up to 80% of the window)
-        self.sep.configure(height=max(3, self.px(3)), cursor="sb_v_double_arrow")
+        self.sep = tk.Frame(self.body, height=max(3, self.px(3)), width=max(3, self.px(3)))
         self.sep.bind("<Button-1>", self._split_start)
         self.sep.bind("<B1-Motion>", self._split_move)
         self.sep.bind("<ButtonRelease-1>", lambda e: self._save("log_lines", delay=300))
-        self.log = tk.Text(self.body, height=self.opts.get("log_lines", 6), wrap="word", bd=0, highlightthickness=0,
+        self.logbox = tk.Frame(self.body)
+        self.tabs = tk.Frame(self.logbox)
+        self.tabs.pack(fill="x", padx=self.px(6))
+        self.log = tk.Text(self.logbox, height=6, width=40, wrap="word", bd=0, highlightthickness=0,
                            font=self.f_main, padx=self.px(8), pady=self.px(4), cursor="xterm", takefocus=0,
                            exportselection=True)
-        self.log.pack(fill="both", expand=False)
+        self.log.pack(fill="both", expand=True)
+        self._arrange()
         self.log.bind("<Control-c>", lambda e: self._copy(self.log))
         self.log.bind("<Control-a>", lambda e: (self.log.tag_add("sel", "1.0", "end"), "break")[1])
         self.log.bind("<Button-1>", lambda e: self.log.focus_set(), add="+")  # so Ctrl+C reaches it
@@ -1068,19 +1083,48 @@ class AgentNetworkWindow:
         self.win.clipboard_append(text)
         return "break"
 
+    def _arrange(self):
+        """The logs below, above, left or right of the graph (settings: logs position), split by a draggable line."""
+        side = self.opts.get("log_side", "bottom")
+        across = side in ("left", "right")
+        for wdg in (self.canvas, self.sep, self.logbox):
+            wdg.pack_forget()
+        self.logbox.pack(side=side, fill="y" if across else "x")
+        self.sep.pack(side=side, fill="y" if across else "x")
+        self.sep.configure(cursor="sb_h_double_arrow" if across else "sb_v_double_arrow")
+        self.canvas.pack(side=side, fill="both", expand=True)
+        self._size_log()
+
+    def _size_log(self):
+        """The logs' size from the settings: lines (above / below) or a width in characters (left / right)."""
+        if self.opts.get("log_side", "bottom") in ("left", "right"):
+            self.log.configure(width=self.opts.get("log_cols", 60), height=1)
+        else:
+            self.log.configure(height=self.opts.get("log_lines", 6), width=1)
+
     def _split_start(self, e):
-        self._split = (e.y_root, self.log.winfo_height())
+        self._split = (e.x_root, e.y_root, self.log.winfo_width(), self.log.winfo_height())
 
     def _split_move(self, e):
-        """Drag the split: the logs between 3 lines and 80% of the window."""
-        y0, h0 = getattr(self, "_split", (e.y_root, self.log.winfo_height()))
+        """Drag the split: the logs from a few lines (or 20 characters) up to 80% of the window."""
+        side = self.opts.get("log_side", "bottom")
+        x0, y0, w0, h0 = getattr(self, "_split", (e.x_root, e.y_root, self.log.winfo_width(), self.log.winfo_height()))
+        if side in ("left", "right"):
+            col = max(1, self.f_main.measure("0"))
+            want = w0 + ((e.x_root - x0) if side == "left" else (x0 - e.x_root))
+            most = int(self.win.winfo_width() * 0.8)
+            cols = int(max(20, min(most // col, want // col)))
+            if cols != self.opts.get("log_cols"):
+                self.opts["log_cols"] = cols
+                self._size_log()
+            return
         line = max(1, self.f_main.metrics("linespace"))
-        want = h0 + (y0 - e.y_root)
+        want = h0 + ((e.y_root - y0) if side == "top" else (y0 - e.y_root))
         most = int(self.win.winfo_height() * 0.8) - self.tabs.winfo_height() - self.px(8)
         lines = int(max(3, min(most // line, want // line)))
         if lines != self.opts.get("log_lines"):
             self.opts["log_lines"] = lines
-            self.log.configure(height=lines)
+            self._size_log()
 
     def _typing(self):
         try:
@@ -1148,6 +1192,10 @@ class AgentNetworkWindow:
                            fg=P["blue"] if on else P["tx"], anchor="w", cursor="hand2")
             lab.pack(fill="x", padx=pad)
             lab.bind("<Button-1>", lambda e, n=name: (self.tool(n), "break")[1])
+        side = tk.Label(m, text=f"[{o['log_side']:^6}] logs position (click to move)", font=self.f_main, bg=P["bar"],
+                        fg=P["tx"], anchor="w", cursor="hand2")
+        side.pack(fill="x", padx=pad)
+        side.bind("<Button-1>", lambda e: (self.tool("logs"), "break")[1])
         width = self.px(150)
         line = self.f_small.metrics("linespace")
         self._sliders = []
@@ -1992,6 +2040,18 @@ class AgentNetworkWindow:
         hang = 9 + ((width + 3) if self.sel < 0 else 0)
         log.tag_configure("hang", lmargin2=self.f_main.measure(" " * (hang + 2)))
         log.tag_configure("fold", foreground=P["blue"])
+        log.tag_configure("odd", background=mix(P["bar"], P["bg"], 0.35))  # every other entry shaded
+        try:  # an agent's final reply (its result): a green stripe down its left side, on a green tint
+            log.tag_configure("final", background=mix(P["grn"], P["bg"], 0.9), lmargincolor=P["grn"],
+                              lmargin1=self.px(4), lmargin2=self.f_main.measure(" " * (hang + 2)) + self.px(4))
+        except tk.TclError:  # Tk before 8.6.6: no margin colour, the tint alone
+            log.tag_configure("final", background=mix(P["grn"], P["bg"], 0.88))
+        finals = set()
+        for i, a in enumerate(ags):
+            if a["state"] not in ("working", "needs_input", "waiting"):
+                last = next((k for k in range(len(rows) - 1, -1, -1) if rows[k][1] == i and rows[k][2] == "say"), None)
+                if last is not None:
+                    finals.add(last)
         self._entries = []
         for n, (t, i, kind, text) in enumerate(rows):
             # long entries show their first line with ›: click (or right-click) to unfold them, ‹ to fold again
@@ -2014,6 +2074,10 @@ class AgentNetworkWindow:
                 log.insert("end", "  ‹" if key in self._expanded else "  ›", ("fold", "hang"))
             log.insert("end", "\n")
             log.tag_add(f"entry{n}", start, "end-1c")
+            if n % 2:
+                log.tag_add("odd", start, "end-1c")
+            if n in finals:
+                log.tag_add("final", start, "end-1c")
             log.tag_bind(f"entry{n}", "<ButtonRelease-1>", lambda e, n=n: self._entry_click(n))
             for b in ("<Button-3>",) + (("<Button-2>", "<Control-Button-1>") if IS_MAC else ()):
                 log.tag_bind(f"entry{n}", b, lambda e, n=n: self._entry_menu(e, n))
@@ -2092,8 +2156,7 @@ class AgentNetworkWindow:
             self.in_window = in_window
             self._draw_graph()
         if not self.overlay_open:
-            self.chip.place(relx=1.0, x=-self.px(10), y=self.body.winfo_y() + self.canvas.winfo_height()
-                            - self.px(4), anchor="se")
+            self.chip.place(in_=self.canvas, relx=1.0, rely=1.0, x=-self.px(170), y=-self.px(6), anchor="se")
         sig = (req.get("id"), self.theme, self.s, core.hook_waiting(item))
         if sig != self._prompt_sig:
             self._prompt_sig = sig
@@ -2124,7 +2187,7 @@ class AgentNetworkWindow:
         bottom = self.footbar.winfo_y() - self.px(6)
         self._flow_options(width - self.px(20))
         highest = self.body.winfo_y() + self.px(6)
-        top = self.body.winfo_y() + int(self.canvas.winfo_height() * 0.72)
+        top = self.body.winfo_y() + self.canvas.winfo_y() + int(self.canvas.winfo_height() * 0.72)
         try:
             self.overlay.update_idletasks()
             need = self.overlay.winfo_reqheight() + self.px(4)

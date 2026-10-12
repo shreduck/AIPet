@@ -313,7 +313,9 @@ A live map of one session: the main agent and every subagent it started, Claude 
   effort and (on its own line) context size when the transcript records them, and its state. Edges show what is going on: blue with dots
   flowing out while a subagent works, amber while the main agent waits on it, green with a dot flowing back once it
   handed back its result. Next to each subagent: its latest thought or words.
-- **Logs** at the bottom (drag the line above them to resize, up to 80% of the window; select text and Ctrl+C to
+- **Logs** below the graph, or above, left or right of it (settings: *logs position*). Every other entry is shaded,
+  and each agent's final reply (its result) has a green stripe down its side. Drag the line between graph and logs to
+  resize them (up to 80% of the window); select text and Ctrl+C to
   copy; what an agent said is there in full, its final reply being its result; long entries show their first line
   with `›`: click to unfold, `‹` to fold, right-click for expand / collapse, copy text and open in a window, a plain
   text window titled after the reply, with a copy button): *[all]* merges every agent's activity into one log (prompts, what each one said, tool calls,
