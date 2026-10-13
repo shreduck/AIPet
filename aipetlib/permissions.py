@@ -23,6 +23,11 @@ def unconfirmed_prompts(services, rec, now=None):
 
 
 def answer_name(services, item):
+    return request_file_name(item)
+
+
+def request_file_name(item):
+    """The answers/ file name (without extension) of the prompt on screen: the hook's safe_name of its request id."""
     req = (item or {}).get("request") or {}
     return "".join(ch if ch.isalnum() or ch in "_.-" else "_" for ch in str(req.get("id") or (item or {}).get("sid") or "request"))[:120]
 
@@ -37,6 +42,29 @@ def hook_waiting(services, item):
         return time.time() - os.path.getmtime(os.path.join(services.answers_dir(), services.answer_name(item) + ".waiting")) < 4
     except OSError:
         return False
+
+
+def hook_stop(item, answers_dir):
+    """How AIPet's hook stopped waiting for this prompt without a decision, else None:
+    {"after": seconds, "signal": "SIGTERM"} when its agent stopped it politely (the hook recorded that), or
+    {"after": seconds, "signal": ""} when it was killed: its .waiting file was left behind and went stale (a hook
+    that ends normally removes it)."""
+    req = (item or {}).get("request") or {}
+    if isinstance(req.get("hook_stopped"), dict):
+        return {"after": req["hook_stopped"].get("after"), "signal": req["hook_stopped"].get("signal") or ""}
+    if not req.get("answerable"):
+        return None
+    try:
+        stamp = os.path.getmtime(os.path.join(answers_dir, request_file_name(item) + ".waiting"))
+    except OSError:
+        return None
+    if time.time() - stamp < 4:
+        return None  # still waiting
+    try:
+        after = max(0.0, stamp - float(req.get("t") or stamp))
+    except (TypeError, ValueError):
+        after = None
+    return {"after": after, "signal": ""}
 
 
 def answers_dir(services):

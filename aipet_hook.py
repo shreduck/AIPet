@@ -35,6 +35,7 @@ import hashlib
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -345,6 +346,21 @@ def window_alive(hwnd):
         return bool(ctypes.windll.user32.IsWindow(ctypes.c_void_p(int(hwnd))))
     except Exception:
         return False
+
+
+def log_wait_end(base_dir, record, req, decision):
+    """With diagnostics on (<pet dir>/debug-events), one events.log line per finished wait: how it ended and after how
+    long. Names and numbers only, like debug_log."""
+    try:
+        if not os.path.exists(os.path.join(base_dir, "debug-events")):
+            return
+        row = {"t": time.strftime("%H:%M:%S"), "ev": "WaitEnded", "sid": str(record.get("id", ""))[:8],
+               "tool": req.get("tool", ""), "reason": WAIT_END.get("reason", ""), "decision": decision or "",
+               "after": WAIT_END.get("after"), "signal": WAIT_END.get("signal", ""), "agent": AGENT}
+        with open(os.path.join(base_dir, "events.log"), "a", encoding="utf-8") as f:
+            f.write(json.dumps(row) + "\n")
+    except Exception:
+        pass
 
 
 def debug_log(base_dir, event, data, prev_state, new_state):
@@ -695,13 +711,49 @@ def await_answer(base, key, seconds, session_path=None, request_id=None):
         os.remove(path)  # an old answer must never apply to a new prompt
     except OSError:
         pass
+    WAIT_END.clear()
+    start = time.time()
+    previous = {}
+
+    def stopped(signum, frame):
+        raise _Stopped(signum)
+
+    for name in STOP_SIGNALS:  # an agent that stops the hook politely: note it and leave cleanly
+        sig = getattr(signal, name, None)
+        if sig is not None:
+            try:
+                previous[sig] = signal.signal(sig, stopped)
+            except (ValueError, OSError):
+                pass
     try:
         return _await(path, waiting, base, seconds, session_path, request_id)
+    except _Stopped as e:
+        WAIT_END.update(reason="stopped", signal=getattr(signal.Signals(e.signum), "name", str(e.signum)))
+        return None
     finally:
+        WAIT_END["after"] = round(time.time() - start, 1)
+        for sig, handler in previous.items():
+            try:
+                signal.signal(sig, handler)
+            except (ValueError, OSError):
+                pass
         try:
             os.remove(waiting)
         except OSError:
             pass
+
+
+# Signals an agent may use to stop a waiting hook. A hard kill (SIGKILL, Windows' TerminateProcess) can't be caught:
+# the pet then sees the .waiting file go stale without being removed.
+STOP_SIGNALS = ("SIGTERM", "SIGHUP", "SIGINT", "SIGBREAK")
+WAIT_END = {}  # how the last wait ended: reason (answered / released / timed_out / answered_elsewhere / answers_off /
+#               pet_closed / stopped), seconds waited ("after") and, when stopped, the signal
+
+
+class _Stopped(Exception):
+    def __init__(self, signum):
+        super().__init__(signum)
+        self.signum = signum
 
 
 LAST_ANSWER = {}  # the whole answer file of the last click (behavior, and "answers" for a question)
@@ -712,6 +764,7 @@ def _await(path, waiting, base, seconds, session_path, request_id):
     checked, touched = time.time(), 0.0
     while deadline is None or time.time() < deadline:
         if not answers_enabled(base):
+            WAIT_END["reason"] = "answers_off"
             return None  # toggled off while waiting: show the agent's normal prompt
         if time.time() - touched > 1:
             touched = time.time()
@@ -724,6 +777,7 @@ def _await(path, waiting, base, seconds, session_path, request_id):
         if session_path and request_id and time.time() - checked > 2:
             checked = time.time()
             if request_id not in {r.get("id") for r in pending_requests(read_json(session_path))}:
+                WAIT_END["reason"] = "answered_elsewhere"
                 return None  # answered elsewhere: the record no longer holds this prompt
         if os.path.exists(path):
             time.sleep(0.05)
@@ -733,14 +787,18 @@ def _await(path, waiting, base, seconds, session_path, request_id):
             except OSError:
                 pass
             if data.get("behavior") == "release":
+                WAIT_END["reason"] = "released"
                 return None  # "Go to window" (Codex): let go, so the agent shows its own prompt with all its choices
             if data.get("behavior") in ("allow", "deny"):
+                WAIT_END["reason"] = "answered"
                 LAST_ANSWER.clear()
                 LAST_ANSWER.update(data)  # answers to a question travel with the click
                 return data["behavior"]
         if not pet_alive(base):
+            WAIT_END["reason"] = "pet_closed"
             return None  # the pet was closed: fall back to the normal prompt
         time.sleep(0.2)
+    WAIT_END["reason"] = "timed_out"
     return None
 
 
@@ -808,8 +866,13 @@ def answer_flow(base, path, aid, request_id=None, tool_input=None):
                         {"tool_use_id": mine[0].get("tool_use_id", ""), "sig": mine[0].get("sig", "")}]
             else:
                 mine[0]["answerable"] = False
+                if WAIT_END.get("reason") == "stopped":  # the card says so instead of guessing
+                    mine[0]["hook_stopped"] = {"after": WAIT_END.get("after"), "signal": WAIT_END.get("signal", "")}
                 _set_requests(cur, requests)
             write_atomic(path, cur)
+    log_wait_end(base, cur, req, decision)
+    if WAIT_END.get("reason") == "stopped":
+        return  # the agent has given up on this hook: answer nothing, exit now
     if decision:
         updated = None
         answers = LAST_ANSWER.get("answers")

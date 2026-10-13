@@ -8,6 +8,7 @@ import tkinter as tk
 from . import sprites
 from . import theme
 from .. import geometry
+from .. import permissions
 
 
 class PermissionCard:
@@ -302,6 +303,7 @@ class PermissionCard:
         self.wait.config(text=f"waiting {services.ago(item['changed'])}" if item.get("changed") else "")
         can_answer = self.app.answers_enabled(item) and services.hook_waiting(item) and not self.sent
         who = "Codex" if item.get("agent") == "codex" else "Claude Code"
+        stop = None if can_answer or self.sent or not req else permissions.hook_stop(item, permissions.answers_dir(services))
         if self.sent:
             note = f"Sent: {self.sent}. {who} will carry on in a moment."
         elif can_answer and item.get("agent") == "codex":
@@ -313,6 +315,14 @@ class PermissionCard:
         elif req and not self.app.answers_enabled(item):
             note = (f"Answer this one in {who} (Go to window). To answer prompts here instead, switch on "
                     f"Answer {who} prompts from the pet under Permissions.")
+        elif stop:
+            after = f"after {'about ' if not stop['signal'] else ''}{round(stop['after'])} s " \
+                if isinstance(stop.get("after"), (int, float)) else ""
+            how = f"stopped AIPet's prompt {after}without a decision" + (
+                f" ({stop['signal']})." if stop["signal"] else ": its hook was ended, not answered.")
+            note = (f"{who} {how} If {who} shows its own prompt, answer there (Go to window). If it shows nothing, "
+                    f"interrupt the turn in {who}" + (", or switch off Approve for me if it is on." if who == "Codex"
+                                                     else "."))
         elif item.get("agent") == "codex" and req and self.app.cfg.get("codex_answers", True):
             note = ("Codex is no longer waiting for this window, so answer in Codex (Go to window). If this happens "
                     "right away, your Codex hooks are from an older AIPet with a short timeout: update them in the "

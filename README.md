@@ -356,6 +356,10 @@ A live map of one session: the main agent and every subagent it started, Claude 
   *Go to window* (on the card) and *Answer in Codex* (in the agent network) hand the prompt back, so Codex shows its own
   prompt with all its choices, like always allowing that tool. Claude Code shows its own prompt alongside the pet's
   anyway, so there it only jumps to the window.
+- **A prompt the agent stopped**: if Codex or Claude Code ends AIPet's waiting hook without a decision, the card says
+  so and after how long ("Codex stopped AIPet's prompt after 14 s"). A hook stopped politely records it; one killed
+  outright leaves its `answers/*.waiting` file behind, which the pet reads as stopped. If the agent then shows no prompt
+  of its own, interrupt the turn there (in Codex, also check whether *Approve for me* is on).
 - **Settings** drop down from the cogwheel at the top right (it turns while open), in three parts (window, graph,
   logs), kept in `config.json` under
   `agent_window` and applied to every open agent network window: `[on ]` / `[off]` always on top, title bar (off: drag
@@ -468,6 +472,8 @@ vX.Y.Z...* until you install it. Nothing is downloaded or installed automaticall
 - **Log hook events (debug)** appends one metadata line per hook event to `~/.aipet/events.log` (event, tool name, field
   names, state change, VS Code detection hints - never prompts, commands or other values). Use it to diagnose odd pet states,
   e.g. a permission prompt that the pet shows as "working" because another subagent's tool call arrived in between.
+  It also logs how each permission wait ended (`WaitEnded`: answered, released, timed out, answered elsewhere, answers
+  off, pet closed, or stopped by the agent, with the seconds waited).
 
 ## First-run setup, notifications
 - On first run a **setup window** lists the Claude Code installs it found (this PC, running WSL distros with Claude Code)
