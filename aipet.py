@@ -787,36 +787,10 @@ class ClickThrough(ClickThroughController):
 
 
 # --------------------------------------------------------------------------- window focus (Windows)
-def _user32():
-    return windows._user32(sys.modules[__name__])
-
-
-def _go_to_desktop_of(hwnd):
-    return windows._go_to_desktop_of(sys.modules[__name__], hwnd)
-
-
-def focus_hwnd(hwnd):
-    return windows.focus_hwnd(sys.modules[__name__], hwnd)
-
-
-def terminal_windows():
-    return windows.terminal_windows(sys.modules[__name__])
-
-
-def claude_app_windows(exe_name="claude.exe"):
-    return windows.claude_app_windows(sys.modules[__name__], exe_name)
-
-
-def _folder(d):
-    return windows._folder(sys.modules[__name__], d)
-
-
-def terminal_agent(title):
-    return windows.terminal_agent(sys.modules[__name__], title)
-
-
-def focus_wsl_terminal(d, others=()):
-    return windows.focus_wsl_terminal(sys.modules[__name__], d, others)
+from aipetlib.windows import (  # noqa: E402,F401
+    _folder, _go_to_desktop_of, _user32, claude_app_windows, focus_hwnd, focus_wsl_terminal, terminal_agent,
+    terminal_windows,
+)
 
 
 # --------------------------------------------------------------------------- app
@@ -1317,13 +1291,13 @@ class PetApp:
         if d.get("ide") == "vscode":
             self.open_in_vscode(pet)  # `code <folder>` raises the right VS Code window, then the conversation tab
         elif os.name == "nt":
-            if focus_hwnd(d.get("hwnd")):
+            if windows.focus_hwnd(d.get("hwnd")):
                 return
             if d.get("env") == "wsl" or d.get("agent") == "codex" or d.get("app") == "cowork" or \
                     "desktop" in (d.get("entry") or "").lower():
                 own = d.get("focus") or pet.key
                 others = [i for i in self._last_items if i.get("key") != own]
-                focus_wsl_terminal(d, others)  # no recorded window: match by distro / project, never another's
+                windows.focus_wsl_terminal(d, others)  # no recorded window: match by distro / project, never another's
 
     def _menu_session(self, pet):
         """The session a right-click is about: the pet's own, or in compact mode the one in front."""

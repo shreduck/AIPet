@@ -1,12 +1,14 @@
-"""Windows native window discovery and deliberate session focusing.
+"""Windows native window discovery and deliberate session focusing (no-ops elsewhere).
 
-Services are supplied by the compatibility entry point; this module does not import aipet.
+Imports no Tk and no application entry point; errors go to runtime.diagnostics.
 """
 import os
 import time
 
+from .runtime import diagnostics
 
-def _user32(services):
+
+def _user32():
     import ctypes
     from ctypes import wintypes
     u = ctypes.windll.user32
@@ -20,7 +22,7 @@ def _user32(services):
     return u
 
 
-def _go_to_desktop_of(services, hwnd):
+def _go_to_desktop_of(hwnd):
     """Windows 10/11 virtual desktops: switch to the desktop the window is on. SetForegroundWindow alone often
     leaves you where you are when the window lives on another desktop (the pet is on every desktop, so this happens)."""
     try:
@@ -36,18 +38,18 @@ def _go_to_desktop_of(services, hwnd):
         pass  # pyvda missing or this Windows build unsupported: focusing still works on the current desktop
 
 
-def focus_hwnd(services, hwnd):
+def focus_hwnd(hwnd):
     """Bring a window to the front, on whatever virtual desktop it is. True if it really came to the front."""
     if os.name != "nt" or not hwnd:
         return False
     try:
         import ctypes
         from ctypes import wintypes
-        u, k32 = services._user32(), ctypes.windll.kernel32
+        u, k32 = _user32(), ctypes.windll.kernel32
         h = int(hwnd)
         if not u.IsWindow(h):
             return False
-        services._go_to_desktop_of(h)
+        _go_to_desktop_of(h)
         if u.IsIconic(h):
             u.ShowWindow(h, 9)  # SW_RESTORE
         u.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.c_void_p]
@@ -76,20 +78,20 @@ def focus_hwnd(services, hwnd):
             u.keybd_event(0x12, 0, 2, 0)
             u.SetForegroundWindow(h)
         if not front():
-            services.log_error(f"go to window: couldn't bring {h:#x} to the front")
+            diagnostics.log_error(f"go to window: couldn't bring {h:#x} to the front")
         return front()
     except Exception as e:
-        services.log_error(f"go to window: {e!r}")
+        diagnostics.log_error(f"go to window: {e!r}")
         return False
 
 
-def terminal_windows(services):
+def terminal_windows():
     """Visible Windows Terminal windows as [(hwnd, title)], frontmost first."""
     if os.name != "nt":
         return []
     import ctypes
     from ctypes import wintypes
-    u, out = services._user32(), []
+    u, out = _user32(), []
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     def visit(hwnd, _):
@@ -106,14 +108,14 @@ def terminal_windows(services):
     return out
 
 
-def claude_app_windows(services, exe_name="claude.exe"):
+def claude_app_windows(exe_name="claude.exe"):
     """Visible top-level windows of a desktop app (the Claude app: claude.exe; the Codex app: codex.exe), frontmost
     first. The CLIs of the same names own no window (their terminal does), so they never show up here."""
     if os.name != "nt":
         return []
     import ctypes
     from ctypes import wintypes
-    u, k32, out = services._user32(), ctypes.windll.kernel32, []
+    u, k32, out = _user32(), ctypes.windll.kernel32, []
     u.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
     u.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
     u.GetWindowTextLengthW.argtypes = [wintypes.HWND]
@@ -147,11 +149,11 @@ def claude_app_windows(services, exe_name="claude.exe"):
     return out
 
 
-def _folder(services, d):
+def _folder(d):
     return os.path.basename(str(d.get("cwd") or "").replace("\\", "/").rstrip("/")).lower()
 
 
-def terminal_agent(services, title):
+def terminal_agent(title):
     """Which agent a terminal title looks like: "claude" (Claude Code puts ✳ or a braille spinner in front of its
     title), "codex", or "" when it doesn't say."""
     t = (title or "").lstrip()
@@ -163,7 +165,7 @@ def terminal_agent(services, title):
     return ""
 
 
-def focus_wsl_terminal(services, d, others=()):
+def focus_wsl_terminal(d, others=()):
     """Best effort for sessions without a recorded window (WSL hooks can't see Windows process ids). Never picks a
     window another session recorded as its own (a Codex terminal, say), and keeps Claude and Codex apart: a terminal
     whose title says it runs the other agent is skipped, one that says it runs this agent is preferred. In order:
@@ -174,22 +176,22 @@ def focus_wsl_terminal(services, d, others=()):
         # Run by the Claude desktop app (its Code tab, here in WSL): that app's window, always. Not a terminal that
         # happens to mention the distro or folder, and not "claimed": one app window hosts all of its sessions, so
         # a Cowork session having recorded it doesn't make it someone else's.
-        app = services.claude_app_windows("claude.exe")
+        app = claude_app_windows("claude.exe")
         if app:
-            return services.focus_hwnd(app[0])
+            return focus_hwnd(app[0])
     claimed = {int(o["hwnd"]) for o in others if o.get("hwnd")}
-    folder = services._folder(d)
+    folder = _folder(d)
     needles = [n.lower() for n in (d.get("distro"), folder, d.get("raw_title")) if n]
-    foreign = {f for f in (services._folder(o) for o in others) if f and f != folder}
-    wins = [(h, t, services.terminal_agent(t)) for h, t in services.terminal_windows() if h not in claimed]
+    foreign = {f for f in (_folder(o) for o in others) if f and f != folder}
+    wins = [(h, t, terminal_agent(t)) for h, t in terminal_windows() if h not in claimed]
     wins = [w for w in wins if w[2] in ("", agent)]  # never the other agent's terminal
     named = [w for w in wins if any(n in w[1].lower() for n in needles)]
     if named:  # this agent's own terminal first, then one that doesn't say
-        return services.focus_hwnd(sorted(named, key=lambda w: w[2] != agent)[0][0])
+        return focus_hwnd(sorted(named, key=lambda w: w[2] != agent)[0][0])
     wins = [w for w in wins if not any(f in w[1].lower() for f in foreign)]
-    app = [h for h in services.claude_app_windows(agent + ".exe") if h not in claimed]
+    app = [h for h in claude_app_windows(agent + ".exe") if h not in claimed]
     if app and (agent == "claude" and "desktop" in (d.get("entry") or "").lower() or not wins):
-        return services.focus_hwnd(app[0])
+        return focus_hwnd(app[0])
     if wins:
-        return services.focus_hwnd(sorted(wins, key=lambda w: w[2] != agent)[0][0])
-    return bool(app) and services.focus_hwnd(app[0])
+        return focus_hwnd(sorted(wins, key=lambda w: w[2] != agent)[0][0])
+    return bool(app) and focus_hwnd(app[0])
