@@ -92,5 +92,21 @@ def full(text, limit=60000):
 
 
 def _empty():
+    """A parsed transcript. Tokens: "tokens" [new input, cached input, output] of finished requests, "tok_open" the
+    latest request (id, [...]; Claude repeats a response's usage on each of its entries, so it counts once, last
+    copy wins), "tok_first" the first request id of this read, "tok_abs" a cumulative total the harness reports
+    (Codex); "usage_at" {line time: (prompt tokens, output tokens)} of each request, for the log."""
     return {"model": "", "model_hint": "", "effort": "", "ctx": 0, "ctx_max": 0, "lines": [], "last_prompt_t": 0.0, "done": None,
-            "first_t": 0.0, "tool_calls": [], "closed_t": 0.0, "final_lines": [], "queries": []}
+            "first_t": 0.0, "tool_calls": [], "closed_t": 0.0, "final_lines": [], "queries": [],
+            "tokens": [0, 0, 0], "tok_open": None, "tok_first": "", "tok_abs": None, "usage_at": {}}
+
+
+def token_totals(info):
+    """{"in", "cached", "out", "total"} an agent used (as far as its transcript was read), or None if none."""
+    if info.get("tok_abs"):
+        new, cached, out = info["tok_abs"]
+    else:
+        new, cached, out = (a + b for a, b in zip(info.get("tokens") or [0, 0, 0],
+                                                  (info.get("tok_open") or ("", [0, 0, 0]))[1]))
+    total = new + cached + out
+    return {"in": new, "cached": cached, "out": out, "total": total} if total else None

@@ -104,3 +104,38 @@ def tooltip(row):
     if row.get("updated"):
         lines.append("Last read: " + time.strftime("%H:%M:%S", time.localtime(row["updated"])))
     return "\n".join(lines)
+
+
+def agent_window(agent, overrides=None):
+    """(window size, exact) of one agent-network node: reported (Codex), set in config.json, else estimated."""
+    return window({"reported_max": agent.get("ctx_max") or 0, "model": agent.get("model") or "",
+                   "hint": agent.get("model_hint") or "", "used": agent.get("ctx") or 0}, overrides)
+
+
+def node_line(agent, overrides=None):
+    """A node's context line: "ctx 84k/~200k 42%", then the tokens the agent used so far ("Σ 1.2M")."""
+    parts = []
+    if agent.get("ctx"):
+        size, exact = agent_window(agent, overrides)
+        parts.append(f"ctx {fmt_tokens(agent['ctx'])}/{'' if exact else '~'}{fmt_tokens(size)} "
+                     f"{min(100, round(100 * agent['ctx'] / size)) if size else 0}%")
+    tokens = agent.get("tokens")
+    if tokens:
+        parts.append(f"Σ {'≥' if tokens.get('partial') else ''}{fmt_tokens(tokens['total'])}")
+    return " · ".join(parts)
+
+
+def tokens_text(tokens):
+    """The tokens an agent used: "Σ 1.2M tokens (in 40k, cached 1.1M, out 45k)"; "" if none."""
+    if not tokens:
+        return ""
+    return (f"Σ {'≥' if tokens.get('partial') else ''}{fmt_tokens(tokens['total'])} tokens "
+            f"(in {fmt_tokens(tokens['in']) or 0}, cached {fmt_tokens(tokens['cached']) or 0}, "
+            f"out {fmt_tokens(tokens['out']) or 0})")
+
+
+def line_usage(usage):
+    """A log line's request: "in 84k · out 1.2k" (the prompt it sent, the tokens it answered with)."""
+    prompt, out = usage
+    return f"in {fmt_tokens(prompt) or 0} · out {fmt_tokens(out) or 0}"
+

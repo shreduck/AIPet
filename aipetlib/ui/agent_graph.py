@@ -7,6 +7,7 @@ import math
 import time
 import tkinter as tk
 
+from ..agents import context as agent_context
 from ..agents.records import fmt_tokens
 from . import agent_common as common
 from . import sprites
@@ -170,7 +171,8 @@ class GraphView:
         blocks = window.blocks
         sig = (W, H, self.gz, window.sel, window.key, window.theme, window.s, window.opts["node_alpha"], window.prompt.in_window,
                tuple((k, tuple((a["id"], a.get("parent", ""), a.get("depth", 0),
-                                a["name"], a["state"], a["model_label"], a["effort"], a["ctx"], a["thought"] if a["main"] else "")
+                                a["name"], a["state"], a["model_label"], a["effort"], a["ctx"],
+                                (a.get("tokens") or {}).get("total"), a["thought"] if a["main"] else "")
                                for a in net["agents"])) for k, _, net in blocks))
         if sig == self.sig and not force:
             self.draw_stats()
@@ -423,9 +425,9 @@ class GraphView:
                           tags=tag)
             # a subagent's type (general-purpose, Explore...) when its name is its description, then model and effort
             info = " · ".join(v for v in ((a.get("kind") if not a["main"] else ""), a["model_label"], a["effort"]) if v)
-            ctx = fmt_tokens(a["ctx"])
-            ctx_line = (f"ctx {ctx}" + (f"/{fmt_tokens(a['ctx_max'])}" if a["ctx_max"] else "")) if ctx else ""
-            rows = [info, ctx_line]  # the context always on a line of its own (what it says: in the logs)
+            # the context (of its window, estimated for Claude) and the tokens used so far, on a line of their own
+            ctx_line = agent_context.node_line(a, self.context_windows())
+            rows = [info, ctx_line]
             ly = y + self.gpx(5) + lh
             for row in rows:
                 if row:
@@ -443,6 +445,10 @@ class GraphView:
                 c.tag_bind(tag, "<ButtonRelease-1>", lambda e, k=key, i=i: self.click_node(e, k, i))
             c.tag_bind(tag, "<Enter>", lambda e: c.configure(cursor="hand2"))
             c.tag_bind(tag, "<Leave>", lambda e: c.configure(cursor=""))
+
+    def context_windows(self):
+        """Claude context windows set in config.json ("context_windows"), else estimated."""
+        return (getattr(self.window.pet, "cfg", None) or {}).get("context_windows")
 
     def title_click(self, key):
         """A click (not a drag) on a session's title bar: that session, with its [all] log."""
@@ -756,10 +762,13 @@ class GraphView:
                 return [("# no subagents in this task", "mu")]
             return [(f"{name:<22} ×{n}", "") for name, n in st["subagents"]]
         if kind == "ctx":
-            lines = [(f"{'#':<3}{'agent':<18}{'model':<14}{'context':>8}", "mu")]
-            for k, (name, model, ctx) in enumerate(st["calls"], 1):
-                lines.append((f"{k:<3}{name[:17]:<18}{model[:13]:<14}{fmt_tokens(ctx) or '-':>8}", ""))
-            lines.append((f"{'':<3}{'total':<32}{fmt_tokens(st['ctx_total']) or '0':>8}", "mu"))
+            lines = [(f"{'#':<3}{'agent':<18}{'model':<14}{'context':>8}{'Σ tokens':>10}", "mu")]
+            for k, (name, model, ctx, tokens) in enumerate(st["calls"], 1):
+                lines.append((f"{k:<3}{name[:17]:<18}{model[:13]:<14}{fmt_tokens(ctx) or '-':>8}"
+                              f"{fmt_tokens(tokens) or '-':>10}", ""))
+            lines.append((f"{'':<3}{'total':<32}{fmt_tokens(st['ctx_total']) or '0':>8}"
+                          f"{fmt_tokens(st.get('tokens_total')) or '0':>10}", "mu"))
+            lines.append(("Σ tokens: everything each agent sent and got back (cached input included)", "mu"))
             return lines
         lines = [(f"{name:<26} ×{n}", "") for name, n in st["tools"]] or [("# no tool calls in this task", "mu")]
         lines.append(("── skills ──", "mu"))

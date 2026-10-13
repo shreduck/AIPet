@@ -6,6 +6,7 @@ import time
 import tkinter as tk
 
 from ..agents import log_filters
+from ..agents import context as agent_context
 from ..agents.records import fmt_tokens, short
 from . import agent_common as common
 
@@ -275,8 +276,9 @@ class LogPanel:
         rows = log_filters.filtered_log_rows(window.net, window.sel, self.filters)[-160:]
         filter_sig = tuple((k, tuple(sorted(v)) if isinstance(v, set) else v) for k, v in self.filters.items())
         available = max(0, log.winfo_width() - 2 * int(log.cget("padx")) - 2)
+        usage = self.row_usage(rows, ags)
         sig = (window.sel, window.theme, window.s, window.opts.get("text_scale", 100), available,
-               tuple(rows), len(ags), filter_sig)
+               tuple(rows), len(ags), filter_sig, tuple(usage))
         if sig == self.sig:
             return
         switched = (self.sig or (None,))[0] != sig[0]
@@ -303,7 +305,8 @@ class LogPanel:
         if window.sel >= 0 and ags:
             a = ags[window.sel]
             info = " · ".join(v for v in (a["model_label"], a["effort"],
-                                          f"ctx {fmt_tokens(a['ctx'])}" if a["ctx"] else "") if v)
+                                          f"ctx {fmt_tokens(a['ctx'])}" if a["ctx"] else "",
+                                          agent_context.tokens_text(a.get("tokens"))) if v)
             log.insert("end", f"$ tail {a['name']} ", f"a{window.sel}")
             log.insert("end", "# " + info + (f" · {a['kind']}" if a["kind"] and not a["main"] else "") + "\n", "mu")
         if not rows:
@@ -329,6 +332,7 @@ class LogPanel:
                     finals.add(last)
         self.entries = []
         for n, (t, i, kind, text) in enumerate(rows):
+            meta = f"  · {agent_context.line_usage(usage[n])}" if usage[n] else ""  # the request's tokens
             # long entries show their first line with ›: click (or right-click) to unfold them, ‹ to fold again
             key = (t, ags[i]["name"], kind, hash(text))
             stamp = time.strftime("%H:%M:%S ", time.localtime(t)) if t else " " * 9
@@ -338,7 +342,8 @@ class LogPanel:
             prefix_width = (window.f_main.measure(("▍" if n in finals else "") + stamp + " │ ") +
                             window.f_bold.measure(name) + mark_font.measure(mark + " " if mark else ""))
             text_font = window.f_bold if kind == "you" else window.f_main
-            shown, big = common.log_preview(text, available - prefix_width, text_font, window.f_main.measure("  ›"))
+            shown, big = common.log_preview(text, available - prefix_width - window.f_main.measure(meta), text_font,
+                                            window.f_main.measure("  ›"))
             expanded = key in self.expanded
             if expanded:
                 shown = common.formatted_log_content(text)
@@ -348,7 +353,7 @@ class LogPanel:
             if expanded:
                 title = {"you": "Query", "say": "Response", "think": "Thinking", "input": "Input",
                          "output": "Output", "tool": "Tool", "error": "Error", "spawn": "Agent started"}.get(kind, kind)
-                log.insert("end", f"{stamp}{ags[i]['name']} · {title}  ‹\n", ("expanded_header", f"a{i}"))
+                log.insert("end", f"{stamp}{ags[i]['name']} · {title}{meta}  ‹\n", ("expanded_header", f"a{i}"))
                 log.insert("end", shown + "\n", "expanded_body")
                 tag = f"entry{n}"
                 edges = tuple(tk.Frame(log, bg="#244c80", bd=0, takefocus=0) for _ in range(4))
@@ -366,6 +371,8 @@ class LogPanel:
                 log.insert("end", shown, (kind if kind in ("think", "you", "error", "spawn") else "say", "hang"))
                 if big:
                     log.insert("end", "  ›", ("fold", "hang"))
+                if meta:
+                    log.insert("end", meta, ("mu", "hang"))
                 log.insert("end", "\n")
             log.tag_add(f"entry{n}", start, "end-1c")
             log.tag_configure(f"entry{n}", wrap="word" if expanded else "none")
@@ -386,6 +393,17 @@ class LogPanel:
         else:
             log.yview_moveto(top)  # stays where you are reading
         log.after_idle(self.position_borders)
+
+    @staticmethod
+    def row_usage(rows, ags):
+        """Per row: the tokens of the request it starts ((prompt, output)), once per request, else None."""
+        seen, out = set(), []
+        for t, i, _, _ in rows:
+            u = (ags[i].get("usage_at") or {}).get(t) if i < len(ags) else None
+            out.append(u if u and (i, t) not in seen else None)
+            if u:
+                seen.add((i, t))
+        return out
 
     def position_borders(self, *args):
         """Contour expanded text without embedding widgets that break selection and copying."""

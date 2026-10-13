@@ -134,6 +134,10 @@ def _mac_menu_spec(app, settings=False):
                       "bar, always on top), centred on the main screen."),
             item("Compact mode (one pet)", app.pet.toggle_compact, checked=bool(cfg.get("compact")),
                  help="One pet stands in for every session, showing the one that needs you most."),
+            item("Context beside the pet", lambda: app.pet.set_context_banner(not cfg.get("context_banner", True)),
+                 checked=bool(cfg.get("context_banner", True)),
+                 help="Each AI's context in use and its window (CL ctx 84k/~200k), above its usage limits. "
+                      "Claude's window is estimated from the model unless context_windows in config.json sets it."),
             None,
             item("Dark theme", app.toggle_theme, checked=theme.T.get("name") == "dark",
                  help="Dark name tags, bubbles and windows."),

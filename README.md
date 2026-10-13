@@ -52,7 +52,7 @@ Pets keep their position: a session stays where it first appeared (new ones join
 
 Each pet shows small badges for where its session runs: **Claude**, **Cowork** (Claude app), **Codex**, **WSL**, **VS Code** or **Workbench** (shortened to `CC`, `CW`, `CX`, `VS`, `WB` when several don't fit). Only the robot and its "needs you" bubble catch clicks; the rest of the pet window lets clicks through to what is behind it (turn off with `"click_through": false` in `config.json`). The tray icon takes the colour of the most urgent session, and hovering it shows a summary.
 
-Each AI's **context in use** comes first in that column, e.g. **CL ctx 84k/~200k** or **CX ctx 45k/258k**: the tokens of the session's latest request and the context window they fill. Codex reports its window; Claude transcripts don't, so Claude's is estimated from the model (200k, or 1M for a `[1m]` model or once the context passes 200k) and marked with `~`. Set `context_windows` in `config.json` to correct it (for example `{"opus": 1000000}`), or `context_banner` to `false` to hide the row. Compact mode shows the fullest session per AI; hover for every session's reading. The session tooltip lists the context too. The figures come from the agent tracker's transcript reading, so they also work where the status line doesn't run.
+Each AI's **context in use** comes first in that column, e.g. **CL ctx 84k/~200k** or **CX ctx 45k/258k**: the tokens of the session's latest request and the context window they fill. Codex reports its window; Claude transcripts don't, so Claude's is estimated from the model (200k, or 1M for a `[1m]` model or once the context passes 200k) and marked with `~`. Set `context_windows` in `config.json` to correct it (for example `{"opus": 1000000}`); switch the row off with **Appearance > Context beside the pet** (or `context_banner`: `false`). Compact mode shows the fullest session per AI; hover for every session's reading. The session tooltip lists the context too. The figures come from the agent tracker's transcript reading, so they also work where the status line doesn't run.
 
 Account usage appears beside the pet as small coloured badges: **CL** for Claude and **CX** for Codex, with separate **5h** and **7d** percentages used. Compact mode merges equal readings per AI and uses the newest reading from each harness. Unknown or expired limits are hidden. Codex reads reported limits from its local rollout and skips rereading unchanged files. Readings are stored per session in `~/.aipet/usage` and removed with their session (stale, dismissed or cleared); an hourly sweep deletes any left over for more than a day. Optional usage collection cannot block session updates or permission prompts.
 
@@ -318,7 +318,9 @@ A live map of one session: the main agent and every subagent it started, Claude 
   the view remains available from the AIPet menu.
 - **Nodes** carry a small copy of the pet's robot (red when that agent needs you), the agent's name (a Claude Code
   subagent's description, e.g. *Find the callers*, with its type under it; Codex's own nickname), model, reasoning
-  effort and (on its own line) context size when the transcript records them, and its state. Edges show what is going on: blue with dots
+  effort and, on its own line, its context and the tokens it used so far (*ctx 84k/~200k 42% · Σ 1.2M*; the window is
+  reported by Codex and estimated for Claude, as beside the pet; *≥* while only the end of a long transcript has
+  been read), and its state. Edges show what is going on: blue with dots
   flowing out while a subagent works, amber while the main agent waits on it, green with a dot flowing back once it
   handed back its result (what each one says and does is in the logs). An agent started by a subagent sits in a
   column further right, linked to the subagent that started it (Claude Code records it in the subagent's
@@ -337,7 +339,10 @@ A live map of one session: the main agent and every subagent it started, Claude 
   copy; what an agent said is there in full, its final reply being its result; long entries show their first line
   with `›`: click to unfold, `‹` to fold, right-click for expand / collapse, copy text and open in a window, a plain
   text window titled after the reply, with a copy button): *[all]* merges every agent's activity into one log (prompts, what each one said, tool calls,
-  results), each line in its agent's colour; the other tabs select one agent, including its tool calls.
+  results), each line in its agent's colour; the other tabs select one agent, including its tool calls. The first
+  line of each model request ends with its tokens (*in 84k · out 1.2k*: the prompt it sent, the answer it got), and
+  one agent's tab header sums what that agent used (*Σ tokens*, with cached input); the stats node's *context*
+  drop-down lists the same sum per agent.
 - **Log filters** have their own bar below the agent tabs: **show tools**, **primary** (user queries and final results),
   and separate **tools** and **MCP** dropdowns with a checkbox per unique tool. Clicking an agent node clears the
   filters and shows that agent's full log; clicking a session title clears them for its combined log.

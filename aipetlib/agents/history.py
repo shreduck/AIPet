@@ -57,14 +57,44 @@ def _merge_info(previous, current):
     current["queries"] = list(dict.fromkeys((previous["queries"] if previous else []) + current["queries"]))[-MAX_LOG:]
     if not previous:
         current["lines"] = current["lines"][-MAX_LOG:]
+        current["usage_at"] = _usage_on_lines(current["usage_at"], current["lines"])
         return current
+    _merge_tokens(previous, current)
     for key in ("model", "model_hint", "effort", "ctx", "ctx_max", "last_prompt_t", "closed_t"):
         current[key] = current.get(key) or previous.get(key) or current[key]
     current["first_t"] = previous["first_t"] or current["first_t"]
     if current["done"] is None:
         current["done"] = previous["done"]
     current["lines"] = sorted(dict.fromkeys(previous["lines"] + current["lines"]), key=lambda row: row[0])[-MAX_LOG:]
+    current["usage_at"] = _usage_on_lines({**previous.get("usage_at", {}), **current["usage_at"]}, current["lines"])
     return current
+
+
+def _merge_tokens(previous, current):
+    """Token sums across reads: a request split over two reads counts once (the later copy of its usage)."""
+    sums = [a + b for a, b in zip(previous.get("tokens") or [0, 0, 0], current["tokens"])]
+    opened = previous.get("tok_open")
+    if opened:
+        first = current["tok_first"]
+        if current["tok_open"] is None:
+            current["tok_open"] = opened  # nothing new was answered in this read
+        elif first and first[0] == opened[0]:  # the same request goes on: its usage stays on its first line
+            usage = current["usage_at"].pop(first[1], None)
+            if usage:
+                current["usage_at"][opened[2]] = usage
+            if current["tok_open"][0] == opened[0]:
+                current["tok_open"] = current["tok_open"][:2] + (opened[2],)
+        else:
+            sums = [a + b for a, b in zip(sums, opened[1])]
+    current["tokens"] = sums
+    current["tok_first"] = previous.get("tok_first") or current["tok_first"]
+    current["tok_abs"] = current["tok_abs"] or previous.get("tok_abs")
+
+
+def _usage_on_lines(usage_at, lines):
+    """Only the usage of lines still kept (the log is bounded)."""
+    kept = {row[0] for row in lines}
+    return {t: u for t, u in usage_at.items() if t in kept}
 
 
 def _cached(path, size, parse, bootstrap=False):

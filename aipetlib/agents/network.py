@@ -9,8 +9,14 @@ from ..text import phrase
 from . import history
 from .claude import claude_subagent_files, parse_claude
 from .codex import codex_subagent_files, parse_codex
-from .records import MAX_LOG, RECENT, _empty, model_name
+from .records import MAX_LOG, RECENT, _empty, model_name, token_totals
 from .tools import tool_nodes
+
+
+def _tokens(info):
+    """An agent's token totals; partial while only the end of its transcript has been read."""
+    totals = token_totals(info)
+    return dict(totals, partial=bool(info.get("cut"))) if totals else None
 
 
 def read_network(item, now=None, include_tools=False, bootstrap=False):
@@ -20,7 +26,8 @@ def read_network(item, now=None, include_tools=False, bootstrap=False):
 
 def _read_network(item, now=None, include_tools=False, bootstrap=False):
     """{"agents": [agent...], "log": [(t, index, kind, text)]} for one session item of the pet.
-    agent: {"id", "name", "main", "model", "effort", "ctx", "ctx_max", "state", "thought", "lines", "kind"}
+    agent: {"id", "name", "main", "model", "effort", "ctx", "ctx_max", "state", "thought", "lines", "kind",
+            "tokens": {"in", "cached", "out", "total", "partial"} or None, "usage_at": {line time: (prompt, output)}}
     state: working / needs_input / waiting (main agent waiting on subagents) / done / idle."""
     now = now or time.time()
     codex = item.get("agent") == "codex"
@@ -67,7 +74,8 @@ def _read_network(item, now=None, include_tools=False, bootstrap=False):
                      "final_lines": info["final_lines"],
                      "queries": info["queries"],
                      "_missing": bool(info.get("cut") and (info["first_t"] or 0) > turn_start + 1),
-                     "state": state, "mtime": info["mtime"], "first_t": info["first_t"] or info["mtime"], **{
+                     "state": state, "mtime": info["mtime"], "first_t": info["first_t"] or info["mtime"],
+                     "tokens": _tokens(info), "usage_at": info.get("usage_at") or {}, **{
                          k: info[k] for k in ("model", "effort", "ctx", "ctx_max", "lines")}})
     known = {s["id"] for s in subs}
     for aid, kind in running.items():  # running but no transcript found (older Claude Code): a bare node
@@ -75,7 +83,8 @@ def _read_network(item, now=None, include_tools=False, bootstrap=False):
             subs.append({"id": aid, "name": kind or "subagent", "main": False, "kind": "", "path": "", "mtime": now,
                          "parent": "",
                          "first_t": now, "state": "needs_input" if wait_agent == aid and session_state == "needs_input"
-                         else "working", "model": "", "effort": "", "ctx": 0, "ctx_max": 0, "lines": []})
+                         else "working", "model": "", "effort": "", "ctx": 0, "ctx_max": 0, "lines": [],
+                         "tokens": None, "usage_at": {}})
     by_id = {s["id"]: s for s in subs}
     visible = {s["id"] for s in subs if not retention or s["state"] in ("working", "needs_input")
                or now - s["mtime"] < retention}
@@ -122,6 +131,7 @@ def _read_network(item, now=None, include_tools=False, bootstrap=False):
             "final_lines": main_info["final_lines"],
             "queries": main_info["queries"],
             "model_hint": main_info.get("model_hint", ""),
+            "tokens": _tokens(main_info), "usage_at": main_info.get("usage_at") or {},
             **{k: main_info[k] for k in ("model", "effort", "ctx", "ctx_max", "lines")}}
     agents = [main] + subs
     if include_tools:

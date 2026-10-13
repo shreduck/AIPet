@@ -450,6 +450,9 @@ class PetApp:
                           command=lambda: self.set_claude_answers(self.claude_answer_var.get()))
         self.compact_var = tk.BooleanVar(value=bool(self.cfg.get("compact")))
         m.add_checkbutton(label="Compact mode (one pet)", variable=self.compact_var, command=self.toggle_compact)
+        self.context_banner_var = tk.BooleanVar(value=bool(self.cfg.get("context_banner", True)))
+        m.add_checkbutton(label="Context beside the pet", variable=self.context_banner_var,
+                          command=lambda: self.set_context_banner(self.context_banner_var.get()))
         self.click_focus_var = tk.BooleanVar(value=bool(self.cfg.get("click_to_focus", True)))
         m.add_checkbutton(label="Click goes to the session's window", variable=self.click_focus_var,
                           command=lambda: self.set_click_to_focus(self.click_focus_var.get()))
@@ -1192,6 +1195,13 @@ class PetApp:
         save_setting("click_to_focus", self.cfg["click_to_focus"])
         if hasattr(self, "click_focus_var") and self.click_focus_var.get() != self.cfg["click_to_focus"]:
             self.click_focus_var.set(self.cfg["click_to_focus"])
+
+    def set_context_banner(self, on):
+        """Each AI's context in use beside the pet (on by default); the pets redraw with or without it."""
+        self.cfg["context_banner"] = bool(on)
+        save_setting("context_banner", self.cfg["context_banner"])
+        if hasattr(self, "context_banner_var") and self.context_banner_var.get() != self.cfg["context_banner"]:
+            self.context_banner_var.set(self.cfg["context_banner"])
 
     def set_all_spaces(self, on):
         """Show the pet on every virtual desktop, or only its own."""

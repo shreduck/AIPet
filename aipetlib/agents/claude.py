@@ -30,6 +30,10 @@ def parse_claude(entries):
             ctx = sum(int(usage.get(k) or 0) for k in ("input_tokens", "cache_read_input_tokens",
                                                        "cache_creation_input_tokens"))
             info["ctx"] = ctx or info["ctx"]
+            used = [int(usage.get("input_tokens") or 0) + int(usage.get("cache_creation_input_tokens") or 0),
+                    int(usage.get("cache_read_input_tokens") or 0), int(usage.get("output_tokens") or 0)]
+            if any(used):
+                _count_request(info, str(msg.get("id") or e.get("uuid") or t), used, t, ctx)
             for c in parts:
                 if c.get("type") == "text" and str(c.get("text", "")).strip():
                     lines.append((t, "say", full(c["text"])))
@@ -65,6 +69,18 @@ def parse_claude(entries):
                         info["last_prompt_t"] = t
     info["tool_calls"] = _merge_tool_calls([], info["tool_calls"])
     return info
+
+
+def _count_request(info, rid, used, t, ctx):
+    """One API request's tokens. Its entries (one per content block) repeat the usage: count it once, the last copy;
+    the request's first line carries it in the log."""
+    opened = info["tok_open"]
+    if opened and opened[0] != rid:
+        info["tokens"] = [a + b for a, b in zip(info["tokens"], opened[1])]
+    first_t = opened[2] if opened and opened[0] == rid else t
+    info["tok_first"] = info["tok_first"] or (rid, first_t)
+    info["tok_open"] = (rid, used, first_t)
+    info["usage_at"][first_t] = (ctx, used[2])
 
 
 def claude_subagent_files(transcript):

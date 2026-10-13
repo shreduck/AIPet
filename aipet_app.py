@@ -1055,6 +1055,7 @@ class TrayApp:
             "compact": lambda v: pet.toggle_compact(bool(v)),
             "session_titles": pet.set_session_titles,
             "click_to_focus": pet.set_click_to_focus,
+            "context_banner": pet.set_context_banner,
             "all_spaces": pet.set_all_spaces,
             "claude_answers": pet.set_claude_answers,
             "codex_answers": pet.set_codex_answers,

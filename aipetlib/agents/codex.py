@@ -30,6 +30,13 @@ def parse_codex(entries):
             last = data.get("last_token_usage") or {}
             info["ctx"] = int(last.get("input_tokens") or 0) + int(last.get("output_tokens") or 0) or info["ctx"]
             info["ctx_max"] = int(data.get("model_context_window") or 0) or info["ctx_max"]
+            total = data.get("total_token_usage") or {}
+            cached = int(total.get("cached_input_tokens") or 0)
+            if total:  # cumulative for the whole session: the latest one is the total
+                info["tok_abs"] = (max(0, int(total.get("input_tokens") or 0) - cached), cached,
+                                   int(total.get("output_tokens") or 0))
+            if last and lines:  # this request's tokens on the line it answered with
+                info["usage_at"][lines[-1][0]] = (int(last.get("input_tokens") or 0), int(last.get("output_tokens") or 0))
         elif kind == "event_msg" and sub == "task_started":
             started = t
         elif kind == "event_msg" and sub in ("task_complete", "turn_aborted"):
