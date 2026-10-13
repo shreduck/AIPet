@@ -141,7 +141,7 @@ class MacWindowTests(unittest.TestCase):
                     self.assertEqual(window.opts["scale"], 100)
                     self.assertEqual(window.px(100), normal_drawing)
                     self.assertGreater(window.f_main.cget("size"), normal_size)
-                    window._graph_fonts()
+                    window.graph.fonts()
                     self.assertEqual(window.g_main.cget("size"), window.f_main.cget("size"))
                     window.win.geometry("640x480")
                     root.update()

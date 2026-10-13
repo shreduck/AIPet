@@ -329,205 +329,209 @@ class WindowLogicTests(unittest.TestCase):
     def test_node_clicks_restore_full_logs_but_tools_keep_their_scope(self):
         import aipet_agents_window as win
         view = object.__new__(win.AgentNetworkWindow)
-        view.key, view.item, view._panned = "session", None, False
+        view.graph = win.agent_graph.GraphView(view)
+        view.key, view.item, view.graph.panned = "session", None, False
         view.net = {"agents": [{"id": "", "name": "main", "lines": [(1, "say", "main reply")]},
                                 {"id": "helper", "name": "helper", "lines": [(2, "say", "helper reply")]},
                                 {"id": "tool", "name": "Bash", "parent": "helper", "tool": True,
                                  "lines": [(3, "input", "echo test")]}]}
         view.logs = win.agent_logs.LogPanel(view)
-        view._draw_graph = MagicMock()
+        view.graph.draw = MagicMock()
         for method in ("draw_tabs", "update_filters", "draw"):
             setattr(view.logs, method, MagicMock())
         restricted = dict(show_tools=False, primary=True, tools=set(), mcp=set(), only_tool="Read")
         for i, expected in ((0, ["main reply"]), (1, ["helper reply", "echo test"])):
             view.logs.filters = dict(restricted)
-            view._click_node(None, "session", i)
+            view.graph.click_node(None, "session", i)
             self.assertEqual(view.logs.filters, agent_log_filters.default_log_filters())
             self.assertEqual([r[3] for r in agent_log_filters.filtered_log_rows(view.net, view.sel, view.logs.filters)], expected)
         view.logs.filters = dict(restricted)
-        view._click_node(None, "session", 2)
+        view.graph.click_node(None, "session", 2)
         self.assertEqual(view.sel, 1)
         self.assertEqual([r[3] for r in agent_log_filters.filtered_log_rows(view.net, view.sel, view.logs.filters)], ["echo test"])
-        view._title_click("session")
+        view.graph.title_click("session")
         self.assertEqual(view.sel, -1)
         self.assertEqual(view.logs.filters, agent_log_filters.default_log_filters())
         view.logs.filters = dict(restricted)
-        view._panned = True
-        view._click_node(None, "session", 0)
+        view.graph.panned = True
+        view.graph.click_node(None, "session", 0)
         self.assertEqual(view.logs.filters, restricted)  # dragging the graph must not clear filters
 
     def test_node_spacing_does_not_expand_to_fill_tall_windows(self):
         import aipet_agents_window as win
         view = object.__new__(win.AgentNetworkWindow)
-        view.s, view.gz = 1.5, 1.0
-        view._graph_line_height = lambda: 12 * view.s * view.gz
+        view.graph = win.agent_graph.GraphView(view)
+        view.s, view.graph.gz = 1.5, 1.0
+        view.graph.line_height = lambda: 12 * view.s * view.graph.gz
         net = {"agents": [{"id": ""}] + [{"id": name, "depth": 1, "parent": "", "tool": True}
                                         for name in ("apply_patch", "exec", "exec_command")]}
         for scale, zoom in ((s, z) for s in (0.75, 1.0, 1.5, 2.25) for z in (0.4, 1.0, 2.0)):
-            view.s, view.gz = scale, zoom
+            view.s, view.graph.gz = scale, zoom
             relative = []
             for height in (300, 2000):
                 with patch.object(win.agent_graph.common, "IS_MAC", True):
-                    boxes, _ = view._layout(net, 1000, height)
+                    boxes, _ = view.graph.layout(net, 1000, height)
                 main = boxes[0]
                 children = boxes[1:]
                 relative.append([round(y - main[1], 1) for _, y, _, _ in children])
                 for upper, lower in zip(children, children[1:]):
                     gap = lower[1] - upper[1] - upper[3]
                     self.assertGreater(gap, 0)
-                    self.assertLessEqual(gap, view.gpx(12) + 1)
-                self.assertLessEqual(children[0][0] - main[0] - main[2], view.gpx(40))
+                    self.assertLessEqual(gap, view.graph.gpx(12) + 1)
+                self.assertLessEqual(children[0][0] - main[0] - main[2], view.graph.gpx(40))
             for short, tall in zip(*relative):
                 self.assertAlmostEqual(short, tall, delta=1)
 
     def test_windows_layout_keeps_existing_spacing_and_scaling(self):
         import aipet_agents_window as win
         view = object.__new__(win.AgentNetworkWindow)
-        view.s, view.gz = 1.5, 1.0
-        view._graph_line_height = lambda: 12 * view.s * view.gz
+        view.graph = win.agent_graph.GraphView(view)
+        view.s, view.graph.gz = 1.5, 1.0
+        view.graph.line_height = lambda: 12 * view.s * view.graph.gz
         net = {"agents": [{"id": ""}] + [{"id": str(i), "depth": 1} for i in range(3)]}
         with patch.object(win.agent_graph.common, "IS_MAC", False):
             for scale in (1.0, 1.5, 2.0):
                 view.s = scale
                 for zoom in (0.4, 1.0, 2.0):
-                    view.gz = zoom
-                    short, _ = view._layout(net, 1000, 300)
-                    tall, _ = view._layout(net, 1000, 2000)
+                    view.graph.gz = zoom
+                    short, _ = view.graph.layout(net, 1000, 300)
+                    tall, _ = view.graph.layout(net, 1000, 2000)
                     self.assertEqual([b[2:] for b in short], [b[2:] for b in tall])
-                    self.assertEqual(tall[1][0] - tall[0][0] - tall[0][2], view.gpx(70))
+                    self.assertEqual(tall[1][0] - tall[0][0] - tall[0][2], view.graph.gpx(70))
                     self.assertGreater(tall[-1][1] - tall[1][1], short[-1][1] - short[1][1])
 
     def graph_window(self):
         import aipet_agents_window as win
         view = object.__new__(win.AgentNetworkWindow)
-        view.canvas = MagicMock()
-        view.canvas.winfo_width.return_value = 500
-        view.canvas.winfo_height.return_value = 350
-        view.gz = 1.0
-        view._robots = {}
-        view._title_rects = []
-        view._scroll_to = MagicMock()
-        view._update_zoombar = MagicMock()
+        view.graph = win.agent_graph.GraphView(view)
+        view.graph.canvas = MagicMock()
+        view.graph.canvas.winfo_width.return_value = 500
+        view.graph.canvas.winfo_height.return_value = 350
+        view.graph.gz = 1.0
+        view.graph.robots = {}
+        view.graph.title_rects = []
+        view.graph.scroll_to = MagicMock()
+        view.graph.update_zoombar = MagicMock()
         view.px = lambda n: n
-        view.zoombar = MagicMock()
-        view.zoombar.winfo_reqheight.return_value = 20
-        view._stats_size = lambda: (150, 50)
+        view.graph.zoombar = MagicMock()
+        view.graph.zoombar.winfo_reqheight.return_value = 20
+        view.graph.stats_size = lambda: (150, 50)
         return view
 
     def auto_fit_window(self):
         view = self.graph_window()
         view.opts = {"auto_fit": True}
-        view.canvas.winfo_ismapped.return_value = True
+        view.graph.canvas.winfo_ismapped.return_value = True
         view.blocks = [("one", {}, {"agents": [{"id": ""}, {"id": "child"}]})]
-        view.fit_all = MagicMock()
+        view.graph.fit_all = MagicMock()
         return view
 
     def test_auto_fit_on_add_remove_and_same_count_replacement(self):
         view = self.auto_fit_window()
-        view._maybe_auto_fit()
-        view.fit_all.assert_called_once()
-        view.fit_all.reset_mock()
+        view.graph.maybe_auto_fit()
+        view.graph.fit_all.assert_called_once()
+        view.graph.fit_all.reset_mock()
         view.blocks[0][2]["agents"].reverse()  # reordering and normal updates preserve the view
-        view._maybe_auto_fit()
-        view.fit_all.assert_not_called()
+        view.graph.maybe_auto_fit()
+        view.graph.fit_all.assert_not_called()
         view.blocks[0][2]["agents"].append({"id": "tool:Read"})
-        view._maybe_auto_fit()
-        self.assertEqual(view.fit_all.call_count, 1)
+        view.graph.maybe_auto_fit()
+        self.assertEqual(view.graph.fit_all.call_count, 1)
         view.blocks[0][2]["agents"].pop()
-        view._maybe_auto_fit()
-        self.assertEqual(view.fit_all.call_count, 2)
+        view.graph.maybe_auto_fit()
+        self.assertEqual(view.graph.fit_all.call_count, 2)
         view.blocks[0][2]["agents"][0] = {"id": "replacement"}
-        view._maybe_auto_fit()
-        self.assertEqual(view.fit_all.call_count, 3)
+        view.graph.maybe_auto_fit()
+        self.assertEqual(view.graph.fit_all.call_count, 3)
 
     def test_auto_fit_covers_other_sessions_and_empty_graph(self):
         view = self.auto_fit_window()
-        view._maybe_auto_fit()
-        view.fit_all.reset_mock()
+        view.graph.maybe_auto_fit()
+        view.graph.fit_all.reset_mock()
         view.blocks.append(("two", {}, {"agents": [{"id": ""}]}))
-        view._maybe_auto_fit()
-        self.assertEqual(view.fit_all.call_count, 1)
+        view.graph.maybe_auto_fit()
+        self.assertEqual(view.graph.fit_all.call_count, 1)
         view.blocks.clear()
-        view._maybe_auto_fit()
-        self.assertEqual(view.fit_all.call_count, 2)
+        view.graph.maybe_auto_fit()
+        self.assertEqual(view.graph.fit_all.call_count, 2)
 
     def test_auto_fit_disabled_does_not_change_view_and_enabling_fits_immediately(self):
         view = self.auto_fit_window()
         view.opts["auto_fit"] = False
-        view._maybe_auto_fit()
-        view.fit_all.assert_not_called()
+        view.graph.maybe_auto_fit()
+        view.graph.fit_all.assert_not_called()
         view.opts["auto_fit"] = True
-        view._maybe_auto_fit(force=True)
-        view.fit_all.assert_called_once()
-        view.fit_all.reset_mock()
-        view._maybe_auto_fit()  # manual zoom/pan is kept until the next membership change
-        view.fit_all.assert_not_called()
+        view.graph.maybe_auto_fit(force=True)
+        view.graph.fit_all.assert_called_once()
+        view.graph.fit_all.reset_mock()
+        view.graph.maybe_auto_fit()  # manual zoom/pan is kept until the next membership change
+        view.graph.fit_all.assert_not_called()
 
     def test_auto_fit_waits_for_window_to_be_visible(self):
         view = self.auto_fit_window()
-        view.canvas.winfo_ismapped.return_value = False
-        view._maybe_auto_fit()
-        view.fit_all.assert_not_called()
-        self.assertTrue(view._auto_fit_pending)
-        view.canvas.winfo_ismapped.return_value = True
-        view._maybe_auto_fit()
-        view.fit_all.assert_called_once()
-        self.assertFalse(view._auto_fit_pending)
+        view.graph.canvas.winfo_ismapped.return_value = False
+        view.graph.maybe_auto_fit()
+        view.graph.fit_all.assert_not_called()
+        self.assertTrue(view.graph.auto_fit_pending)
+        view.graph.canvas.winfo_ismapped.return_value = True
+        view.graph.maybe_auto_fit()
+        view.graph.fit_all.assert_called_once()
+        self.assertFalse(view.graph.auto_fit_pending)
 
     def test_resize_refits_unchanged_nodes_only_when_auto_fit_is_enabled(self):
         view = self.auto_fit_window()
-        view._draw_graph = MagicMock()
+        view.graph.draw = MagicMock()
         view.overlay_open = view.menu_open = False
-        view._maybe_auto_fit()
-        view.fit_all.reset_mock()
-        view.canvas.winfo_width.return_value = 800
+        view.graph.maybe_auto_fit()
+        view.graph.fit_all.reset_mock()
+        view.graph.canvas.winfo_width.return_value = 800
         view._resized()
-        view.fit_all.assert_called_once()
+        view.graph.fit_all.assert_called_once()
         view.opts["auto_fit"] = False
-        view.fit_all.reset_mock()
-        view.canvas.winfo_width.return_value = 400
+        view.graph.fit_all.reset_mock()
+        view.graph.canvas.winfo_width.return_value = 400
         view._resized()
-        view.fit_all.assert_not_called()
+        view.graph.fit_all.assert_not_called()
 
     def test_center_uses_node_gravity_center_and_keeps_zoom(self):
         view = self.graph_window()
-        view.gz = 1.7
-        view._content = (3000, 3000)  # empty layout space must not affect centering
-        view._node_rects = [(0, 0, 100, 100), (400, 0, 500, 100), (400, 200, 500, 300)]
-        view.center_view(by_user=True)
-        left, top = view._scroll_to.call_args.args
+        view.graph.gz = 1.7
+        view.graph.content = (3000, 3000)  # empty layout space must not affect centering
+        view.graph.node_rects = [(0, 0, 100, 100), (400, 0, 500, 100), (400, 200, 500, 300)]
+        view.graph.center_view(by_user=True)
+        left, top = view.graph.scroll_to.call_args.args
         self.assertAlmostEqual(left, (50 + 450 + 450) / 3 - 250)
         self.assertAlmostEqual(top, (50 + 50 + 250) / 3 - 175)
-        self.assertEqual(view.gz, 1.7)
+        self.assertEqual(view.graph.gz, 1.7)
 
     def test_fit_all_includes_titles_and_fits_below_previous_zoom_limit(self):
         view = self.graph_window()
 
         def redraw(force=False):
-            z = view.gz
-            view._node_rects = [(0, 100 * z, 2000 * z, 1100 * z)]
-            view._title_rects = [(0, 0, 2000 * z, 100 * z)]
+            z = view.graph.gz
+            view.graph.node_rects = [(0, 100 * z, 2000 * z, 1100 * z)]
+            view.graph.title_rects = [(0, 0, 2000 * z, 100 * z)]
 
-        view._draw_graph = redraw
+        view.graph.draw = redraw
         redraw()
-        view.fit_all()
-        self.assertLess(view.gz, 0.4)
-        left, top = view._scroll_to.call_args.args
-        x0, y0, x1, y1 = view._graph_bounds()
+        view.graph.fit_all()
+        self.assertLess(view.graph.gz, 0.4)
+        left, top = view.graph.scroll_to.call_args.args
+        x0, y0, x1, y1 = view.graph.bounds()
         self.assertGreaterEqual(x0 - left, 10)
         self.assertLessEqual(x1 - left, 490)
         self.assertGreaterEqual(y0 - top, 30)
         self.assertLessEqual(y1 - top, 290)
-        self.assertFalse(view._fit_view)
-        view._update_zoombar.assert_called_once()
+        self.assertFalse(view.graph.fit_view)
+        view.graph.update_zoombar.assert_called_once()
 
     def test_empty_graph_center_and_fit_do_nothing(self):
         view = self.graph_window()
-        view._node_rects = []
-        view.center_view(by_user=True)
-        view.fit_all()
-        view._scroll_to.assert_not_called()
-        self.assertEqual(view.gz, 1.0)
+        view.graph.node_rects = []
+        view.graph.center_view(by_user=True)
+        view.graph.fit_all()
+        view.graph.scroll_to.assert_not_called()
+        self.assertEqual(view.graph.gz, 1.0)
 
     def test_picks_the_session_that_needs_you_and_the_asking_agent(self):
         import aipet_agents_window as win

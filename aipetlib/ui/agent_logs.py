@@ -79,12 +79,12 @@ class LogPanel:
         window = self.window
         side = window.opts.get("log_side", "bottom")
         across = side in ("left", "right")
-        for wdg in (window.canvas, self.sep, self.box):
+        for wdg in (window.graph.canvas, self.sep, self.box):
             wdg.pack_forget()
         self.box.pack(side=side, fill="y" if across else "x")
         self.sep.pack(side=side, fill="y" if across else "x")
         self.sep.configure(cursor="sb_h_double_arrow" if across else "sb_v_double_arrow")
-        window.canvas.pack(side=side, fill="both", expand=True)
+        window.graph.canvas.pack(side=side, fill="both", expand=True)
         self.size()
 
     def size(self):
@@ -129,9 +129,9 @@ class LogPanel:
     def clear_filters(self):
         window = self.window
         self.filters = log_filters.default_log_filters()
-        self.sig = window._graph_sig = None
+        self.sig = window.graph.sig = None
         self.update_filters()
-        window._draw_graph()
+        window.graph.draw()
         self.draw()
         return "break"
 
@@ -176,9 +176,9 @@ class LogPanel:
         window = self.window
         self.filters[group] = selected
         self.filters["only_tool"] = None
-        window._graph_sig = self.sig = None
+        window.graph.sig = self.sig = None
         self.update_filters()
-        window._draw_graph()
+        window.graph.draw()
         self.draw()
 
     def toggle_tool(self, name, mcp):

@@ -16,7 +16,7 @@ def _draw_prompt(window):
     if who is None:
         if window.in_window is not None:
             window.in_window = None
-            window._draw_graph()
+            window.graph.draw()
         window.chip.place_forget()
         if window.overlay_open:
             window.open_overlay(False)
@@ -30,9 +30,9 @@ def _draw_prompt(window):
     in_window = None if answerable else who
     if in_window != window.in_window:
         window.in_window = in_window
-        window._draw_graph()
+        window.graph.draw()
     if not window.overlay_open:
-        window.chip.place(in_=window.canvas, relx=1.0, rely=1.0, x=-window.px(170), y=-window.px(6), anchor="se")
+        window.chip.place(in_=window.graph.canvas, relx=1.0, rely=1.0, x=-window.px(170), y=-window.px(6), anchor="se")
     sig = (req.get("id"), str(req.get("questions")), window.theme, window.s, permission_rules.hook_waiting(item))
     if sig != window._prompt_sig:
         window._prompt_sig = sig
@@ -65,7 +65,7 @@ def _place_overlay(window):
     bottom = window.footbar.winfo_y() - window.px(6)
     window._flow_options(width - window.px(20))
     highest = window.body.winfo_y() + window.px(6)
-    top = window.body.winfo_y() + window.canvas.winfo_y() + int(window.canvas.winfo_height() * 0.72)
+    top = window.body.winfo_y() + window.graph.canvas.winfo_y() + int(window.graph.canvas.winfo_height() * 0.72)
     try:
         window.overlay.update_idletasks()
         need = window.overlay.winfo_reqheight() + window.px(4)

@@ -34,15 +34,19 @@ class Viewport:
 
 
 def graph_window():
+    """A GraphView over a modelled canvas, with its drawing and zoom bar stubbed out."""
     canvas = Viewport()
-    window = SimpleNamespace(canvas=canvas, gz=1., _robots={}, _content=(20000, 20000),
-                             _center_next=False, _update_zoombar=Mock(), _shift_into_view=Mock(return_value=False))
+    view = agent_graph.GraphView(SimpleNamespace())
+    view.canvas, view.content, view.center_next = canvas, (20000, 20000), False
+    view.update_zoombar, view.shift_into_view = Mock(), Mock(return_value=False)
+
     def scroll_to(left, top):
         canvas.left, canvas.top = round(left), round(top)
+
     def draw(force=False):
-        window._content = (20000 * window.gz, 20000 * window.gz)
-    window._scroll_to, window._draw_graph = scroll_to, draw
-    return window
+        view.content = (20000 * view.gz, 20000 * view.gz)
+    view.scroll_to, view.draw = scroll_to, draw
+    return view
 
 
 class GestureTests(unittest.TestCase):
@@ -89,44 +93,44 @@ class GestureTests(unittest.TestCase):
             window = graph_window()
             window.gz = zoom
             for _ in range(100):
-                agent_graph.pan(window, .05, .03)
+                window.pan(.05, .03)
             self.assertEqual((window.canvas.left, window.canvas.top), (505, 603))
-            self.assertTrue(window._user_moved)
-            self.assertFalse(window._center_next)
+            self.assertTrue(window.user_moved)
+            self.assertFalse(window.center_next)
 
     def test_blocked_pan_discards_distance_so_reversing_responds(self):
         window = graph_window()
-        window._scroll_to = lambda left, top: setattr(window.canvas, 'left', min(500, round(left)))
-        agent_graph.pan(window, 100, 0)
+        window.scroll_to = lambda left, top: setattr(window.canvas, 'left', min(500, round(left)))
+        window.pan(100, 0)
         self.assertEqual(window.canvas.left, 500)
-        agent_graph.pan(window, -3, 0)
+        window.pan(-3, 0)
         self.assertEqual(window.canvas.left, 497)
 
     def test_precise_zoom_keeps_small_changes_anchor_and_limits(self):
         window = graph_window()
         anchor = (200, 150)
         before = window.canvas.canvasx(anchor[0]), window.canvas.canvasy(anchor[1])
-        agent_graph.zoom(window, 1.1, at=anchor, precise=True)
+        window.zoom(1.1, at=anchor, precise=True)
         after = window.canvas.canvasx(anchor[0]), window.canvas.canvasy(anchor[1])
         for old, new in zip(before, after):
             self.assertAlmostEqual(new, old * 1.1)
-        agent_graph.zoom(window, 1.00001, precise=True)
+        window.zoom(1.00001, precise=True)
         self.assertAlmostEqual(window.gz, 1.100011)
-        agent_graph.zoom(window, 100, precise=True)
+        window.zoom(100, precise=True)
         self.assertEqual(window.gz, 3.)
-        agent_graph.zoom(window, .00001, precise=True)
+        window.zoom(.00001, precise=True)
         self.assertEqual(window.gz, .01)
 
     def test_legacy_zoom_rounding_and_reset_are_preserved(self):
         window = graph_window()
-        agent_graph.zoom(window, 1.00001)
+        window.zoom(1.00001)
         self.assertEqual(window.gz, 1.)
-        agent_graph.zoom(window, 1.15)
+        window.zoom(1.15)
         self.assertEqual(window.gz, 1.15)
-        agent_graph.zoom(window, reset=True)
+        window.zoom(reset=True)
         self.assertEqual(window.gz, 1.)
-        self.assertFalse(window._user_moved)
-        self.assertTrue(window._center_next)
+        self.assertFalse(window.user_moved)
+        self.assertTrue(window.center_next)
 
     def test_legacy_mouse_wheel_and_modifier_paths_on_mac_and_windows(self):
         for is_mac in (False, True):
@@ -137,11 +141,11 @@ class GestureTests(unittest.TestCase):
                         window.zoom = Mock(return_value='break')
                         event = SimpleNamespace(delta=delta, num=num, state=state, x=31, y=47)
                         with patch.object(agent_common, 'IS_MAC', is_mac):
-                            self.assertEqual(agent_graph._wheel(window, event), 'break')
+                            self.assertEqual(window.wheel(event), 'break')
                         if state & 4 or (is_mac and state & 8):
                             window.zoom.assert_called_once_with(1.15 if up else 1 / 1.15, at=(31, 47))
                             self.assertEqual(window.canvas.scrolls, [])
                         else:
                             window.zoom.assert_not_called()
                             self.assertEqual(window.canvas.scrolls, [('x' if state & 1 else 'y', -2 if up else 2, 'units')])
-                            window._shift_into_view.assert_called_once()
+                            window.shift_into_view.assert_called_once()

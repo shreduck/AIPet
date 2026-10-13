@@ -53,17 +53,13 @@ class AgentNetworkWindow:
         self.option = 0
         self._after = self._anim = self._save_job = None
         self._gestures = self._gesture_start_job = None
-        self._robots = {}
+        self.graph = agent_graph.GraphView(self)  # the graph and its viewport (owns its widgets and state)
         self.logs = agent_logs.LogPanel(self)  # the logs: tabs, filters, entries (owns its widgets and state)
-        self._graph_sig = self._prompt_sig = None
-        self.edges, self._dots = [], []
+        self._prompt_sig = None
         self.t0 = time.time()
         self.theme = None
         self.opts = load_options(getattr(pet, "cfg", {}))
-        self.gz = 1.0  # the graph's own zoom (zoom buttons, ctrl + wheel, + / -)
         self.blocks = []  # (key, item, net) of every session the graph shows (several when compact and not tabbed)
-        self._content, self._center_next, self._panned = None, True, False
-        self._bands, self._leaving, self._titles, self._animating = {}, {}, [], False
         self.u = self.opts["scale"] / 100
         self.s = 1.5 * self.u
         # window attributes as set (only touched when they change). Starts at Tk's own defaults: setting -alpha or
@@ -91,18 +87,18 @@ class AgentNetworkWindow:
             self._gesture_start_job = self.win.after_idle(self._start_gestures)
         self.win.after(250, self._settle)
         self._tick()
-        self._animate()
+        self.graph.animate()
 
     def _settle(self):
         """Once the window is on screen: default zoom, graph centred."""
         if self.alive() and self.opts.get("auto_fit"):
-            self._maybe_auto_fit()
+            self.graph.maybe_auto_fit()
             return
-        if self.alive() and not getattr(self, "_user_moved", False):
-            self.gz = 1.0
-            self._center_next = True
-            self._draw_graph(force=True)
-            self._update_zoombar()
+        if self.alive() and not getattr(self.graph, "user_moved", False):
+            self.graph.gz = 1.0
+            self.graph.center_next = True
+            self.graph.draw(force=True)
+            self.graph.update_zoombar()
 
     # ---- window
     def alive(self):
@@ -269,10 +265,10 @@ class AgentNetworkWindow:
         for k in ("a", "A"):
             w.bind(k, key(lambda: self.select(-1)))
         for k in ("plus", "equal", "KP_Add"):
-            w.bind(f"<{k}>", key(lambda: self.zoom(1.25)))
+            w.bind(f"<{k}>", key(lambda: self.graph.zoom(1.25)))
         for k in ("minus", "KP_Subtract"):
-            w.bind(f"<{k}>", key(lambda: self.zoom(1 / 1.25)))
-        w.bind("0", key(lambda: self.zoom(reset=True) if not self.overlay_open else None))
+            w.bind(f"<{k}>", key(lambda: self.graph.zoom(1 / 1.25)))
+        w.bind("0", key(lambda: self.graph.zoom(reset=True) if not self.overlay_open else None))
         w.bind("<Prior>", key(lambda: self.step_session(-1), True))
         w.bind("<Next>", key(lambda: self.step_session(1), True))
         w.bind("<space>", key(lambda: self.open_overlay(not self.overlay_open)))
@@ -282,8 +278,8 @@ class AgentNetworkWindow:
             w.bind(str(n), key(lambda n=n: self.choose(n - 1) if self.overlay_open else None))
 
     def _escape(self):
-        if self.stat_open:
-            self.toggle_stat(None)
+        if self.graph.stat_open:
+            self.graph.toggle_stat(None)
         elif self.menu_open:
             self.toggle_menu(False)
         elif self.overlay_open:
@@ -300,11 +296,11 @@ class AgentNetworkWindow:
         if self.menu_open and not inside:
             self.toggle_menu(False)
         try:
-            in_stats = str(e.widget).startswith(str(self.statdrop)) or str(e.widget).startswith(str(self.statc))
+            in_stats = str(e.widget).startswith(str(self.graph.statdrop)) or str(e.widget).startswith(str(self.graph.statc))
         except (tk.TclError, AttributeError):
             in_stats = True
-        if self.stat_open and not in_stats:
-            self.toggle_stat(None)
+        if self.graph.stat_open and not in_stats:
+            self.graph.toggle_stat(None)
         if self.opts["frameless"] and not self._typing():
             try:
                 self.win.focus_force()
@@ -362,7 +358,7 @@ class AgentNetworkWindow:
         if new_key != self.key:
             self.key, self.sel = new_key, -1
             self.open_overlay(False)
-            self.logs.sig = self._graph_sig = self._prompt_sig = None
+            self.logs.sig = self.graph.sig = self._prompt_sig = None
         self._refresh()
 
     def step_session(self, d):
@@ -418,24 +414,24 @@ class AgentNetworkWindow:
         if len(self.net["agents"]) != n_before:
             self._update_minsize()
         self.blocks = [(self.key, self.item, self.net)] if self.item else []
-        if self._stacked_mode():
+        if self.graph.stacked_mode():
             # compact, not tabbed: every session's graph, one under the other
             self.blocks = [(i["key"], i, self.net if i["key"] == self.key else
                             network.read_network(i, include_tools=self.opts.get("tools", True)))
                            for i in sessions]
         self.stats = stats.network_stats(self.net)
-        if self.stat_open:
-            self._fill_stat()
+        if self.graph.stat_open:
+            self.graph.fill_stat()
         if selected_id is not None:
             self.sel = next((i for i, a in enumerate(self.net["agents"]) if a["id"] == selected_id), -1)
         elif self.sel >= len(self.net["agents"]):
             self.sel = -1
-        self._draw_graph()
+        self.graph.draw()
         self.logs.draw_tabs()
         self.logs.update_filters()
         self.logs.draw()
         self._draw_prompt()
-        self._maybe_auto_fit()
+        self.graph.maybe_auto_fit()
 
     # ---- selection
     def select(self, i, clear_filters=False):
@@ -448,8 +444,8 @@ class AgentNetworkWindow:
                                      mcp={tool["name"]} if is_mcp_tool(tool["name"]) else set())
             i = next((j for j, a in enumerate(self.net["agents"]) if a["id"] == tool["parent"]), -1)
         self.sel = i
-        self._graph_sig = self.logs.sig = None
-        self._draw_graph()
+        self.graph.sig = self.logs.sig = None
+        self.graph.draw()
         self.logs.draw_tabs()
         self.logs.update_filters()
         self.logs.draw()
@@ -467,19 +463,9 @@ class AgentNetworkWindow:
         return cols[i % len(cols)]
 
     # ---- graph
-    def robot(self, state, height):
-        return agent_graph.robot(self, state, height)
 
-    # The graph is drawn at its own zoom (self.gz) on top of the window's scale: gpx() for sizes, g_* fonts.
+    # The graph is drawn at its own zoom (self.graph.gz) on top of the window's scale: gpx() for sizes, g_* fonts.
     # Panning moves the canvas view over it (scan_mark / scan_dragto); everything else stays put.
-    def gpx(self, n):
-        return agent_graph.gpx(self, n)
-
-    def _graph_fonts(self):
-        return agent_graph._graph_fonts(self)
-
-    def _graph_line_height(self):
-        return agent_graph._graph_line_height(self)
 
     @staticmethod
     def _columns(net):
@@ -506,44 +492,7 @@ class AgentNetworkWindow:
             cols.append(col)
         return cols, False
 
-    def _block_height(self, net, H):
-        return agent_graph._block_height(self, net, H)
-
-    def _layout(self, net, W, H, reserve=None):
-        return agent_graph._layout(self, net, W, H, reserve)
-
-    def _draw_graph(self, force=False):
-        return agent_graph._draw_graph(self, force)
-
     # ---- stacked sessions (compact, not tabbed): bands that fade out and slide up
-    def _stacked_mode(self):
-        return agent_graph._stacked_mode(self)
-
-    FADE_S, SLIDE_S = 0.45, 0.35
-
-    def _plan_bands(self, blocks, H, now):
-        return agent_graph._plan_bands(self, blocks, H, now)
-
-    def _band_y(self, band, now):
-        return agent_graph._band_y(self, band, now)
-
-    def _draw_band(self, b, key, item, net, y, bh, VW, head, tidy, fade):
-        return agent_graph._draw_band(self, b, key, item, net, y, bh, VW, head, tidy, fade)
-
-    def _draw_title(self, entry, now):
-        return agent_graph._draw_title(self, entry, now)
-
-    def _draw_block(self, b, key, net, ox, oy, W, H, reserve, fade=0.0, title=None):
-        return agent_graph._draw_block(self, b, key, net, ox, oy, W, H, reserve, fade, title)
-
-    def _title_click(self, key):
-        return agent_graph._title_click(self, key)
-
-    def _click_node(self, e, key, i):
-        return agent_graph._click_node(self, e, key, i)
-
-    def _pick_session(self, key):
-        return agent_graph._pick_session(self, key)
 
     # ---- zoom and pan
     def _start_gestures(self):
@@ -554,69 +503,7 @@ class AgentNetworkWindow:
         except Exception as error:
             core.log_error(f"graph gestures unavailable: {error!r}")
 
-    def pan(self, dx, dy):
-        return agent_graph.pan(self, dx, dy)
-
-    def zoom(self, factor=None, at=None, reset=False, precise=False):
-        return agent_graph.zoom(self, factor, at, reset, precise)
-
-    def center_view(self, by_user=False):
-        return agent_graph.center_view(self, by_user)
-
-    def _graph_bounds(self):
-        return agent_graph._graph_bounds(self)
-
-    def fit_all(self):
-        return agent_graph.fit_all(self)
-
-    def _maybe_auto_fit(self, force=False):
-        return agent_graph._maybe_auto_fit(self, force)
-
-    def _update_auto_fit(self):
-        return agent_graph._update_auto_fit(self)
-
-    def _scroll_to(self, left, top):
-        return agent_graph._scroll_to(self, left, top)
-
-    def _pan_start(self, e):
-        return agent_graph._pan_start(self, e)
-
-    def _pan_move(self, e):
-        return agent_graph._pan_move(self, e)
-
-    def _shift_into_view(self, margin=0.1, check_only=False):
-        return agent_graph._shift_into_view(self, margin, check_only)
-
-    def _pan_end(self, e):
-        return agent_graph._pan_end(self, e)
-
-    def _wheel(self, e):
-        return agent_graph._wheel(self, e)
-
-    def _update_zoombar(self):
-        return agent_graph._update_zoombar(self)
-
     # ---- the stats node and its drop-downs (fixed at the bottom right of the graph, outside the zoom)
-    def _stats_size(self):
-        return agent_graph._stats_size(self)
-
-    def _draw_stats(self):
-        return agent_graph._draw_stats(self)
-
-    def _show_tip(self, text, near, width):
-        return agent_graph._show_tip(self, text, near, width)
-
-    def _hide_tip(self):
-        return agent_graph._hide_tip(self)
-
-    def toggle_stat(self, kind):
-        return agent_graph.toggle_stat(self, kind)
-
-    def _stat_lines(self, kind):
-        return agent_graph._stat_lines(self, kind)
-
-    def _fill_stat(self):
-        return agent_graph._fill_stat(self)
 
     @staticmethod
     def _fit(text, width, font):
@@ -628,9 +515,6 @@ class AgentNetworkWindow:
         while text and font.measure(text + "…") > width:
             text = text[:-1]
         return text + "…" if text else ""
-
-    def _animate(self):
-        return agent_graph._animate(self)
 
     # ---- tabs and log
 

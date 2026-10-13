@@ -78,7 +78,8 @@ class LogFilterTests(unittest.TestCase):
         view.net = self.net
         view.sel = -1
         view.logs = window.agent_logs.LogPanel(view)
-        view._draw_graph = MagicMock()
+        view.graph = window.agent_graph.GraphView(view)
+        view.graph.draw = MagicMock()
         for name in ("draw_tabs", "draw", "update_filters"):
             setattr(view.logs, name, MagicMock())
         return view

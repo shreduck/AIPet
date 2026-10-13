@@ -32,20 +32,20 @@ def tool(window, name, d=1):
     elif name == "logs":
         o["log_side"] = common.LOG_SIDES[(common.LOG_SIDES.index(o.get("log_side", "bottom")) + d) % len(common.LOG_SIDES)]
         window.logs.arrange()
-        window._center_next = True
+        window.graph.center_next = True
     elif name == "nodes":
         o["node_alpha"] = common._snap(o["node_alpha"] + d * common.OPACITY_STEP, common.ALPHA_MIN, 100, common.OPACITY_STEP)
     window._spin_until = time.time() + 0.6  # the cog turns a little on every change
     if name in ("tabs", "tools"):
-        window._center_next = True
+        window.graph.center_next = True
         window._refresh()
     if name != "each":
         window._apply_options(changed=name)
         if window.menu_open:
             window._build_menu()
     if name == "auto_fit":
-        window._update_auto_fit()
-        window._maybe_auto_fit(force=o["auto_fit"])
+        window.graph.update_auto_fit()
+        window.graph.maybe_auto_fit(force=o["auto_fit"])
     window._save(name)
     return "break"
 
@@ -77,7 +77,7 @@ def set_options(window, opts):
     old = window.opts
     window.opts = dict(opts)
     if window.opts.get("tabbed") != old.get("tabbed"):
-        window._center_next = True
+        window.graph.center_next = True
     if any(window.opts.get(k) != old.get(k) for k in ("scale", "text_scale")):
         window._apply_scale()
     if any(window.opts.get(k) != old.get(k) for k in ("log_side", "log_lines", "log_cols")):
@@ -85,9 +85,9 @@ def set_options(window, opts):
     if window.opts.get("tools") != old.get("tools"):
         window._refresh()
     window._apply_options()
-    window._update_auto_fit()
+    window.graph.update_auto_fit()
     if window.opts.get("auto_fit") != old.get("auto_fit"):
-        window._maybe_auto_fit(force=window.opts.get("auto_fit", False))
+        window.graph.maybe_auto_fit(force=window.opts.get("auto_fit", False))
 
 
 def reset_appearance(window, opts, cascade=0):
@@ -100,7 +100,7 @@ def reset_appearance(window, opts, cascade=0):
     window.cascade, window.at = cascade, None
     window._place()
     window.raise_()
-    window._user_moved = False
+    window.graph.user_moved = False
     window.win.after(150, window._settle)  # and the graph at 100%, centred
 
 
@@ -136,8 +136,8 @@ def _apply_scale(window, grow=True):
     window.f_main.configure(size=max(5, int(round(8 * fs))))
     window.f_bold.configure(size=max(5, int(round(8 * fs))))
     window.f_small.configure(size=max(5, int(round(7 * fs))))
-    window._robots.clear()
-    window._graph_sig = window.logs.tabs_sig = window._prompt_sig = window.logs.sig = None
+    window.graph.robots.clear()
+    window.graph.sig = window.logs.tabs_sig = window._prompt_sig = window.logs.sig = None
     window._update_minsize()
     if grow:
         try:
@@ -181,7 +181,7 @@ def _sync_backdrop(window):
         b.configure(bg=P["bg"])
         b.attributes("-alpha", max(0.05, o["alpha"] * o["bg_alpha"] / 10000))
         b.attributes("-topmost", bool(o["on_top"]))
-        c = window.canvas
+        c = window.graph.canvas
         x, y, w, h = c.winfo_rootx(), c.winfo_rooty(), c.winfo_width(), c.winfo_height()
         if w > 1 and h > 1 and window.win.winfo_viewable():
             b.geometry(f"{w}x{h}+{x}+{y}")
@@ -270,7 +270,7 @@ def _apply_options(window, changed=None):
         except tk.TclError:
             pass
     try:
-        window.canvas.configure(bg=bg)  # only the graph goes see-through: the logs stay readable
+        window.graph.canvas.configure(bg=bg)  # only the graph goes see-through: the logs stay readable
     except tk.TclError:
         pass
     window._sync_backdrop()
@@ -297,10 +297,10 @@ def _apply_options(window, changed=None):
         for h in window.handles.values():
             h.place_forget()
     window._update_minsize()
-    window._graph_sig = window.logs.tabs_sig = None
-    window._draw_graph(force=True)
+    window.graph.sig = window.logs.tabs_sig = None
+    window.graph.draw(force=True)
     window.logs.draw_tabs()
-    window._update_auto_fit()
+    window.graph.update_auto_fit()
 
 
 def _win_caption(window, show):
@@ -324,16 +324,16 @@ def _on_resize(window, e=None):
 
 def _resized(window):
     window._resize_job = None
-    if not getattr(window, "_user_moved", False):
-        window._center_next = True  # until you pan or zoom, the graph stays centred as the window opens / resizes
-    window._draw_graph(force=True)
+    if not getattr(window.graph, "user_moved", False):
+        window.graph.center_next = True  # until you pan or zoom, the graph stays centred as the window opens / resizes
+    window.graph.draw(force=True)
     if getattr(window, "backdrop", None) is not None:
         window.win.after_idle(window._sync_backdrop)
     if window.overlay_open:
         window._place_overlay()
     if window.menu_open:
         window._place_menu()
-    window._maybe_auto_fit(force=True)  # the viewport changed even when the nodes did not
+    window.graph.maybe_auto_fit(force=True)  # the viewport changed even when the nodes did not
 
 
 def _drag_start(window, e):
@@ -500,23 +500,23 @@ def _apply_theme(window):
     window.prompt_mark.configure(fg=P["blue"])
     for wdg in (window.count, window.foot, window.grip):
         wdg.configure(fg=P["mu"])
-    window.canvas.configure(bg=P["bg"])
+    window.graph.canvas.configure(bg=P["bg"])
     window.logs.sep.configure(bg=P["line"])
     window.logs.text.configure(bg=P["bg"], fg=P["tx"], insertbackground=P["bg"], selectbackground=common.mix(P["blue"], P["bg"], 0.65),
                        selectforeground=P["hi"], inactiveselectbackground=common.mix(P["blue"], P["bg"], 0.75))
     window.chip.configure(bg=P["redbg"], fg=P["red"], highlightbackground=P["red"])
-    window.zoombar.configure(bg=P["bar"], highlightbackground=P["line"])
-    for lab in window.zoom_btns:
-        lab.configure(bg=P["bar"], fg=P["mu"] if lab is window.zoom_label else P["tx"])
+    window.graph.zoombar.configure(bg=P["bar"], highlightbackground=P["line"])
+    for lab in window.graph.zoom_btns:
+        lab.configure(bg=P["bar"], fg=P["mu"] if lab is window.graph.zoom_label else P["tx"])
     window.logs.update_filters()
-    window._statc_sig = None
+    window.graph.statc_sig = None
     window.overlay.configure(bg=P["node"], highlightbackground=P["red"], highlightthickness=1, bd=0)
     try:
         theme.titlebar_theme(window.win)
     except Exception:
         pass
-    window._robots.clear()
-    window.logs.sig = window._graph_sig = window._prompt_sig = None
+    window.graph.robots.clear()
+    window.logs.sig = window.graph.sig = window._prompt_sig = None
     if window._applied.get("clear"):
         window._applied["clear"] = None  # the see-through key colour follows the theme
     window._apply_options()

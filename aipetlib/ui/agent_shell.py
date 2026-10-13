@@ -71,36 +71,7 @@ def _build(window):
         window.handles[side] = h
     window.body = tk.Frame(w)
     window.body.pack(fill="both", expand=True)
-    window.canvas = tk.Canvas(window.body, highlightthickness=0, bd=0, height=window.px(150), width=window.px(200))
-    window.canvas.bind("<Configure>", window._on_resize)
-    window.canvas.bind("<ButtonPress-1>", window._pan_start)
-    window.canvas.bind("<B1-Motion>", window._pan_move)
-    window.canvas.bind("<ButtonRelease-1>", window._pan_end, add="+")
-    for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
-        window.canvas.bind(seq, window._wheel)
-    # zoom controls (top left of the graph) and the stats node (bottom right): fixed, outside the zoom
-    window.zoombar = tk.Frame(window.canvas, bd=0, highlightthickness=1)
-    window.zoom_btns = []
-    for text, fn in (("[-]", lambda: window.zoom(1 / 1.25)), (None, None), ("[+]", lambda: window.zoom(1.25)),
-                     ("[reset]", lambda: window.zoom(reset=True)), ("[center]", lambda: window.center_view(by_user=True)),
-                     ("[fit all]", window.fit_all)):
-        lab = tk.Label(window.zoombar, text=text or "100%", font=window.f_small, cursor="" if fn is None else "hand2",
-                       padx=window.px(2))
-        lab.pack(side="left")
-        if fn:
-            lab.bind("<Button-1>", lambda e, fn=fn: fn())
-        else:
-            window.zoom_label = lab
-        window.zoom_btns.append(lab)
-    window.auto_fit_var = tk.BooleanVar(master=window.win, value=window.opts.get("auto_fit", False))
-    window.auto_fit_btn = tk.Checkbutton(window.zoombar, text="auto", font=window.f_small,
-                                      variable=window.auto_fit_var, command=lambda: window.tool("auto_fit"),
-                                      bd=0, highlightthickness=0, padx=window.px(2), pady=0, cursor="hand2")
-    window.auto_fit_btn.pack(side="left")
-    window.zoombar.place(x=window.px(4), y=window.px(4), anchor="nw")
-    window.statc = tk.Canvas(window.canvas, bd=0, highlightthickness=1)
-    window.statc.place(relx=1.0, rely=1.0, x=-window.px(6), y=-window.px(6), anchor="se")
-    window.tip = tk.Label(w, font=window.f_small, justify="left", anchor="w", padx=window.px(6), pady=window.px(3))
+    window.graph.build()
     window.logs.build()
     window.win.bind("<Configure>", window._on_window_resize, add="+")
     for seq in ("<FocusIn>", "<Map>", "<Unmap>"):  # brought to the front, minimised or restored
@@ -111,14 +82,5 @@ def _build(window):
     window.chip.bind("<Button-1>", lambda e: window.open_overlay(True))
     window.overlay = tk.Frame(w, bd=1, relief="solid")
     window.menu = tk.Frame(w, bd=0, highlightthickness=1)
-    window.statdrop = tk.Frame(w, bd=0, highlightthickness=1)
-    window.stathead = tk.Label(window.statdrop, font=window.f_small, anchor="w", cursor="hand2")
-    window.stathead.pack(fill="x", padx=window.px(6), pady=(window.px(3), 0))
-    window.stathead.bind("<Button-1>", lambda e: window.toggle_stat(window.stat_open))
-    window.stattext = tk.Text(window.statdrop, font=window.f_small, bd=0, highlightthickness=0, wrap="none",
-                            takefocus=0, cursor="xterm", padx=window.px(6), pady=window.px(3))
-    window.stattext.bind("<Control-c>", lambda e: window._copy(window.stattext))
-    window.stattext.bind("<Button-1>", lambda e: window.stattext.focus_set(), add="+")
-    window.stattext.pack(fill="both", expand=True)
-    window.stat_open = None
+    window.graph.build_stat_drop()
     window.stats = network_stats({"agents": []})

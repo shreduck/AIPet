@@ -129,7 +129,7 @@ class MacGraphGestures:
             x, y = widget.winfo_rootx(), widget.winfo_rooty()
             return x, y, x + widget.winfo_width(), y + widget.winfo_height()
 
-        self._rect = rect(self.owner.canvas)
+        self._rect = rect(self.owner.graph.canvas)
         if self._rect is None:
             self._batch.clear()
         self._exclusions = [r for name in ("zoombar", "statc", "tip", "chip", "overlay", "menu", "statdrop")
@@ -187,9 +187,9 @@ class MacGraphGestures:
                 self.log(error)
             for kind, a, b in self._batch.drain():
                 if kind == "pan":
-                    self.owner.pan(a, b)
+                    self.owner.graph.pan(a, b)
                 else:
-                    self.owner.zoom(a, at=b, precise=True)
+                    self.owner.graph.zoom(a, at=b, precise=True)
         except Exception as error:
             self.log(f"graph gestures disabled: {error!r}")
             self.close()  # leave normal Tk input usable if the native adapter fails
