@@ -51,6 +51,8 @@ jobs:
           python-version: "3.12"
       - name: Build
         run: bash build_mac.sh
+      - name: Use the Mac build environment for checks
+        run: echo "$PWD/build/mac-runtime/venv/bin" >> "$GITHUB_PATH"
       - name: Check packaged hooks and relocation
         run: python tools/check_mac_bundle.py dist/AIPet.app
       - name: Check architecture

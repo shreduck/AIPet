@@ -481,7 +481,12 @@ vX.Y.Z...* until you install it. Nothing is downloaded or installed automaticall
 
 ## macOS
 Apple Silicon builds come from the *macos* job of the GitHub Actions workflow (`AIPet-mac-arm64.zip` on the Releases
-page), or build with `bash build_mac.sh` on a Mac. The app is unsigned: first launch needs right-click > Open. macOS
+page), or build with `bash build_mac.sh` on a Mac. The script sets up an isolated build environment under the ignored
+`build/mac-runtime` folder. It uses an available Python 3.12 with Tcl/Tk 8.6, or downloads Python 3.12.11 through uv
+(pinned to preserve Tcl/Tk 8.6 compatibility). The first build needs internet access.
+Set `PYTHON=/path/to/python3.12` to select a compatible runtime explicitly.
+No system Python installation or shell profile is changed. The app is ad-hoc signed and signature-verified, but
+is not Developer ID signed or notarized; downloaded builds may require right-click > Open on first launch. macOS
 support is newer than Windows, and the **macOS self-test** workflow (see above) checks it on every change.
 - **Smaller bundle.** The app and built-in hook share one identical Python library using a relative link inside the
   bundle. The build re-signs and verifies the app after this step. Installing the hook copies the library to its own
