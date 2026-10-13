@@ -24,7 +24,7 @@ from tkinter import messagebox
 
 import aipet as core
 import aipet_agents_window
-from aipet_agents import NetworkTracker
+from aipetlib.agents.tracker import NetworkTracker
 import aipet_guide
 import aipet_settings
 import aipet_update as upd

@@ -25,7 +25,8 @@ import tkinter as tk
 from tkinter import font as tkfont
 
 import aipet as core
-import aipet_agents as agents
+from aipetlib.agents import log_filters, network, stats
+from aipetlib.agents.tools import is_mcp_tool
 
 REFRESH_MS = 900
 FRAME_MS = 45
@@ -548,7 +549,7 @@ class AgentNetworkWindow:
         self._content, self._center_next, self._panned = None, True, False
         self._bands, self._leaving, self._titles, self._animating = {}, {}, [], False
         self._entries, self._expanded = [], set()  # log entries shown / unfolded
-        self._log_filters = agents.default_log_filters()
+        self._log_filters = log_filters.default_log_filters()
         self.u = self.opts["scale"] / 100
         self.s = 1.5 * self.u
         # window attributes as set (only touched when they change). Starts at Tk's own defaults: setting -alpha or
@@ -911,16 +912,16 @@ class AgentNetworkWindow:
                                else "AIPet · agent network")
             except tk.TclError:
                 pass
-            self.net = agents.read_network(self.item, include_tools=self.opts.get("tools", True))
+            self.net = network.read_network(self.item, include_tools=self.opts.get("tools", True))
         if len(self.net["agents"]) != n_before:
             self._update_minsize()
         self.blocks = [(self.key, self.item, self.net)] if self.item else []
         if self._stacked_mode():
             # compact, not tabbed: every session's graph, one under the other
             self.blocks = [(i["key"], i, self.net if i["key"] == self.key else
-                            agents.read_network(i, include_tools=self.opts.get("tools", True)))
+                            network.read_network(i, include_tools=self.opts.get("tools", True)))
                            for i in sessions]
-        self.stats = agents.network_stats(self.net)
+        self.stats = stats.network_stats(self.net)
         if self.stat_open:
             self._fill_stat()
         if selected_id is not None:
@@ -937,12 +938,12 @@ class AgentNetworkWindow:
     # ---- selection
     def select(self, i, clear_filters=False):
         if clear_filters:
-            self._log_filters = agents.default_log_filters()
+            self._log_filters = log_filters.default_log_filters()
         if 0 <= i < len(self.net["agents"]) and self.net["agents"][i].get("tool"):
             tool = self.net["agents"][i]
             self._log_filters.update(show_tools=True, primary=False, only_tool=tool["name"],
-                                     tools=set() if agents.is_mcp_tool(tool["name"]) else {tool["name"]},
-                                     mcp={tool["name"]} if agents.is_mcp_tool(tool["name"]) else set())
+                                     tools=set() if is_mcp_tool(tool["name"]) else {tool["name"]},
+                                     mcp={tool["name"]} if is_mcp_tool(tool["name"]) else set())
             i = next((j for j, a in enumerate(self.net["agents"]) if a["id"] == tool["parent"]), -1)
         self.sel = i
         self._graph_sig = self._log_sig = None

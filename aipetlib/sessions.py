@@ -8,6 +8,7 @@ import os
 import sys
 import time
 import aipet_usage as usage
+from .text import phrase
 
 
 def place_name(services, rec):
@@ -24,6 +25,10 @@ def place_name(services, rec):
 
 
 def transcript_file(services, rec):
+    return transcript_path(rec)
+
+
+def transcript_path(rec):
     """The session's transcript as this machine can open it (WSL paths through \\\\wsl.localhost\\<distro>)."""
     path = str(rec.get("transcript_path") or "")
     if rec.get("env") == "wsl" and os.name == "nt" and path.startswith("/") and rec.get("distro"):
@@ -63,10 +68,7 @@ def last_said(services, rec):
 
 
 def _phrase(services, text, limit=140):
-    """The last sentence-ish bit of a message, on one line."""
-    lines = [ln.strip(" #>*-`") for ln in str(text).strip().splitlines() if ln.strip(" #>*-`")]
-    phrase = " ".join((lines[-1] if lines else "").split())
-    return phrase if len(phrase) <= limit else phrase[:limit - 1].rstrip() + "…"
+    return phrase(text, limit)
 
 
 def _transcript_message(services, entry):

@@ -6,6 +6,8 @@ No application entry point is imported by this component.
 import sys
 import tkinter as tk
 
+from ..agents.stats import network_stats
+
 
 def _build(window, services):
     s = window._font_scale()
@@ -156,4 +158,4 @@ def _build(window, services):
     window.stattext.bind("<Button-1>", lambda e: window.stattext.focus_set(), add="+")
     window.stattext.pack(fill="both", expand=True)
     window.stat_open = None
-    window.stats = services.agents.network_stats({"agents": []})
+    window.stats = network_stats({"agents": []})

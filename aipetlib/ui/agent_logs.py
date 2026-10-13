@@ -6,6 +6,9 @@ No application entry point is imported by this component.
 import time
 import tkinter as tk
 
+from ..agents import log_filters
+from ..agents.records import fmt_tokens, short
+
 
 def _arrange(window, services):
     """The logs below, above, left or right of the graph (settings: logs position), split by a draggable line."""
@@ -62,7 +65,7 @@ def set_log_filter(window, services, key, value):
 
 
 def clear_log_filters(window, services):
-    window._log_filters = services.agents.default_log_filters()
+    window._log_filters = log_filters.default_log_filters()
     window._log_sig = window._graph_sig = None
     window._update_log_filters()
     window._draw_graph()
@@ -119,7 +122,7 @@ def _choose_tools(window, services, group, selected):
 def _toggle_log_tool(window, services, name, mcp):
     group = "mcp" if mcp else "tools"
     selected = window._log_filters[group]
-    selected = set(services.agents.available_log_tools(window.net, window.sel, mcp)) if selected is None else set(selected)
+    selected = set(log_filters.available_log_tools(window.net, window.sel, mcp)) if selected is None else set(selected)
     if name in selected:
         selected.remove(name)
     else:
@@ -137,7 +140,7 @@ def open_tool_filters(window, services, mcp):
     menu.add_separator()
     selected = window._log_filters[group]
     menu._variables = []
-    names = services.agents.available_log_tools(window.net, window.sel, mcp)
+    names = log_filters.available_log_tools(window.net, window.sel, mcp)
     for name in names:
         var = tk.BooleanVar(master=window.win, value=selected is None or name in selected)
         menu._variables.append(var)
@@ -179,7 +182,7 @@ def _draw_tabs(window, services):
     for i, name in choices:
         on = i == window.sel
         col = P["hi"] if i < 0 else window.color(i)
-        label = f"[{services.agents.short(name, 45)}]"
+        label = f"[{short(name, 45)}]"
         font = window.f_bold if on else window.f_small
         lab = tk.Label(row, text=label, font=font, cursor="hand2",
                        bg=col if on else P["bg"], fg=P["bg"] if on else col, padx=window.px(3), pady=window.px(1))
@@ -206,7 +209,7 @@ def _draw_log(window, services, keep=None):
     """keep: the scroll position to stay at (folding an entry), instead of following the newest line."""
     P, log = window.P, window.log
     ags = window.net["agents"]
-    rows = services.agents.filtered_log_rows(window.net, window.sel, window._log_filters)[-160:]
+    rows = log_filters.filtered_log_rows(window.net, window.sel, window._log_filters)[-160:]
     filter_sig = tuple((k, tuple(sorted(v)) if isinstance(v, set) else v) for k, v in window._log_filters.items())
     available = max(0, log.winfo_width() - 2 * int(log.cget("padx")) - 2)
     sig = (window.sel, window.theme, window.s, window.opts.get("text_scale", 100), available,
@@ -237,7 +240,7 @@ def _draw_log(window, services, keep=None):
     if window.sel >= 0 and ags:
         a = ags[window.sel]
         info = " · ".join(v for v in (a["model_label"], a["effort"],
-                                      f"ctx {services.agents.fmt_tokens(a['ctx'])}" if a["ctx"] else "") if v)
+                                      f"ctx {fmt_tokens(a['ctx'])}" if a["ctx"] else "") if v)
         log.insert("end", f"$ tail {a['name']} ", f"a{window.sel}")
         log.insert("end", "# " + info + (f" · {a['kind']}" if a["kind"] and not a["main"] else "") + "\n", "mu")
     if not rows:

@@ -7,7 +7,10 @@ import unittest
 from unittest.mock import patch
 
 import aipet
-import aipet_agents as agents
+import aipetlib.agents.codex as agent_codex
+import aipetlib.agents.history as agent_history
+import aipetlib.agents.network as agent_network
+import aipetlib.agents.tracker as agent_tracker
 from test_agents import claude_assistant, iso, write_lines
 from test_tool_nodes import codex
 
@@ -16,8 +19,8 @@ class AgentTrackerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        agents._TAILS.clear()
-        agents._CODEX_META.clear()
+        agent_history._TAILS.clear()
+        agent_codex._CODEX_META.clear()
         self.now = time.time()
 
     def session(self, provider):
@@ -41,14 +44,14 @@ class AgentTrackerTests(unittest.TestCase):
 
     def test_mid_session_open_recovers_old_input_and_model_for_both_providers(self):
         for provider in ("claude", "codex"):
-            with self.subTest(provider=provider), patch.object(agents, "MAIN_TAIL", 300):
+            with self.subTest(provider=provider), patch.object(agent_history, "MAIN_TAIL", 300):
                 item = self.session(provider)
                 write_lines(item["transcript_path"], self.entries(provider))
-                foreground = agents.read_network(item, now=self.now + 2, include_tools=True)
+                foreground = agent_network.read_network(item, now=self.now + 2, include_tools=True)
                 self.assertFalse(any(a.get("tool") for a in foreground["agents"]))
-                tracker = agents.NetworkTracker(lambda: [item])
+                tracker = agent_tracker.NetworkTracker(lambda: [item])
                 tracker.poll()  # no agent window exists
-                reopened = agents.read_network(item, now=self.now + 2, include_tools=True)
+                reopened = agent_network.read_network(item, now=self.now + 2, include_tools=True)
                 tool = next(a for a in reopened["agents"] if a.get("tool"))
                 self.assertEqual(tool["name"], "Read")
                 self.assertEqual([row[1] for row in tool["lines"]], ["input", "output"])
@@ -58,28 +61,28 @@ class AgentTrackerTests(unittest.TestCase):
     def test_append_burst_larger_than_tail_does_not_lose_request(self):
         item = self.session("codex")
         write_lines(item["transcript_path"], [codex(self.now, {"type": "task_started"}, "event_msg")])
-        tracker = agents.NetworkTracker(lambda: [item])
-        with patch.object(agents, "MAIN_TAIL", 300):
+        tracker = agent_tracker.NetworkTracker(lambda: [item])
+        with patch.object(agent_history, "MAIN_TAIL", 300):
             tracker.poll()
             with open(item["transcript_path"], "a", encoding="utf-8") as f:
                 for entry in self.entries("codex"):
                     f.write(json.dumps(entry) + "\n")
             tracker.poll()
-            net = agents.read_network(item, now=self.now + 2, include_tools=True)
+            net = agent_network.read_network(item, now=self.now + 2, include_tools=True)
         self.assertEqual(next(a for a in net["agents"] if a.get("tool"))["name"], "Read")
 
     def test_partial_line_is_consumed_when_completed(self):
         path = self.session("codex")["transcript_path"]
         write_lines(path, [codex(self.now, {"model": "model"}, "turn_context")])
-        agents._cached(path, 300, agents.parse_codex)
+        agent_history._cached(path, 300, agent_codex.parse_codex)
         encoded = json.dumps(codex(self.now, {"type": "function_call", "name": "Read", "call_id": "read",
                                              "arguments": "café"}), ensure_ascii=False).encode("utf-8")
         with open(path, "ab") as f:
             f.write(encoded[:80])
-        self.assertEqual(agents._cached(path, 300, agents.parse_codex)["tool_calls"], [])
+        self.assertEqual(agent_history._cached(path, 300, agent_codex.parse_codex)["tool_calls"], [])
         with open(path, "ab") as f:
             f.write(encoded[80:] + b"\n")
-        self.assertIn("café", agents._cached(path, 300, agents.parse_codex)["tool_calls"][0]["input"])
+        self.assertIn("café", agent_history._cached(path, 300, agent_codex.parse_codex)["tool_calls"][0]["input"])
 
     def test_bootstrap_merges_calls_across_record_batches(self):
         for provider in ("claude", "codex"):
@@ -88,8 +91,8 @@ class AgentTrackerTests(unittest.TestCase):
                 entries = self.entries(provider)
                 entries[-1:-1] = [{"type": "padding"} for _ in range(300)]
                 write_lines(item["transcript_path"], entries)
-                agents.NetworkTracker(lambda: [item]).poll()
-                net = agents.read_network(item, now=self.now + 2, include_tools=True)
+                agent_tracker.NetworkTracker(lambda: [item]).poll()
+                net = agent_network.read_network(item, now=self.now + 2, include_tools=True)
                 tool = next(a for a in net["agents"] if a.get("tool"))
                 self.assertEqual([row[1] for row in tool["lines"]], ["input", "output"])
                 self.assertIn("file", tool["lines"][0][2])
@@ -98,24 +101,24 @@ class AgentTrackerTests(unittest.TestCase):
     def test_unchanged_files_are_not_read_again(self):
         item = self.session("codex")
         write_lines(item["transcript_path"], self.entries("codex"))
-        tracker = agents.NetworkTracker(lambda: [item])
+        tracker = agent_tracker.NetworkTracker(lambda: [item])
         tracker.poll()
-        with patch.object(agents, "_read_updates", wraps=agents._read_updates) as read:
+        with patch.object(agent_history, "_read_updates", wraps=agent_history._read_updates) as read:
             tracker.poll()
         read.assert_not_called()
 
     def test_truncated_file_does_not_keep_old_calls(self):
         path = self.session("codex")["transcript_path"]
         write_lines(path, self.entries("codex"))
-        agents._cached(path, 10000, agents.parse_codex)
+        agent_history._cached(path, 10000, agent_codex.parse_codex)
         write_lines(path, [codex(self.now, {"model": "replacement"}, "turn_context")])
-        info = agents._cached(path, 10000, agents.parse_codex)
+        info = agent_history._cached(path, 10000, agent_codex.parse_codex)
         self.assertEqual(info["model"], "replacement")
         self.assertEqual(info["tool_calls"], [])
 
     def test_background_worker_stops_without_a_window(self):
         polled = threading.Event()
-        tracker = agents.NetworkTracker(lambda: polled.set() or [], interval=60)
+        tracker = agent_tracker.NetworkTracker(lambda: polled.set() or [], interval=60)
         tracker.start()
         try:
             self.assertTrue(polled.wait(1))

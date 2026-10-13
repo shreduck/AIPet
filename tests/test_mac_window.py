@@ -15,7 +15,7 @@ class MacWindowTests(unittest.TestCase):
         from types import SimpleNamespace
         from unittest.mock import patch
         import aipet
-        import aipet_agents as agents
+        import aipetlib.agents.log_filters as agent_log_filters
         from aipet_agents_window import AgentNetworkWindow
 
         root = aipet.MacPetWindow()
@@ -27,7 +27,7 @@ class MacWindowTests(unittest.TestCase):
             window = AgentNetworkWindow(root, SimpleNamespace(cfg={}, _last_items=[]))
             window.net = {"agents": [{"name": "exec_command", "state": "working"}], "log": []}
             window.opts["log_tail"] = False
-            with patch.object(agents, "filtered_log_rows", return_value=rows):
+            with patch.object(agent_log_filters, "filtered_log_rows", return_value=rows):
                 root.update()
                 window._draw_log()
                 window._entry_click(0)
@@ -67,7 +67,7 @@ class MacWindowTests(unittest.TestCase):
         from types import SimpleNamespace
         from unittest.mock import patch
         import aipet
-        import aipet_agents as agents
+        import aipetlib.agents.log_filters as agent_log_filters
         from aipet_agents_window import AgentNetworkWindow
 
         root = aipet.MacPetWindow()
@@ -80,7 +80,7 @@ class MacWindowTests(unittest.TestCase):
             window = AgentNetworkWindow(root, SimpleNamespace(cfg={}, _last_items=[]))
             window.net = {"agents": [{"name": "exec_command", "state": "working"}], "log": []}
             window.opts["log_tail"] = False
-            with patch.object(agents, "filtered_log_rows", return_value=rows):
+            with patch.object(agent_log_filters, "filtered_log_rows", return_value=rows):
                 for text_scale in (100, 150):
                     window.opts["text_scale"] = text_scale
                     window.f_main.configure(size=round(12 * text_scale / 100))

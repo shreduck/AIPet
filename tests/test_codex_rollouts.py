@@ -7,7 +7,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import aipet
-import aipet_agents as agents
+import aipetlib.agents.codex as agent_codex
+import aipetlib.agents.network as agent_network
 import aipet_codex as codex
 import aipet_hook as hook
 from aipet_agents_window import candidate_sessions
@@ -23,7 +24,7 @@ class CodexRolloutTests(unittest.TestCase):
         self.addCleanup(self.env.stop)
         codex._META.clear()
         codex._LOOKUPS.clear()
-        agents._CODEX_META.clear()
+        agent_codex._CODEX_META.clear()
         self.now = time.time()
 
     def rollout(self, day, name, meta):
@@ -59,7 +60,7 @@ class CodexRolloutTests(unittest.TestCase):
                 f.write(json.dumps({'type': 'turn_context', 'payload': {'model': 'gpt-6-luna', 'effort': 'low'}}) + '\n')
         self.rollout(4, 'rollout-2026-10-04T12-05-00-guardian.jsonl', {
             'id': 'guardian', 'parent_thread_id': 'root', 'thread_source': 'guardian_review'})
-        net = agents.read_network({'agent': 'codex', 'session_id': 'root', 'transcript_path': root,
+        net = agent_network.read_network({'agent': 'codex', 'session_id': 'root', 'transcript_path': root,
                                    'state': 'done'}, now=self.now)
         by_id = {a['id']: a for a in net['agents']}
         self.assertEqual(set(by_id), {'', 'child', 'grandchild', 'greatgrandchild'})

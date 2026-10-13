@@ -95,5 +95,17 @@ class ImportSideEffectTests(unittest.TestCase):
                 self.check(name)
 
 
+class AgentFacadeTests(unittest.TestCase):
+    """aipet_agents is a temporary facade: every name must be the owner's object, never a copy."""
+    def test_facade_reexports_owner_objects(self):
+        import aipet_agents
+        owners = [importlib.import_module(f"aipetlib.agents.{m}") for m in
+                  ("records", "tools", "claude", "codex", "history", "network", "log_filters", "stats", "tracker")]
+        for name in aipet_agents.__all__:
+            with self.subTest(name=name):
+                home = [m for m in owners if name in vars(m)]
+                self.assertTrue(home, f"{name} has no owner in aipetlib.agents")
+                self.assertIs(getattr(aipet_agents, name), getattr(home[0], name))
+
 if __name__ == "__main__":
     unittest.main()

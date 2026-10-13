@@ -7,6 +7,8 @@ import math
 import time
 import tkinter as tk
 
+from ..agents.records import fmt_tokens
+
 
 def robot(window, services, state, height):
     key = (state, height, window.theme)
@@ -345,8 +347,8 @@ def _draw_block(window, services, b, key, net, ox, oy, W, H, reserve, fade=0.0, 
                       tags=tag)
         # a subagent's type (general-purpose, Explore...) when its name is its description, then model and effort
         info = " · ".join(v for v in ((a.get("kind") if not a["main"] else ""), a["model_label"], a["effort"]) if v)
-        ctx = services.agents.fmt_tokens(a["ctx"])
-        ctx_line = (f"ctx {ctx}" + (f"/{services.agents.fmt_tokens(a['ctx_max'])}" if a["ctx_max"] else "")) if ctx else ""
+        ctx = fmt_tokens(a["ctx"])
+        ctx_line = (f"ctx {ctx}" + (f"/{fmt_tokens(a['ctx_max'])}" if a["ctx_max"] else "")) if ctx else ""
         rows = [info, ctx_line]  # the context always on a line of its own (what it says: in the logs)
         ly = y + window.gpx(5) + lh
         for row in rows:
@@ -631,7 +633,7 @@ def _draw_stats(window, services):
         sc.tag_bind("warn", "<Leave>", lambda e: window._hide_tip())
     n_calls = sum(n for _, n in st["subagents"])
     tool_calls = sum(n for _, n in st["tools"])
-    rows = (("subs", f"subagents {n_calls} ▾"), ("ctx", f"context {services.agents.fmt_tokens(st['ctx_total']) or 0} ▾"),
+    rows = (("subs", f"subagents {n_calls} ▾"), ("ctx", f"context {fmt_tokens(st['ctx_total']) or 0} ▾"),
             ("tools", f"tools {len(st['tools'])} · {tool_calls} calls ▾"))
     for k, (kind, text) in enumerate(rows):
         tag = f"stat_{kind}"
@@ -685,8 +687,8 @@ def _stat_lines(window, services, kind):
     if kind == "ctx":
         lines = [(f"{'#':<3}{'agent':<18}{'model':<14}{'context':>8}", "mu")]
         for k, (name, model, ctx) in enumerate(st["calls"], 1):
-            lines.append((f"{k:<3}{name[:17]:<18}{model[:13]:<14}{services.agents.fmt_tokens(ctx) or '-':>8}", ""))
-        lines.append((f"{'':<3}{'total':<32}{services.agents.fmt_tokens(st['ctx_total']) or '0':>8}", "mu"))
+            lines.append((f"{k:<3}{name[:17]:<18}{model[:13]:<14}{fmt_tokens(ctx) or '-':>8}", ""))
+        lines.append((f"{'':<3}{'total':<32}{fmt_tokens(st['ctx_total']) or '0':>8}", "mu"))
         return lines
     lines = [(f"{name:<26} ×{n}", "") for name, n in st["tools"]] or [("# no tool calls in this task", "mu")]
     lines.append(("── skills ──", "mu"))

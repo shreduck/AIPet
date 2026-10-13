@@ -57,7 +57,9 @@ try:
 except ImportError:  # not Windows
     winsound = None
 
-HOME_DIR = os.path.join(os.path.expanduser("~"), ".aipet")
+from aipetlib.runtime.paths import HOME_DIR
+from aipetlib.runtime.preferences import DONE_TIMEOUT
+from aipetlib.runtime import diagnostics
 SESSIONS_DIR = os.path.join(HOME_DIR, "sessions")
 # Claude Pet (the old name) kept its files in ~/.claude-pet. Hooks not yet updated to AIPet still write their sessions
 # there, so the pet keeps reading that folder while it exists.
@@ -419,7 +421,6 @@ SCALE = {"v": SCALE_UNIT}  # absolute drawing scale: 92x122 px per pet at 1.0; t
 
 ANSWER_WAIT = {"v": 180}  # seconds; mirrored into <pet dir>/answer-wait for the hook (0 = wait until answered)
 MAX_WAIT = 1800  # every timer: 0 (no limit / never) to 30 minutes
-DONE_TIMEOUT = {"v": 3}  # minutes until a finished session's pet is cleared (0 = never)
 HEALTH = {"v": 15}  # seconds between checks that a working session's process still runs (0 = off)
 MAX_HEALTH = 300
 
@@ -789,24 +790,9 @@ def pixel_rects(key, image):
     return sprites.pixel_rects(sys.modules[__name__], key, image)
 
 
-_LOGGED = set()
-
-
 def log_error(msg):
     """Append a message (once per run) to ~/.aipet/error.log: a windowed app has no console to print to."""
-    if msg in _LOGGED:
-        return
-    _LOGGED.add(msg)
-    print(f"[aipet] {msg}", file=sys.stderr)
-    try:
-        os.makedirs(HOME_DIR, exist_ok=True)
-        path = os.path.join(HOME_DIR, "error.log")
-        if os.path.exists(path) and os.path.getsize(path) > 200_000:
-            os.remove(path)
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + msg + "\n")
-    except OSError:
-        pass
+    diagnostics.log_error(msg, HOME_DIR)
 
 
 MONO_FAMILY = UI_FONT

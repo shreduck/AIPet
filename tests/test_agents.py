@@ -6,7 +6,14 @@ import unittest
 from contextlib import ExitStack
 from unittest.mock import MagicMock, patch
 
-import aipet_agents as agents
+import aipetlib.agents.claude as agent_claude
+import aipetlib.agents.codex as agent_codex
+import aipetlib.agents.history as agent_history
+import aipetlib.agents.log_filters as agent_log_filters
+import aipetlib.agents.network as agent_network
+import aipetlib.agents.records as agent_records
+import aipetlib.agents.stats as agent_stats
+from aipetlib.runtime import preferences
 
 
 def iso(t):
@@ -34,7 +41,7 @@ class ClaudeNetworkTests(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.dir.cleanup)
-        agents._TAILS.clear()
+        agent_history._TAILS.clear()
         now = time.time()
         self.now = now
         self.transcript = os.path.join(self.dir.name, "sess.jsonl")
@@ -79,12 +86,12 @@ class ClaudeNetworkTests(unittest.TestCase):
         return base
 
     def test_main_and_subagents_with_model_effort_and_context(self):
-        net = agents.read_network(self.item(), now=self.now)
+        net = agent_network.read_network(self.item(), now=self.now)
         by = {a["name"]: a for a in net["agents"]}
         self.assertEqual(list(by), ["main", "find callers", "Plan"])  # named after their description, else type
         self.assertEqual((by["find callers"]["kind"], by["Plan"]["kind"]), ("Explore", ""))
         main = by["main"]
-        self.assertEqual((main["model_label"], main["effort"], agents.fmt_tokens(main["ctx"])), ("opus-5.5", "high", "84k"))
+        self.assertEqual((main["model_label"], main["effort"], agent_records.fmt_tokens(main["ctx"])), ("opus-5.5", "high", "84k"))
         self.assertEqual(main["state"], "waiting")  # the prompt on screen is Plan's
         self.assertEqual(by["Plan"]["state"], "needs_input")
         self.assertEqual(by["find callers"]["state"], "done")
@@ -93,7 +100,7 @@ class ClaudeNetworkTests(unittest.TestCase):
         self.assertIn("waiting for Plan", main["thought"])
 
     def test_shared_log_is_in_time_order_with_each_agents_lines(self):
-        net = agents.read_network(self.item(), now=self.now)
+        net = agent_network.read_network(self.item(), now=self.now)
         names = [a["name"] for a in net["agents"]]
         rows = [(names[i], kind, text) for _, i, kind, text in net["log"]]
         self.assertEqual(rows[:2], [("main", "you", "old question"), ("main", "you", "fix the login loop")])
@@ -105,7 +112,7 @@ class ClaudeNetworkTests(unittest.TestCase):
         self.assertNotIn("earlier", [r[2] for r in rows])  # the old turn's subagent stays out of the log too
 
     def test_stats_list_subagents_every_context_and_tools(self):
-        stats = agents.network_stats(agents.read_network(self.item(), now=self.now))
+        stats = agent_stats.network_stats(agent_network.read_network(self.item(), now=self.now))
         self.assertEqual(stats["subagents"], [("Explore", 1), ("Plan", 1)])
         self.assertEqual([c[0] for c in stats["calls"]], ["main", "find callers", "Plan"])  # one row per agent, in order
         self.assertEqual(stats["ctx_total"], 84002 + 23002 + 12002)
@@ -114,15 +121,15 @@ class ClaudeNetworkTests(unittest.TestCase):
 
     def test_stats_warn_only_when_the_task_starts_before_what_was_read(self):
         from unittest.mock import patch
-        self.assertFalse(agents.network_stats(agents.read_network(self.item(), now=self.now))["missing"])
+        self.assertFalse(agent_stats.network_stats(agent_network.read_network(self.item(), now=self.now))["missing"])
         with open(self.transcript, "a", encoding="utf-8") as f:  # a long task: its prompt falls out of the tail
             for k in range(40):
                 f.write(json.dumps(claude_assistant(self.now - 40 + k, [{"type": "tool_use", "name": "Read",
                                                                          "input": {"file_path": "x" * 200}}])) + "\n")
-        agents._TAILS.clear()
-        with patch.object(agents, "MAIN_TAIL", 4000):
-            self.assertTrue(agents.network_stats(agents.read_network(self.item(), now=self.now))["missing"])
-        agents._TAILS.clear()
+        agent_history._TAILS.clear()
+        with patch.object(agent_history, "MAIN_TAIL", 4000):
+            self.assertTrue(agent_stats.network_stats(agent_network.read_network(self.item(), now=self.now))["missing"])
+        agent_history._TAILS.clear()
 
     def test_an_agent_started_by_a_subagent_hangs_off_that_subagent(self):
         sub = os.path.join(self.dir.name, "sess", "subagents")
@@ -130,12 +137,12 @@ class ClaudeNetworkTests(unittest.TestCase):
         with open(os.path.join(sub, "agent-ccc.meta.json"), "w") as f:
             json.dump({"agentType": "Nested", "parentAgentId": "bbb", "spawnDepth": 2}, f)
         os.utime(os.path.join(sub, "agent-ccc.jsonl"), (self.now - 50, self.now - 50))
-        by = {a["name"]: a for a in agents.read_network(self.item(), now=self.now)["agents"]}
+        by = {a["name"]: a for a in agent_network.read_network(self.item(), now=self.now)["agents"]}
         self.assertEqual((by["Nested"]["parent"], by["Nested"]["depth"]), ("bbb", 2))
         self.assertEqual((by["Plan"]["parent"], by["Plan"]["depth"]), ("", 1))
 
     def test_running_agent_without_transcript_still_shows(self):
-        net = agents.read_network(self.item(agent_ids={"zzz": "tester"}, wait_agent="", state="working"), now=self.now)
+        net = agent_network.read_network(self.item(agent_ids={"zzz": "tester"}, wait_agent="", state="working"), now=self.now)
         tester = next(a for a in net["agents"] if a["id"] == "zzz")
         self.assertEqual((tester["name"], tester["state"]), ("tester", "working"))
 
@@ -145,17 +152,17 @@ class ClaudeNetworkTests(unittest.TestCase):
             json.dump({"agentType": "Explore"}, f)
         with open(os.path.join(sub, "agent-aaa.meta.json"), "w") as f:
             json.dump({"agentType": "Explore"}, f)  # no descriptions: named after the type, numbered
-        names = [a["name"] for a in agents.read_network(self.item(), now=self.now)["agents"]]
+        names = [a["name"] for a in agent_network.read_network(self.item(), now=self.now)["agents"]]
         self.assertEqual(names, ["main", "Explore #1", "Explore #2"])
 
     def test_finished_agents_survive_new_turn_until_eighty_percent_timeout(self):
         with open(self.transcript, "a", encoding="utf-8") as f:
             f.write(json.dumps(claude_user(self.now, "next task")) + "\n")
-        with patch.dict(agents.core.DONE_TIMEOUT, v=3):
+        with patch.dict(preferences.DONE_TIMEOUT, v=3):
             item = self.item(agent_ids={}, state="working", wait_agent="")
-            before = agents.read_network(item, now=self.now + 93)
+            before = agent_network.read_network(item, now=self.now + 93)
             self.assertEqual([a["id"] for a in before["agents"]], ["", "aaa", "bbb"])
-            after = agents.read_network(item, now=self.now + 94)
+            after = agent_network.read_network(item, now=self.now + 94)
             self.assertEqual([a["id"] for a in after["agents"]], [""])
 
     def test_reusing_an_agent_resets_its_retention(self):
@@ -163,22 +170,22 @@ class ClaudeNetworkTests(unittest.TestCase):
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(claude_assistant(self.now + 90, [{"type": "text", "text": "reused"}])) + "\n")
         os.utime(path, (self.now + 90, self.now + 90))
-        with patch.dict(agents.core.DONE_TIMEOUT, v=3):
+        with patch.dict(preferences.DONE_TIMEOUT, v=3):
             item = self.item(agent_ids={}, state="working", wait_agent="")
-            self.assertEqual([a["id"] for a in agents.read_network(item, now=self.now + 200)["agents"]],
+            self.assertEqual([a["id"] for a in agent_network.read_network(item, now=self.now + 200)["agents"]],
                              ["", "aaa"])
-            self.assertEqual(len(agents.read_network(item, now=self.now + 234)["agents"]), 1)
+            self.assertEqual(len(agent_network.read_network(item, now=self.now + 234)["agents"]), 1)
 
     def test_retention_follows_changes_to_session_setting(self):
         item = self.item(agent_ids={}, state="done", wait_agent="")
-        with patch.dict(agents.core.DONE_TIMEOUT, v=1):
-            self.assertEqual(len(agents.read_network(item, now=self.now)["agents"]), 1)
-        with patch.dict(agents.core.DONE_TIMEOUT, v=5):
-            self.assertEqual(len(agents.read_network(item, now=self.now)["agents"]), 3)
+        with patch.dict(preferences.DONE_TIMEOUT, v=1):
+            self.assertEqual(len(agent_network.read_network(item, now=self.now)["agents"]), 1)
+        with patch.dict(preferences.DONE_TIMEOUT, v=5):
+            self.assertEqual(len(agent_network.read_network(item, now=self.now)["agents"]), 3)
 
     def test_never_setting_keeps_finished_agents(self):
-        with patch.dict(agents.core.DONE_TIMEOUT, v=0):
-            net = agents.read_network(self.item(agent_ids={}, state="done"), now=self.now + 10000)
+        with patch.dict(preferences.DONE_TIMEOUT, v=0):
+            net = agent_network.read_network(self.item(agent_ids={}, state="done"), now=self.now + 10000)
             self.assertEqual({a["id"] for a in net["agents"]}, {"", "aaa", "bbb", "old"})
 
     def test_expired_parent_stays_while_its_child_is_running(self):
@@ -186,8 +193,8 @@ class ClaudeNetworkTests(unittest.TestCase):
         write_lines(os.path.join(sub, "agent-ccc.jsonl"), [claude_user(self.now, "nested task")])
         with open(os.path.join(sub, "agent-ccc.meta.json"), "w") as f:
             json.dump({"agentType": "Nested", "parentAgentId": "aaa"}, f)
-        with patch.dict(agents.core.DONE_TIMEOUT, v=3):
-            net = agents.read_network(self.item(agent_ids={"ccc": "Nested"}, state="working", wait_agent=""),
+        with patch.dict(preferences.DONE_TIMEOUT, v=3):
+            net = agent_network.read_network(self.item(agent_ids={"ccc": "Nested"}, state="working", wait_agent=""),
                                       now=self.now + 1000)
             by = {a["id"]: a for a in net["agents"]}
             self.assertEqual(set(by), {"", "aaa", "ccc"})
@@ -199,8 +206,8 @@ class ClaudeNetworkTests(unittest.TestCase):
             path = os.path.join(sub, f"agent-extra{i}.jsonl")
             write_lines(path, [claude_user(self.now - 10, "task")])
             os.utime(path, (self.now - 10, self.now - 10))
-        with patch.dict(agents.core.DONE_TIMEOUT, v=3):
-            net = agents.read_network(self.item(), now=self.now)
+        with patch.dict(preferences.DONE_TIMEOUT, v=3):
+            net = agent_network.read_network(self.item(), now=self.now)
             self.assertEqual(len(net["agents"]), 16)  # main, original two, and thirteen new agents
 
 
@@ -234,14 +241,14 @@ class CodexNetworkTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             path = os.path.join(root, "rollout-child.jsonl")
             write_lines(path, [])
-            self.assertEqual(agents._codex_meta(path), {})
+            self.assertEqual(agent_codex._codex_meta(path), {})
             write_lines(path, [{"type": "session_meta", "payload": {"id": "child"}}])
-            self.assertEqual(agents._codex_meta(path)["id"], "child")
+            self.assertEqual(agent_codex._codex_meta(path)["id"], "child")
 
     def test_spawned_rollouts_become_subagents(self):
         with tempfile.TemporaryDirectory() as root:
-            agents._TAILS.clear()
-            agents._CODEX_META.clear()
+            agent_history._TAILS.clear()
+            agent_codex._CODEX_META.clear()
             now = time.time()
             day = os.path.join(root, "2026", "10", "07")
             parent_id = "01a115c8-6f99"
@@ -279,7 +286,7 @@ class CodexNetworkTests(unittest.TestCase):
             guardian = os.path.join(day, "rollout-2026-10-07T10-54-41-01a115c9-ggg.jsonl")
             write_lines(guardian, [{"type": "session_meta", "payload": {
                 "id": "g", "parent_thread_id": parent_id, "source": {"subagent": {"other": "guardian"}}}}])
-            net = agents.read_network({"agent": "codex", "transcript_path": parent, "state": "working",
+            net = agent_network.read_network({"agent": "codex", "transcript_path": parent, "state": "working",
                                        "session_id": parent_id}, now=now)
             main, sub, deeper = net["agents"]
             self.assertEqual((deeper["name"], deeper["parent"], deeper["depth"]), ("Noether (deeper)", "child-1", 2))
@@ -291,7 +298,7 @@ class CodexNetworkTests(unittest.TestCase):
             self.assertIn("exec(git status)", texts)
             self.assertIn("Just say hello", texts)
             # During work an old hook record can point at a child; keep names and the full tree.
-            active = agents.read_network({"agent": "codex", "transcript_path": child, "state": "working",
+            active = agent_network.read_network({"agent": "codex", "transcript_path": child, "state": "working",
                                          "session_id": parent_id,
                                          "agent_ids": {"child-1": "default", "child-2": "default"}}, now=now)
             self.assertEqual([a["name"] for a in active["agents"]],
@@ -305,15 +312,15 @@ class CodexNetworkTests(unittest.TestCase):
             for path in (child, grandchild):
                 os.utime(path, (now, now))
             item = {"agent": "codex", "transcript_path": parent, "state": "working", "session_id": parent_id}
-            with patch.dict(agents.core.DONE_TIMEOUT, v=3):
-                self.assertEqual(len(agents.read_network(item, now=now + 143)["agents"]), 3)
-                self.assertEqual(len(agents.read_network(item, now=now + 144)["agents"]), 1)
+            with patch.dict(preferences.DONE_TIMEOUT, v=3):
+                self.assertEqual(len(agent_network.read_network(item, now=now + 143)["agents"]), 3)
+                self.assertEqual(len(agent_network.read_network(item, now=now + 144)["agents"]), 1)
                 # Reuse the nested agent: even an expired parent stays to preserve the branch.
                 with open(grandchild, "a", encoding="utf-8") as f:
                     f.write(json.dumps({"type": "event_msg", "timestamp": iso(now + 200),
                                         "payload": {"type": "task_started"}}) + "\n")
                 os.utime(grandchild, (now + 200, now + 200))
-                resumed = agents.read_network(item, now=now + 1000)
+                resumed = agent_network.read_network(item, now=now + 1000)
                 self.assertEqual([a["id"] for a in resumed["agents"]], ["", "child-1", "child-2"])
                 self.assertEqual((resumed["agents"][2]["state"], resumed["agents"][2]["depth"]), ("working", 2))
 
@@ -333,15 +340,15 @@ class WindowLogicTests(unittest.TestCase):
         for i, expected in ((0, ["main reply"]), (1, ["helper reply", "echo test"])):
             view._log_filters = dict(restricted)
             view._click_node(None, "session", i)
-            self.assertEqual(view._log_filters, agents.default_log_filters())
-            self.assertEqual([r[3] for r in agents.filtered_log_rows(view.net, view.sel, view._log_filters)], expected)
+            self.assertEqual(view._log_filters, agent_log_filters.default_log_filters())
+            self.assertEqual([r[3] for r in agent_log_filters.filtered_log_rows(view.net, view.sel, view._log_filters)], expected)
         view._log_filters = dict(restricted)
         view._click_node(None, "session", 2)
         self.assertEqual(view.sel, 1)
-        self.assertEqual([r[3] for r in agents.filtered_log_rows(view.net, view.sel, view._log_filters)], ["echo test"])
+        self.assertEqual([r[3] for r in agent_log_filters.filtered_log_rows(view.net, view.sel, view._log_filters)], ["echo test"])
         view._title_click("session")
         self.assertEqual(view.sel, -1)
-        self.assertEqual(view._log_filters, agents.default_log_filters())
+        self.assertEqual(view._log_filters, agent_log_filters.default_log_filters())
         view._log_filters = dict(restricted)
         view._panned = True
         view._click_node(None, "session", 0)
@@ -601,19 +608,19 @@ class FullReplyTests(unittest.TestCase):
                          "command:\n  echo first\n  echo second\nresult:\n  - text:\n      one\n      two\nok: true")
 
     def test_log_keeps_the_whole_reply_and_the_label_its_last_line(self):
-        info = agents.parse_claude([claude_assistant(time.time(), [
+        info = agent_claude.parse_claude([claude_assistant(time.time(), [
             {"type": "text", "text": "Summary: 3 callers.\n\nDetails below.\nTo retry, ask again."}])])
         self.assertEqual(info["lines"][0][2], "Summary: 3 callers.\n\nDetails below.\nTo retry, ask again.")
-        self.assertEqual(agents.full("x" * 70000)[-1], "…")
-        self.assertEqual(agents.full("x" * 7000), "x" * 7000)  # long results are kept whole
+        self.assertEqual(agent_records.full("x" * 70000)[-1], "…")
+        self.assertEqual(agent_records.full("x" * 7000), "x" * 7000)  # long results are kept whole
 
 
 class HelperTests(unittest.TestCase):
     def test_model_names_and_tokens(self):
-        self.assertEqual(agents.model_name("claude-haiku-4-5-20251001"), "haiku-4.5")
-        self.assertEqual(agents.model_name("claude-opus-5-5"), "opus-5.5")
-        self.assertEqual(agents.model_name("gpt-6.1-sol"), "gpt-6.1-sol")
-        self.assertEqual([agents.fmt_tokens(n) for n in (0, 950, 84000, 1_000_000)], ["", "950", "84k", "1M"])
+        self.assertEqual(agent_records.model_name("claude-haiku-4-5-20251001"), "haiku-4.5")
+        self.assertEqual(agent_records.model_name("claude-opus-5-5"), "opus-5.5")
+        self.assertEqual(agent_records.model_name("gpt-6.1-sol"), "gpt-6.1-sol")
+        self.assertEqual([agent_records.fmt_tokens(n) for n in (0, 950, 84000, 1_000_000)], ["", "950", "84k", "1M"])
 
 
 if __name__ == "__main__":
