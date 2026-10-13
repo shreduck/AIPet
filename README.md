@@ -528,12 +528,13 @@ From source, the Windows hook runs via `pythonw` and the script, so no exe is ne
 |---|---|
 | `aipet_app.py` | Entry point: tray, application actions, autostart, config watcher |
 | `aipet.py` | Pet runtime coordination, shared state and compatibility entry points |
-| `aipetlib/runtime/` | Paths, live preference holders and the error log, shared by the app and background workers |
+| `aipetlib/runtime/` | Paths, live preference holders, reading and saving `config.json`, and the error log, shared by the app and background workers |
 | `aipetlib/agents/` | The agent network backend: Claude/Codex transcript adapters, incremental history, tool calls, network assembly, log filters, stats and the background tracker (no Tk) |
 | `aipetlib/config.py`, `records.py`, `sessions.py`, `permissions.py` | Configuration persistence, session interpretation and permission rules |
 | `aipetlib/geometry.py`, `windows.py`, `mac_panels.py`, `click_through.py` | Monitor geometry and native window behavior |
 | `aipetlib/vscode.py`, `workbench.py`, `hook_events.py` | Editor routing, MCP polling and hook event transitions |
-| `aipetlib/ui/` | Pet rendering, permission cards, tooltips, themes, menu definitions and focused agent-window components |
+| `aipetlib/ui/` | Pet rendering (`pet_style`, `pet_view`, `sprites`, `theme`), permission cards, tooltips, size sliders, menu definitions, and the agent-window components with their shared values (`agent_common`) |
+| `aipetlib/text.py` | Plain-text helpers: phrases, "3m ago", countdowns |
 | `aipet_settings.py` | The AIPet menu window (built from the same menu definition) |
 | `aipet_agents.py` | Temporary facade over `aipetlib/agents/` (to be removed) |
 | `aipet_agents_window.py` | Agent-window lifecycle and state; delegates graph, logs, prompts, controls and widget construction |
@@ -547,8 +548,11 @@ From source, the Windows hook runs via `pythonw` and the script, so no exe is ne
 | `build.bat`, `build_mac.sh`, `.github/workflows/` | Builds and the macOS self-test |
 | `tools/` | Sprite, icon and demo GIF generators, test helpers |
 
-The entry-point modules retain the existing callable interfaces. Components receive the owning window/app and
-shared services explicitly; they do not import an entry point back into their implementation. The owner keeps the
+The entry-point modules retain the existing callable interfaces and re-export what moved. Components receive the
+owning window or app and import every other value from the module that owns it (`runtime/paths`, `runtime/preferences`,
+`ui/theme`, `ui/pet_style`...); they never import an entry point and take no catch-all services object
+(`tools/check_architecture.py` enforces both). The hook's event logic gets the hook helpers it uses as an explicit
+`HookAPI`. The owner keeps the
 mutable UI state and callbacks, so extracting a component does not create a second configuration, cache or session
 store. Pure record helpers and the Workbench transport can also be used without a desktop runtime. The hook's source
 fallback deploys only the toolkit-free package files it needs alongside the script.
