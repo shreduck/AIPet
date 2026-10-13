@@ -396,13 +396,15 @@ def _pick_session(window, services, key):
     window._refresh()
 
 
-def zoom(window, services, factor=None, at=None, reset=False):
+def zoom(window, services, factor=None, at=None, reset=False, precise=False):
     """Zoom the graph around a point of the view (default: its middle)."""
     c = window.canvas
     old = window.gz
-    new = 1.0 if reset else min(services.ZOOM_MAX, max(services.ZOOM_MIN, round(old * factor, 3)))
-    if abs(new - old) < 1e-3 and not reset:
+    requested = 1.0 if reset else old * factor
+    new = min(services.ZOOM_MAX, max(services.ZOOM_MIN, requested if precise else round(requested, 3)))
+    if abs(new - old) < (1e-9 if precise else 1e-3) and not reset:
         return "break"
+    window._gesture_remainder = (0.0, 0.0)
     window._user_moved = not reset
     W, H = c.winfo_width(), c.winfo_height()
     mx, my = at if at else (W / 2, H / 2)
@@ -517,9 +519,27 @@ def _scroll_to(window, services, left, top):
 
 
 def _pan_start(window, services, e):
+    window._gesture_remainder = (0.0, 0.0)
     window._panned = False
     window._pan_from = (e.x, e.y)
     window.canvas.scan_mark(e.x, e.y)
+
+
+def pan(window, services, dx, dy):
+    """Pan by viewport distance, independent of graph zoom and UI scale."""
+    if not all(math.isfinite(v) for v in (dx, dy)) or not (dx or dy):
+        return "break"
+    c = window.canvas
+    rx, ry = getattr(window, "_gesture_remainder", (0.0, 0.0))
+    left, top = c.canvasx(0) + dx + rx, c.canvasy(0) + dy + ry
+    window._user_moved, window._center_next = True, False
+    window._scroll_to(left, top)
+    window._shift_into_view()
+    # Tk rounds viewport origins to pixels. Preserve subpixel motion, but
+    # discard blocked movement at bounds so reversing direction responds now.
+    rx, ry = left - c.canvasx(0), top - c.canvasy(0)
+    window._gesture_remainder = (rx if abs(rx) < 1 else 0.0, ry if abs(ry) < 1 else 0.0)
+    return "break"
 
 
 def _pan_move(window, services, e):

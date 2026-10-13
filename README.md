@@ -376,6 +376,8 @@ A live map of one session: the main agent and every subagent it started, Claude 
   + / - and 0; drag to pan, the wheel scrolls (Shift: sideways). The stats node and zoom controls stay put. Panning,
   scrolling and zooming stop where at least one node is still in sight (inside a 10% margin), and a view with no
   node in it re-centres by itself.
+  On a Mac trackpad, two-finger scrolling pans smoothly in both directions, with system momentum and scrolling
+  direction; pinch zooms around the pointer. Gestures over the logs and controls keep their normal behavior.
   **Center** places the average of the node centres in the viewport centre without changing zoom.
   **Fit all** adjusts zoom to show every node and title, leaving room for the fixed controls.
   The **auto** checkbox beside it (also **auto fit all** in the graph settings) automatically fits when an agent

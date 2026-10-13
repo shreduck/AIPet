@@ -536,6 +536,7 @@ class AgentNetworkWindow:
         self.overlay_open = self.menu_open = self._has_prompt = False
         self.option = 0
         self._after = self._anim = self._save_job = None
+        self._gestures = self._gesture_start_job = None
         self._robots = {}
         self._log_sig = self._graph_sig = self._prompt_sig = self._tabs_sig = None
         self.edges, self._dots = [], []
@@ -571,6 +572,8 @@ class AgentNetworkWindow:
         w.deiconify()
         self._apply_options()
         self.raise_()
+        if IS_MAC:
+            self._gesture_start_job = self.win.after_idle(self._start_gestures)
         self.win.after(250, self._settle)
         self._tick()
         self._animate()
@@ -602,6 +605,12 @@ class AgentNetworkWindow:
             pass
 
     def close(self):
+        if getattr(self, "_gesture_start_job", None):
+            self.win.after_cancel(self._gesture_start_job)
+            self._gesture_start_job = None
+        if getattr(self, "_gestures", None):
+            self._gestures.close()
+            self._gestures = None
         if self._save_job:
             self._save("scale")  # flush a slider change even if the window is closed immediately
         for job in (self._after, self._anim, self._save_job):
@@ -1034,8 +1043,19 @@ class AgentNetworkWindow:
         return agent_graph._pick_session(self, sys.modules[__name__], key)
 
     # ---- zoom and pan
-    def zoom(self, factor=None, at=None, reset=False):
-        return agent_graph.zoom(self, sys.modules[__name__], factor, at, reset)
+    def _start_gestures(self):
+        self._gesture_start_job = None
+        try:
+            from aipetlib.mac_gestures import MacGraphGestures
+            self._gestures = MacGraphGestures(self, core.log_error)
+        except Exception as error:
+            core.log_error(f"graph gestures unavailable: {error!r}")
+
+    def pan(self, dx, dy):
+        return agent_graph.pan(self, sys.modules[__name__], dx, dy)
+
+    def zoom(self, factor=None, at=None, reset=False, precise=False):
+        return agent_graph.zoom(self, sys.modules[__name__], factor, at, reset, precise)
 
     def center_view(self, by_user=False):
         return agent_graph.center_view(self, sys.modules[__name__], by_user)
