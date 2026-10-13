@@ -510,7 +510,9 @@ To check what Workbench returns and how the pet reads each chat's state, run `AI
 pip install -r requirements.txt
 pythonw aipet_app.py
 ```
-Tests: `python -m unittest discover -s tests`.
+Tests: `python -m unittest discover -s tests`. Architecture rules: `python tools/check_architecture.py` (also run by
+the tests and the build workflow; see the script for the rules and `tools/architecture_baseline.json` for the
+transitional counts that may only go down).
 From source, the Windows hook runs via `pythonw` and the script, so no exe is needed.
 
 ## Files

@@ -27,11 +27,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Check code structure (tools/check_architecture.py)
+        run: python tools/check_architecture.py
       - name: Build
         shell: cmd
         env:
           PY: python  # the 3.12 above (Tcl/Tk 8.6, smaller than 3.14's Tcl 9), not the newest Python the py launcher finds
         run: build.bat
+      - name: Check imports have no side effects
+        run: python -m unittest discover -s tests -p test_imports.py -v
       - name: Check packaged robot assets
         run: python -c "import subprocess; subprocess.run(['dist/AIPet/AIPet.exe', '--selftest-assets', 'build/assets-check.json'], check=True, timeout=30)"
       - uses: actions/upload-artifact@v4
@@ -49,10 +53,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Check code structure (tools/check_architecture.py)
+        run: python tools/check_architecture.py
       - name: Build
         run: bash build_mac.sh
       - name: Use the Mac build environment for checks
         run: echo "$PWD/build/mac-runtime/venv/bin" >> "$GITHUB_PATH"
+      - name: Check imports have no side effects
+        run: python -m unittest discover -s tests -p test_imports.py -v
       - name: Check packaged hooks and relocation
         run: python tools/check_mac_bundle.py dist/AIPet.app
       - name: Check architecture

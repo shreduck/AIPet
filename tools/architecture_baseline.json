@@ -1,0 +1,15 @@
+{
+  "module_services": {
+    "aipet.py": 98,
+    "aipet_agents_window.py": 98,
+    "aipet_app.py": 3,
+    "aipet_hook.py": 1
+  },
+  "services_core": {
+    "aipetlib/ui/agent_controls.py": 4,
+    "aipetlib/ui/agent_graph.py": 2,
+    "aipetlib/ui/agent_prompts.py": 3,
+    "aipetlib/ui/agent_shell.py": 6,
+    "aipetlib/ui/app_menus.py": 21
+  }
+}
