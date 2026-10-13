@@ -1,23 +1,24 @@
 """Build the agent window widgets and wire their callbacks to the owner.
 
-The owner supplies widgets and UI state; services supply shared behavior.
+The owning window supplies its widgets and state; shared values come from their owner modules.
 No application entry point is imported by this component.
 """
 import sys
 import tkinter as tk
+from tkinter import font as tkfont
 
 from ..agents.stats import network_stats
+from . import agent_common as common
 from . import theme
 
-
-def _build(window, services):
+def _build(window):
     s = window._font_scale()
-    window.f_main = services.tkfont.Font(root=window.win, family=theme.UI_FONT, size=max(5, int(round(8 * s))))
-    window.f_bold = services.tkfont.Font(root=window.win, family=theme.UI_FONT, size=max(5, int(round(8 * s))), weight="bold")
-    window.f_small = services.tkfont.Font(root=window.win, family=theme.UI_FONT, size=max(5, int(round(7 * s))))
-    window.g_main = services.tkfont.Font(root=window.win, family=theme.UI_FONT, size=max(5, int(round(8 * s))))
-    window.g_bold = services.tkfont.Font(root=window.win, family=theme.UI_FONT, size=max(5, int(round(8 * s))), weight="bold")
-    window.g_small = services.tkfont.Font(root=window.win, family=theme.UI_FONT, size=max(5, int(round(7 * s))))
+    window.f_main = tkfont.Font(root=window.win, family=theme.UI_FONT, size=max(5, int(round(8 * s))))
+    window.f_bold = tkfont.Font(root=window.win, family=theme.UI_FONT, size=max(5, int(round(8 * s))), weight="bold")
+    window.f_small = tkfont.Font(root=window.win, family=theme.UI_FONT, size=max(5, int(round(7 * s))))
+    window.g_main = tkfont.Font(root=window.win, family=theme.UI_FONT, size=max(5, int(round(8 * s))))
+    window.g_bold = tkfont.Font(root=window.win, family=theme.UI_FONT, size=max(5, int(round(8 * s))), weight="bold")
+    window.g_small = tkfont.Font(root=window.win, family=theme.UI_FONT, size=max(5, int(round(7 * s))))
     w = window.win
     window.head = tk.Frame(w)
     window.head.pack(fill="x")
@@ -50,7 +51,7 @@ def _build(window, services):
 
     window.footbar = tk.Frame(w)
     window.footbar.pack(side="bottom", fill="x")
-    window.foot = tk.Label(window.footbar, font=window.f_small, anchor="w", padx=window.px(8), pady=window.px(3), text=services.HINT)
+    window.foot = tk.Label(window.footbar, font=window.f_small, anchor="w", padx=window.px(8), pady=window.px(3), text=common.HINT)
     window.foot.pack(side="left", fill="x", expand=True)
     resize_cursor = "size_nw_se" if sys.platform == "win32" else "bottom_right_corner"
     window.grip = tk.Label(w, text="◢", font=window.f_small, cursor=resize_cursor, padx=window.px(2), pady=0)

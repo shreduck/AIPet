@@ -1,6 +1,6 @@
 """Agent graph layout, rendering, navigation and activity animation.
 
-The owner supplies widgets and UI state; services supply shared behavior.
+The owning window supplies its widgets and state; shared values come from their owner modules.
 No application entry point is imported by this component.
 """
 import math
@@ -8,14 +8,14 @@ import time
 import tkinter as tk
 
 from ..agents.records import fmt_tokens
+from . import agent_common as common
 from . import sprites
 
-
-def robot(window, services, state, height):
+def robot(window, state, height):
     key = (state, height, window.theme)
     if key not in window._robots:
         from PIL import Image
-        im = sprites.state_image(services.ROBOT_STATE.get(state, "idle")).convert("RGBA")
+        im = sprites.state_image(common.ROBOT_STATE.get(state, "idle")).convert("RGBA")
         if state == "needs_input":  # red when that agent needs you
             a = im.split()[3]
             tinted = Image.blend(im, Image.new("RGBA", im.size, (214, 48, 40, 255)), 0.55)
@@ -27,11 +27,11 @@ def robot(window, services, state, height):
     return window._robots[key]
 
 
-def gpx(window, services, n):
+def gpx(window, n):
     return int(round(n * window.s * window.gz))
 
 
-def _graph_fonts(window, services):
+def _graph_fonts(window):
     size = max(1, int(round(8 * window._font_scale() * window.gz)))
     small = max(1, int(round(7 * window._font_scale() * window.gz)))
     for f, sz in ((window.g_main, size), (window.g_bold, size), (window.g_small, small)):
@@ -39,22 +39,22 @@ def _graph_fonts(window, services):
             f.configure(size=sz)
 
 
-def _graph_line_height(window, services):
+def _graph_line_height(window):
     # Tk's minimum font size must not prevent a large diagram from fitting in the viewport.
     return window.f_main.metrics("linespace") * window.gz if window.gz < 0.4 else window.g_main.metrics("linespace")
 
 
-def _block_height(window, services, net, H):
+def _block_height(window, net, H):
     """Height one session's graph needs (tabbed off: the sessions are stacked)."""
     cols, beside = window._columns(net)
     rows = max((len(c) for c in cols), default=0)
     lh = window._graph_line_height()
     main_h = lh * 4 + window.gpx(10)
     sub_h = lh * 4 + window.gpx(8)
-    return int(max(main_h, rows * (sub_h + window.gpx(12 if services.IS_MAC else 6))) + 2 * window.gpx(10) + lh * 1.6)
+    return int(max(main_h, rows * (sub_h + window.gpx(12 if common.IS_MAC else 6))) + 2 * window.gpx(10) + lh * 1.6)
 
 
-def _layout(window, services, net, W, H, reserve=None):
+def _layout(window, net, W, H, reserve=None):
     """Node boxes (one per agent, in net["agents"] order): main on the left, its subagents in a column to its
     right, agents started by those further right. reserve: (x, y) of a box at the bottom right that the columns
     should stay above. -> (boxes, beside)"""
@@ -68,11 +68,11 @@ def _layout(window, services, net, W, H, reserve=None):
         return boxes, False
     sub_w = window.gpx(140)
     sub_h = lh * 4 + window.gpx(8)
-    x0 = pad + main_w + window.gpx(40 if services.IS_MAC else 70)
-    gap_x = sub_w + window.gpx(40 if services.IS_MAC else 60)
+    x0 = pad + main_w + window.gpx(40 if common.IS_MAC else 70)
+    gap_x = sub_w + window.gpx(40 if common.IS_MAC else 60)
     if reserve and x0 + (len(cols) - 1) * gap_x + sub_w > reserve[0] - pad:
         H = max(sub_h + 2 * pad, reserve[1])
-    if services.IS_MAC:
+    if common.IS_MAC:
         # Keep siblings together on Mac instead of spreading them across the
         # viewport. Preserve the existing Windows layout and display scaling.
         step = sub_h + window.gpx(12)
@@ -80,7 +80,7 @@ def _layout(window, services, net, W, H, reserve=None):
         boxes[0] = (pad, (H - main_h) // 2, main_w, main_h)
     for c, col in enumerate(cols):
         rows = len(col)
-        if not services.IS_MAC:
+        if not common.IS_MAC:
             step = max(sub_h + window.gpx(6), (H - 2 * pad) / max(1, rows))
         for row, i in enumerate(col):
             top = pad + (H - 2 * pad - step * rows) / 2 + row * step + (step - sub_h) / 2
@@ -88,7 +88,7 @@ def _layout(window, services, net, W, H, reserve=None):
     return boxes, beside
 
 
-def _draw_graph(window, services, force=False):
+def _draw_graph(window, force=False):
     c, P = window.canvas, window.P
     W, H = max(50, c.winfo_width()), max(50, c.winfo_height())
     blocks = window.blocks
@@ -175,11 +175,11 @@ def _draw_graph(window, services, force=False):
     window._draw_stats()
 
 
-def _stacked_mode(window, services):
+def _stacked_mode(window):
     return not window.pinned and not window.opts["separate"] and not window.opts["tabbed"]
 
 
-def _plan_bands(window, services, blocks, H, now):
+def _plan_bands(window, blocks, H, now):
     """Where each session's band goes. A session that left fades where it was; the others then slide to their
     new place. Returns the drawing's height."""
     gap = window.gpx(14) if window.opts.get("tidy") else 0
@@ -209,18 +209,18 @@ def _plan_bands(window, services, blocks, H, now):
     return end
 
 
-def _band_y(window, services, band, now):
+def _band_y(window, band, now):
     p = min(1.0, max(0.0, (now - band["t"]) / window.SLIDE_S))
     ease = 1 - (1 - p) ** 3
     return band["from"] + (band["to"] - band["from"]) * ease
 
 
-def _draw_band(window, services, b, key, item, net, y, bh, VW, head, tidy, fade):
+def _draw_band(window, b, key, item, net, y, bh, VW, head, tidy, fade):
     c, P = window.canvas, window.P
-    F = (lambda col: services.mix(col, P["bg"], fade)) if fade else (lambda col: col)
+    F = (lambda col: common.mix(col, P["bg"], fade)) if fade else (lambda col: col)
     on = key == window.key and not fade
     tag = f"band{b}" if b >= 0 else f"gone{abs(hash(key)) % 10000}"
-    title = services.session_label(item).replace("agent-network ▸ ", "")
+    title = common.session_label(item).replace("agent-network ▸ ", "")
     tbar = f"tbar{b}" if b >= 0 else tag  # the session's title bar: a click opens its [all] log
     pad = window.gpx(8)
     if tidy:  # a group: a title bar on top of the session's nodes, its name sliding when it doesn't fit
@@ -251,7 +251,7 @@ def _draw_band(window, services, b, key, item, net, y, bh, VW, head, tidy, fade)
         c.tag_bind(tbar, "<Leave>", lambda e: c.configure(cursor=""))
 
 
-def _draw_title(window, services, entry, now):
+def _draw_title(window, entry, now):
     """A group's title: as is when it fits, else scrolling round like the pet's name tags (characters drawn one
     by one, only while wholly inside the bar: a Tk canvas can't clip text)."""
     tag, text, font, fill, left, room, ymid, click = entry
@@ -276,10 +276,10 @@ def _draw_title(window, services, entry, now):
     return True
 
 
-def _draw_block(window, services, b, key, net, ox, oy, W, H, reserve, fade=0.0, title=None):
+def _draw_block(window, b, key, net, ox, oy, W, H, reserve, fade=0.0, title=None):
     """One session's graph, at (ox, oy) in a W x H area. fade: 0 as is .. 1 gone (a session being cleared)."""
     c, P0 = window.canvas, window.P
-    P = {k: (services.mix(v, P0["bg"], fade) if fade and isinstance(v, str) and v.startswith("#") else v)
+    P = {k: (common.mix(v, P0["bg"], fade) if fade and isinstance(v, str) and v.startswith("#") else v)
          for k, v in P0.items()}
     ags = net["agents"]
     if not ags:
@@ -297,12 +297,12 @@ def _draw_block(window, services, b, key, net, ox, oy, W, H, reserve, fade=0.0, 
         col = {"working": P["blue"], "needs_input": P["red"], "error": P["red"],
                "done": P["grn"]}.get(a["state"], P["line"])
         dash = () if a["state"] == "done" else (3, 4)
-        line = [coord for t in range(0, 21) for coord in services.bezier(*pts, t / 20)]
+        line = [coord for t in range(0, 21) for coord in common.bezier(*pts, t / 20)]
         c.create_line(*line, fill=col, width=max(1, window.gpx(1)), dash=dash, smooth=True)
         if not fade:
             window.edges.append((pts, a["state"], col))
     for i, (a, (x, y, w, h)) in enumerate(zip(ags, boxes)):
-        status_col, status = services.STATUS.get(a["state"], services.STATUS["idle"])
+        status_col, status = common.STATUS.get(a["state"], common.STATUS["idle"])
         border = P[status_col] if a["state"] != "idle" else P["line"]
         if a["main"] and a["state"] == "waiting":
             border = P["amb"]
@@ -313,7 +313,7 @@ def _draw_block(window, services, b, key, net, ox, oy, W, H, reserve, fade=0.0, 
         tag = f"node{b}_{i}" if b >= 0 else "gone"
         if b >= 0:
             window._node_rects.append((x, y, x + w, y + h))
-        c.create_rectangle(x, y, x + w, y + h, fill=fill, stipple=services.dither(window.opts["node_alpha"]),
+        c.create_rectangle(x, y, x + w, y + h, fill=fill, stipple=common.dither(window.opts["node_alpha"]),
                            outline=border, width=max(1, window.gpx(1.3 if picked else 1)), tags=tag)
         if a["main"] and title:  # the session's name as a title bar on top of its main node
             text, on, click = title
@@ -344,7 +344,7 @@ def _draw_block(window, services, b, key, net, ox, oy, W, H, reserve, fade=0.0, 
         tx = x + window.gpx(6) + icon_w + window.gpx(5)
         inner = x + w - tx - window.gpx(4)
         c.create_text(tx, y + window.gpx(5), text=window._fit(a["name"], inner, window.g_bold), anchor="nw",
-                      fill=services.mix(window.color(i), P0["bg"], fade) if fade else window.color(i), font=window.g_bold,
+                      fill=common.mix(window.color(i), P0["bg"], fade) if fade else window.color(i), font=window.g_bold,
                       tags=tag)
         # a subagent's type (general-purpose, Explore...) when its name is its description, then model and effort
         info = " · ".join(v for v in ((a.get("kind") if not a["main"] else ""), a["model_label"], a["effort"]) if v)
@@ -370,7 +370,7 @@ def _draw_block(window, services, b, key, net, ox, oy, W, H, reserve, fade=0.0, 
         c.tag_bind(tag, "<Leave>", lambda e: c.configure(cursor=""))
 
 
-def _title_click(window, services, key):
+def _title_click(window, key):
     """A click (not a drag) on a session's title bar: that session, with its [all] log."""
     if window._panned:
         return
@@ -379,18 +379,18 @@ def _title_click(window, services, key):
     window.select(-1, clear_filters=True)
 
 
-def _click_node(window, services, e, key, i):
+def _click_node(window, e, key, i):
     if window._panned:
         return  # that was a drag
     if key != window.key:
         window._pick_session(key)
     window.select(i, clear_filters=True)
-    if services.prompt_agent(window.net, window.item) == i:  # the agent that is asking: open its prompt
+    if common.prompt_agent(window.net, window.item) == i:  # the agent that is asking: open its prompt
         window._draw_prompt()
         window.open_overlay(True)
 
 
-def _pick_session(window, services, key):
+def _pick_session(window, key):
     if window._panned or key == window.key:
         return
     window.key, window.sel = key, -1
@@ -399,12 +399,12 @@ def _pick_session(window, services, key):
     window._refresh()
 
 
-def zoom(window, services, factor=None, at=None, reset=False, precise=False):
+def zoom(window, factor=None, at=None, reset=False, precise=False):
     """Zoom the graph around a point of the view (default: its middle)."""
     c = window.canvas
     old = window.gz
     requested = 1.0 if reset else old * factor
-    new = min(services.ZOOM_MAX, max(services.ZOOM_MIN, requested if precise else round(requested, 3)))
+    new = min(common.ZOOM_MAX, max(common.ZOOM_MIN, requested if precise else round(requested, 3)))
     if abs(new - old) < (1e-9 if precise else 1e-3) and not reset:
         return "break"
     window._gesture_remainder = (0.0, 0.0)
@@ -426,7 +426,7 @@ def zoom(window, services, factor=None, at=None, reset=False, precise=False):
     return "break"
 
 
-def center_view(window, services, by_user=False):
+def center_view(window, by_user=False):
     """Place the average of the node centres in the viewport centre, keeping the current zoom."""
     if by_user:
         window._user_moved = False
@@ -440,7 +440,7 @@ def center_view(window, services, by_user=False):
     return "break"
 
 
-def _graph_bounds(window, services):
+def _graph_bounds(window):
     """Actual nodes and titles, excluding empty layout space and fixed controls."""
     rects = getattr(window, "_node_rects", []) + getattr(window, "_title_rects", [])
     if not rects:
@@ -449,7 +449,7 @@ def _graph_bounds(window, services):
             max(r[2] for r in rects), max(r[3] for r in rects))
 
 
-def fit_all(window, services):
+def fit_all(window):
     """Choose a zoom that fits every visible node and title, then centre their bounds."""
     if not window._graph_bounds():
         return "break"
@@ -462,7 +462,7 @@ def fit_all(window, services):
     window._user_moved, window._center_next, window._fit_view = True, False, True
     try:
         # Measure the rendered geometry: fonts round to discrete sizes and overview nodes simplify.
-        lo, hi, best = services.ZOOM_MIN, services.ZOOM_MAX, services.ZOOM_MIN
+        lo, hi, best = common.ZOOM_MIN, common.ZOOM_MAX, common.ZOOM_MIN
         for step in range(13):
             window.gz = hi if step == 0 else (lo + hi) / 2
             window._robots.clear()
@@ -486,7 +486,7 @@ def fit_all(window, services):
     return "break"
 
 
-def _maybe_auto_fit(window, services, force=False):
+def _maybe_auto_fit(window, force=False):
     """Fit on membership changes, including tool nodes and every displayed session."""
     signature = frozenset((key, a["id"]) for key, _, net in window.blocks for a in net["agents"])
     changed = signature != getattr(window, "_auto_fit_signature", None)
@@ -504,14 +504,14 @@ def _maybe_auto_fit(window, services, force=False):
     window.fit_all()
 
 
-def _update_auto_fit(window, services):
+def _update_auto_fit(window):
     window.auto_fit_var.set(bool(window.opts.get("auto_fit")))
     P = window.P
     window.auto_fit_btn.configure(bg=P["bar"], fg=P["tx"], selectcolor=P["bar"],
                                 activebackground=P["bar"], activeforeground=P["hi"])
 
 
-def _scroll_to(window, services, left, top):
+def _scroll_to(window, left, top):
     c = window.canvas
     try:
         x0, y0, x1, y1 = (float(v) for v in str(c.cget("scrollregion")).split())
@@ -521,14 +521,14 @@ def _scroll_to(window, services, left, top):
     c.yview_moveto((top - y0) / max(1, y1 - y0))
 
 
-def _pan_start(window, services, e):
+def _pan_start(window, e):
     window._gesture_remainder = (0.0, 0.0)
     window._panned = False
     window._pan_from = (e.x, e.y)
     window.canvas.scan_mark(e.x, e.y)
 
 
-def pan(window, services, dx, dy):
+def pan(window, dx, dy):
     """Pan by viewport distance, independent of graph zoom and UI scale."""
     if not all(math.isfinite(v) for v in (dx, dy)) or not (dx or dy):
         return "break"
@@ -545,7 +545,7 @@ def pan(window, services, dx, dy):
     return "break"
 
 
-def _pan_move(window, services, e):
+def _pan_move(window, e):
     fx, fy = getattr(window, "_pan_from", (e.x, e.y))
     if window._panned or abs(e.x - fx) + abs(e.y - fy) > 4:
         window._panned = window._user_moved = True
@@ -555,7 +555,7 @@ def _pan_move(window, services, e):
             window.canvas.scan_mark(e.x, e.y)
 
 
-def _shift_into_view(window, services, margin=0.1, check_only=False):
+def _shift_into_view(window, margin=0.1, check_only=False):
     """Keep at least one node at least partly inside the view (less a 10% margin all round): panning, scrolling or
     zooming stops there. Returns True when the view had to be moved (check_only: whether a node is in sight)."""
     c = window.canvas
@@ -579,16 +579,16 @@ def _shift_into_view(window, services, margin=0.1, check_only=False):
     return True
 
 
-def _pan_end(window, services, e):
+def _pan_end(window, e):
     if window._panned:
         window.canvas.configure(cursor="")
         window.win.after_idle(lambda: setattr(window, "_panned", False))
 
 
-def _wheel(window, services, e):
+def _wheel(window, e):
     """Ctrl + wheel zooms at the pointer; the wheel alone scrolls (shift: sideways)."""
     up = (getattr(e, "delta", 0) > 0) or getattr(e, "num", 0) == 4
-    if e.state & 0x4 or (services.IS_MAC and e.state & 0x8):
+    if e.state & 0x4 or (common.IS_MAC and e.state & 0x8):
         return window.zoom(1.15 if up else 1 / 1.15, at=(e.x, e.y))
     window._user_moved = True
     if e.state & 0x1:
@@ -599,19 +599,19 @@ def _wheel(window, services, e):
     return "break"
 
 
-def _update_zoombar(window, services):
+def _update_zoombar(window):
     try:
         window.zoom_label.configure(text=f"{int(round(window.gz * 100))}%")
     except (tk.TclError, AttributeError):
         pass
 
 
-def _stats_size(window, services):
+def _stats_size(window):
     sl = window.f_small.metrics("linespace")
     return window.px(150), sl * 4 + window.px(10)
 
 
-def _draw_stats(window, services):
+def _draw_stats(window):
     sc, P, st = window.statc, window.P, window.stats
     w, h = window._stats_size()
     sig = (w, h, window.theme, repr(st), window.stat_open, window.opts["node_alpha"])
@@ -646,7 +646,7 @@ def _draw_stats(window, services):
         sc.tag_bind(tag, "<Leave>", lambda e: sc.configure(cursor=""))
 
 
-def _show_tip(window, services, text, near, width):
+def _show_tip(window, text, near, width):
     P = window.P
     try:
         window.tip.configure(text=text, bg=P["bar"], fg=P["tx"], wraplength=window.px(260),
@@ -657,14 +657,14 @@ def _show_tip(window, services, text, near, width):
         pass
 
 
-def _hide_tip(window, services):
+def _hide_tip(window):
     try:
         window.tip.place_forget()
     except tk.TclError:
         pass
 
 
-def toggle_stat(window, services, kind):
+def toggle_stat(window, kind):
     """Open (or fold) a read-only drop-down of the stats node: subagents, every context, tools and skills."""
     if window.stat_open == kind:
         kind = None
@@ -679,7 +679,7 @@ def toggle_stat(window, services, kind):
     return "break"
 
 
-def _stat_lines(window, services, kind):
+def _stat_lines(window, kind):
     st = window.stats
     if kind == "subs":
         if not st["subagents"]:
@@ -699,7 +699,7 @@ def _stat_lines(window, services, kind):
     return lines
 
 
-def _fill_stat(window, services):
+def _fill_stat(window):
     P, t = window.P, window.stattext
     lines = window._stat_lines(window.stat_open)
     sig = (window.stat_open, tuple(lines), window.theme, window.s)
@@ -721,11 +721,11 @@ def _fill_stat(window, services):
     window.statdrop.lift()
 
 
-def _animate(window, services):
+def _animate(window):
     if not window.alive():
         return
     if time.time() < window._moving_until:  # being dragged / resized: drawing now leaves trails on Windows
-        window._anim = window.win.after(services.FRAME_MS, window._animate)
+        window._anim = window.win.after(common.FRAME_MS, window._animate)
         return
     try:
         t = time.time() - window.t0
@@ -742,7 +742,7 @@ def _animate(window, services):
                 else:
                     window.canvas.itemconfigure(dot, state="hidden")
                     continue
-                x, y = services.bezier(*pts, u)
+                x, y = common.bezier(*pts, u)
                 window.canvas.coords(dot, x - r, y - r, x + r, y + r)
                 window.canvas.itemconfigure(dot, state="normal")
         if window._animating or window._leaving:  # sessions fading out / sliding into place
@@ -758,4 +758,4 @@ def _animate(window, services):
             window._draw_cog()
     except tk.TclError:
         pass
-    window._anim = window.win.after(services.FRAME_MS, window._animate)
+    window._anim = window.win.after(common.FRAME_MS, window._animate)

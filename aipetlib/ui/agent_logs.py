@@ -1,6 +1,6 @@
 """Agent log filters, tabs, expanded entries and split layout.
 
-The owner supplies widgets and UI state; services supply shared behavior.
+The owning window supplies its widgets and state; shared values come from their owner modules.
 No application entry point is imported by this component.
 """
 import time
@@ -8,9 +8,9 @@ import tkinter as tk
 
 from ..agents import log_filters
 from ..agents.records import fmt_tokens, short
+from . import agent_common as common
 
-
-def _arrange(window, services):
+def _arrange(window):
     """The logs below, above, left or right of the graph (settings: logs position), split by a draggable line."""
     side = window.opts.get("log_side", "bottom")
     across = side in ("left", "right")
@@ -23,7 +23,7 @@ def _arrange(window, services):
     window._size_log()
 
 
-def _size_log(window, services):
+def _size_log(window):
     """The logs' size from the settings: lines (above / below) or a width in characters (left / right)."""
     if window.opts.get("log_side", "bottom") in ("left", "right"):
         window.log.configure(width=window.opts.get("log_cols", 60), height=1)
@@ -31,11 +31,11 @@ def _size_log(window, services):
         window.log.configure(height=window.opts.get("log_lines", 6), width=1)
 
 
-def _split_start(window, services, e):
+def _split_start(window, e):
     window._split = (e.x_root, e.y_root, window.log.winfo_width(), window.log.winfo_height())
 
 
-def _split_move(window, services, e):
+def _split_move(window, e):
     """Drag the split: the logs from a few lines (or 20 characters) up to 80% of the window."""
     side = window.opts.get("log_side", "bottom")
     x0, y0, w0, h0 = getattr(window, "_split", (e.x_root, e.y_root, window.log.winfo_width(), window.log.winfo_height()))
@@ -57,14 +57,14 @@ def _split_move(window, services, e):
         window._size_log()
 
 
-def set_log_filter(window, services, key, value):
+def set_log_filter(window, key, value):
     window._log_filters[key] = value
     window._log_sig = None
     window._update_log_filters()
     window._draw_log()
 
 
-def clear_log_filters(window, services):
+def clear_log_filters(window):
     window._log_filters = log_filters.default_log_filters()
     window._log_sig = window._graph_sig = None
     window._update_log_filters()
@@ -73,7 +73,7 @@ def clear_log_filters(window, services):
     return "break"
 
 
-def _update_log_filters(window, services):
+def _update_log_filters(window):
     P, filters = window.P, window._log_filters
     for button, key, label in ((window.show_tools_btn, "show_tools", "show tools"),
                                (window.primary_btn, "primary", "primary")):
@@ -90,7 +90,7 @@ def _update_log_filters(window, services):
     window._layout_log_filters()
 
 
-def _layout_log_filters(window, services, event=None):
+def _layout_log_filters(window, event=None):
     """Align filter controls using their measured size; wrap in narrow log panes."""
     width = window.filterbar.winfo_width()
     if width <= 1:
@@ -110,7 +110,7 @@ def _layout_log_filters(window, services, event=None):
         window.filterbar.configure(height=needed)
 
 
-def _choose_tools(window, services, group, selected):
+def _choose_tools(window, group, selected):
     window._log_filters[group] = selected
     window._log_filters["only_tool"] = None
     window._graph_sig = window._log_sig = None
@@ -119,7 +119,7 @@ def _choose_tools(window, services, group, selected):
     window._draw_log()
 
 
-def _toggle_log_tool(window, services, name, mcp):
+def _toggle_log_tool(window, name, mcp):
     group = "mcp" if mcp else "tools"
     selected = window._log_filters[group]
     selected = set(log_filters.available_log_tools(window.net, window.sel, mcp)) if selected is None else set(selected)
@@ -130,7 +130,7 @@ def _toggle_log_tool(window, services, name, mcp):
     window._choose_tools(group, selected)
 
 
-def open_tool_filters(window, services, mcp):
+def open_tool_filters(window, mcp):
     group = "mcp" if mcp else "tools"
     P = window.P
     menu = tk.Menu(window.win, tearoff=0, bg=P["bar"], fg=P["tx"], activebackground=P["sel"],
@@ -155,7 +155,7 @@ def open_tool_filters(window, services, mcp):
     return "break"
 
 
-def _draw_tabs(window, services):
+def _draw_tabs(window):
     P = window.P
     choices = [(-1, "all")] + [(i, a["name"]) for i, a in enumerate(window.net["agents"]) if not a.get("tool")]
     width = max(window.px(200), window.tabs.winfo_width())
@@ -196,7 +196,7 @@ def _draw_tabs(window, services):
                               max(1, row.winfo_reqwidth())))
 
 
-def _update_tailbtn(window, services):
+def _update_tailbtn(window):
     P = window.P
     try:
         on = window.opts.get("log_tail", True)
@@ -205,7 +205,7 @@ def _update_tailbtn(window, services):
         pass
 
 
-def _draw_log(window, services, keep=None):
+def _draw_log(window, keep=None):
     """keep: the scroll position to stay at (folding an entry), instead of following the newest line."""
     P, log = window.P, window.log
     ags = window.net["agents"]
@@ -250,9 +250,9 @@ def _draw_log(window, services, keep=None):
     hang = 9 + width + 3
     log.tag_configure("hang", lmargin2=window.f_main.measure(" " * (hang + 2)))
     log.tag_configure("fold", foreground=P["blue"])
-    log.tag_configure("odd", background=services.mix(P["bar"], P["bg"], 0.35))  # every other entry shaded
+    log.tag_configure("odd", background=common.mix(P["bar"], P["bg"], 0.35))  # every other entry shaded
     # an agent's final reply (its result): a light green tint, and a green mark before its time stamp
-    log.tag_configure("final", background=services.mix(P["grn"], P["bg"], 0.9))
+    log.tag_configure("final", background=common.mix(P["grn"], P["bg"], 0.9))
     log.tag_configure("finalmark", foreground=P["grn"])
     log.tag_configure("expanded_body", lmargin1=window.px(6), lmargin2=window.px(6),
                       rmargin=window.px(6), spacing1=window.px(3), spacing3=window.px(3), font=window.f_main)
@@ -270,15 +270,15 @@ def _draw_log(window, services, keep=None):
         key = (t, ags[i]["name"], kind, hash(text))
         stamp = time.strftime("%H:%M:%S ", time.localtime(t)) if t else " " * 9
         name = ags[i]["name"].ljust(width)[:width]
-        mark = services.KIND_MARK.get(kind, "")
+        mark = common.KIND_MARK.get(kind, "")
         mark_font = window.f_bold if kind == "you" else window.f_main
         prefix_width = (window.f_main.measure(("▍" if n in finals else "") + stamp + " │ ") +
                         window.f_bold.measure(name) + mark_font.measure(mark + " " if mark else ""))
         text_font = window.f_bold if kind == "you" else window.f_main
-        shown, big = services.log_preview(text, available - prefix_width, text_font, window.f_main.measure("  ›"))
+        shown, big = common.log_preview(text, available - prefix_width, text_font, window.f_main.measure("  ›"))
         expanded = key in window._expanded
         if expanded:
-            shown = services.formatted_log_content(text)
+            shown = common.formatted_log_content(text)
             big = True  # keep collapse available even after widening the pane
         window._entries.append((key, text, ags[i]["name"], big))
         start = log.index("end-1c")
@@ -311,7 +311,7 @@ def _draw_log(window, services, keep=None):
         if n in finals:
             log.tag_add("final", start, "end-1c")
         log.tag_bind(f"entry{n}", "<ButtonRelease-1>", lambda e, n=n: window._entry_click(n))
-        for b in ("<Button-3>",) + (("<Button-2>", "<Control-Button-1>") if services.IS_MAC else ()):
+        for b in ("<Button-3>",) + (("<Button-2>", "<Control-Button-1>") if common.IS_MAC else ()):
             log.tag_bind(f"entry{n}", b, lambda e, n=n: window._entry_menu(e, n))
         if expanded:
             log.insert("end", "\n", ())  # space between outlined entries; outside the clickable entry
@@ -325,7 +325,7 @@ def _draw_log(window, services, keep=None):
     log.after_idle(window._position_log_borders)
 
 
-def _position_log_borders(window, services, *args):
+def _position_log_borders(window, *args):
     """Contour expanded text without embedding widgets that break selection and copying."""
     log = window.log
     if not window.alive():
@@ -354,7 +354,7 @@ def _position_log_borders(window, services, *args):
             edges[3].place(x=0, y=bottom - thick, width=width, height=thick, bordermode="ignore")
 
 
-def _entry_click(window, services, n):
+def _entry_click(window, n):
     try:
         if window.log.tag_ranges("sel"):
             return  # that was a selection, not a click
@@ -363,7 +363,7 @@ def _entry_click(window, services, n):
     window._toggle_entry(n)
 
 
-def _toggle_entry(window, services, n):
+def _toggle_entry(window, n):
     if n >= len(window._entries) or not window._entries[n][3]:
         return
     key = window._entries[n][0]
@@ -389,7 +389,7 @@ def _toggle_entry(window, services, n):
         pass
 
 
-def _entry_menu(window, services, e, n):
+def _entry_menu(window, e, n):
     if n >= len(window._entries):
         return "break"
     key, text, who, big = window._entries[n]
@@ -403,7 +403,7 @@ def _entry_menu(window, services, e, n):
                                                          window.win.clipboard_append(text)))
     first = text.strip().split("\n", 1)[0]
     title = f"{who} · {first[:70]}" + ("…" if len(first) > 70 else "")
-    menu.add_command(label="open in a window", command=lambda: services.TextPopup(window, title, text))
+    menu.add_command(label="open in a window", command=lambda: common.TextPopup(window, title, text))
     try:
         menu.tk_popup(e.x_root, e.y_root)
     finally:

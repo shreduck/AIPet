@@ -365,7 +365,7 @@ class WindowLogicTests(unittest.TestCase):
             view.s, view.gz = scale, zoom
             relative = []
             for height in (300, 2000):
-                with patch.object(win, "IS_MAC", True):
+                with patch.object(win.agent_graph.common, "IS_MAC", True):
                     boxes, _ = view._layout(net, 1000, height)
                 main = boxes[0]
                 children = boxes[1:]
@@ -384,7 +384,7 @@ class WindowLogicTests(unittest.TestCase):
         view.s, view.gz = 1.5, 1.0
         view._graph_line_height = lambda: 12 * view.s * view.gz
         net = {"agents": [{"id": ""}] + [{"id": str(i), "depth": 1} for i in range(3)]}
-        with patch.object(win, "IS_MAC", False):
+        with patch.object(win.agent_graph.common, "IS_MAC", False):
             for scale in (1.0, 1.5, 2.0):
                 view.s = scale
                 for zoom in (0.4, 1.0, 2.0):

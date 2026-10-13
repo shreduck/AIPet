@@ -1,16 +1,19 @@
 """Agent window appearance controls, theme, platform options and geometry.
 
-The owner supplies widgets and UI state; services supply shared behavior.
+The owning window supplies its widgets and state; shared values come from their owner modules.
 No application entry point is imported by this component.
 """
 import math
 import sys
 import time
 import tkinter as tk
+
+from ..runtime import diagnostics
+from ..runtime import settings
+from . import agent_common as common
 from . import theme
 
-
-def tool(window, services, name, d=1):
+def tool(window, name, d=1):
     o = window.opts
     if name == "close":
         window.close()
@@ -24,13 +27,13 @@ def tool(window, services, name, d=1):
             if o["log_tail"]:
                 window.log.see("end")
     elif name == "alpha":
-        o["alpha"] = services._snap(o["alpha"] + d * services.ALPHA_STEP, services.ALPHA_MIN, 100, services.ALPHA_STEP)
+        o["alpha"] = common._snap(o["alpha"] + d * common.ALPHA_STEP, common.ALPHA_MIN, 100, common.ALPHA_STEP)
     elif name == "logs":
-        o["log_side"] = services.LOG_SIDES[(services.LOG_SIDES.index(o.get("log_side", "bottom")) + d) % len(services.LOG_SIDES)]
+        o["log_side"] = common.LOG_SIDES[(common.LOG_SIDES.index(o.get("log_side", "bottom")) + d) % len(common.LOG_SIDES)]
         window._arrange()
         window._center_next = True
     elif name == "nodes":
-        o["node_alpha"] = services._snap(o["node_alpha"] + d * services.OPACITY_STEP, services.ALPHA_MIN, 100, services.OPACITY_STEP)
+        o["node_alpha"] = common._snap(o["node_alpha"] + d * common.OPACITY_STEP, common.ALPHA_MIN, 100, common.OPACITY_STEP)
     window._spin_until = time.time() + 0.6  # the cog turns a little on every change
     if name in ("tabs", "tools"):
         window._center_next = True
@@ -46,14 +49,14 @@ def tool(window, services, name, d=1):
     return "break"
 
 
-def _save(window, services, name, delay=0):
+def _save(window, name, delay=0):
     def save():
         window._save_job = None
         try:
-            window.pet.cfg[services.OPTIONS_KEY] = dict(window.opts)
-            services.core.save_setting(services.OPTIONS_KEY, dict(window.opts))
+            window.pet.cfg[common.OPTIONS_KEY] = dict(window.opts)
+            settings.save_setting(common.OPTIONS_KEY, dict(window.opts))
         except Exception as e:
-            services.core.log_error(f"agent network options: {e!r}")
+            diagnostics.log_error(f"agent network options: {e!r}")
         if window.on_options:
             window.on_options(dict(window.opts), window, name)
     if window._save_job:
@@ -68,7 +71,7 @@ def _save(window, services, name, delay=0):
         save()
 
 
-def set_options(window, services, opts):
+def set_options(window, opts):
     """The same settings as another agent network window (changed there)."""
     old = window.opts
     window.opts = dict(opts)
@@ -86,7 +89,7 @@ def set_options(window, services, opts):
         window._maybe_auto_fit(force=window.opts.get("auto_fit", False))
 
 
-def reset_appearance(window, services, opts, cascade=0):
+def reset_appearance(window, opts, cascade=0):
     """Default look again, centred on the main screen (the AIPet menu's Reset agent network appearance)."""
     window.toggle_menu(False)
     window.opts = dict(opts)
@@ -100,9 +103,9 @@ def reset_appearance(window, services, opts, cascade=0):
     window.win.after(150, window._settle)  # and the graph at 100%, centred
 
 
-def set_scale(window, services, u, save=True, grow=True):
+def set_scale(window, u, save=True, grow=True):
     """Resize every font and drawing. grow: make the window big enough for the new scale."""
-    u = services._snap(u * 100, services.SCALE_MIN, services.SCALE_MAX, services.SCALE_STEP) / 100
+    u = common._snap(u * 100, common.SCALE_MIN, common.SCALE_MAX, common.SCALE_STEP) / 100
     if abs(u - window.u) < 1e-6:
         return
     window.opts["scale"] = int(round(u * 100))
@@ -111,8 +114,8 @@ def set_scale(window, services, u, save=True, grow=True):
         window._save("scale", delay=500)
 
 
-def set_text_scale(window, services, value, save=True):
-    value = services._snap(value, services.TEXT_SCALE_MIN, services.TEXT_SCALE_MAX, services.TEXT_SCALE_STEP)
+def set_text_scale(window, value, save=True):
+    value = common._snap(value, common.TEXT_SCALE_MIN, common.TEXT_SCALE_MAX, common.TEXT_SCALE_STEP)
     if value == window.opts["text_scale"]:
         return
     window.opts["text_scale"] = value
@@ -121,11 +124,11 @@ def set_text_scale(window, services, value, save=True):
         window._save("text_scale", delay=500)
 
 
-def _font_scale(window, services):
+def _font_scale(window):
     return window.s * window.opts.get("text_scale", 100) / 100
 
 
-def _apply_scale(window, services, grow=True):
+def _apply_scale(window, grow=True):
     window.u = window.opts["scale"] / 100
     window.s = 1.5 * window.u
     fs = window._font_scale()
@@ -157,7 +160,7 @@ def _apply_scale(window, services, grow=True):
     window._refresh()
 
 
-def _sync_backdrop(window, services):
+def _sync_backdrop(window):
     """Show / move / restyle the backdrop window: exactly under the graph, right below this window."""
     want = bool(window._applied.get("clear"))
     b = getattr(window, "backdrop", None)
@@ -190,7 +193,7 @@ def _sync_backdrop(window, services):
         pass
 
 
-def _restack(window, services, focus=False):
+def _restack(window, focus=False):
     """The backdrop right below this window (after this window was brought to the front, for instance)."""
     b = getattr(window, "backdrop", None)
     try:
@@ -203,12 +206,12 @@ def _restack(window, services, focus=False):
         pass
 
 
-def _window_event(window, services, e):
+def _window_event(window, e):
     if e.widget is window.win:
         window.win.after_idle(window._sync_backdrop)
 
 
-def _on_window_resize(window, services, e):
+def _on_window_resize(window, e):
     """Resize the viewport without silently shrinking and saving the user's UI scale."""
     if e.widget is window.win:
         window._moving_until = time.time() + 0.3  # moved or resized: animations pause until it settles
@@ -216,7 +219,7 @@ def _on_window_resize(window, services, e):
         window.win.after_idle(window._sync_backdrop)  # moved or resized: the backdrop follows
 
 
-def _apply_options(window, services, changed=None):
+def _apply_options(window, changed=None):
     o, P, w = window.opts, window.P, window.win
     # Window attributes only when they change: re-setting -alpha / -transparentcolor on Windows makes Tk redo
     # the layered window, which could resize it
@@ -229,16 +232,16 @@ def _apply_options(window, services, changed=None):
     # Background opacity: the graph's background colour is made see-through, and a backdrop window of our own
     # sits right under it at the chosen opacity. Through the hole you see the backdrop (and, faintly, what is
     # behind it), and the backdrop takes the clicks, so nothing behind the window can be clicked by accident.
-    see_through = services.BG_OPACITY and o["bg_alpha"] < 100
+    see_through = common.BG_OPACITY and o["bg_alpha"] < 100
     want = {"topmost": bool(o["on_top"]), "alpha": o["alpha"] / 100,
-            "clear": (services.key_color(P["bg"]) if not services.IS_MAC else "mac") if see_through else ""}
+            "clear": (common.key_color(P["bg"]) if not common.IS_MAC else "mac") if see_through else ""}
     try:
         if window._applied.get("topmost") != want["topmost"]:
             w.attributes("-topmost", want["topmost"])
         if window._applied.get("alpha") != want["alpha"]:
             w.attributes("-alpha", want["alpha"])
         if window._applied.get("clear") != want["clear"]:
-            if services.IS_MAC:
+            if common.IS_MAC:
                 w.attributes("-transparent", bool(want["clear"]))
             elif sys.platform == "win32":
                 w.attributes("-transparentcolor", want["clear"])
@@ -246,10 +249,10 @@ def _apply_options(window, services, changed=None):
     except tk.TclError:
         pass
     if see_through:
-        bg = "systemTransparent" if services.IS_MAC else want["clear"] or P["bg"]
+        bg = "systemTransparent" if common.IS_MAC else want["clear"] or P["bg"]
     if sys.platform == "win32":
         window._win_caption(not o["frameless"])
-    elif changed in (None, "frame") and not services.IS_MAC:
+    elif changed in (None, "frame") and not common.IS_MAC:
         try:
             if bool(w.overrideredirect()) != o["frameless"]:
                 w.withdraw()
@@ -270,7 +273,7 @@ def _apply_options(window, services, changed=None):
     except tk.TclError:
         pass
     window._sync_backdrop()
-    frameless = o["frameless"] and not services.IS_MAC
+    frameless = o["frameless"] and not common.IS_MAC
     if frameless:
         window.close_btn.pack(side="right", before=window.cog)
     else:
@@ -299,16 +302,16 @@ def _apply_options(window, services, changed=None):
     window._update_auto_fit()
 
 
-def _win_caption(window, services, show):
-    services.set_caption(window.win, show)
+def _win_caption(window, show):
+    common.set_caption(window.win, show)
 
 
-def toggle_maximize(window, services, e=None):
+def toggle_maximize(window, e=None):
     """Double-click the top bar: maximise (leaving the taskbar / Dock alone), or back."""
-    return services.toggle_maximize(window.win, window)
+    return common.toggle_maximize(window.win, window)
 
 
-def _on_resize(window, services, e=None):
+def _on_resize(window, e=None):
     """The graph is redrawn once the size has settled (redrawing on every step of a resize drag flickers)."""
     if getattr(window, "_resize_job", None):
         try:
@@ -318,7 +321,7 @@ def _on_resize(window, services, e=None):
     window._resize_job = window.win.after(70, window._resized)
 
 
-def _resized(window, services):
+def _resized(window):
     window._resize_job = None
     if not getattr(window, "_user_moved", False):
         window._center_next = True  # until you pan or zoom, the graph stays centred as the window opens / resizes
@@ -332,12 +335,12 @@ def _resized(window, services):
     window._maybe_auto_fit(force=True)  # the viewport changed even when the nodes did not
 
 
-def _drag_start(window, services, e):
+def _drag_start(window, e):
     window._drag = (e.x_root, e.y_root, window.win.winfo_x(), window.win.winfo_y(), window.win.winfo_width(),
                   window.win.winfo_height())
 
 
-def _drag_move(window, services, e):
+def _drag_move(window, e):
     try:
         if window.win.state() == "zoomed" or getattr(window, "_restore_geo", None):
             return  # maximised: stays put (double-click the bar to restore)
@@ -348,11 +351,11 @@ def _drag_move(window, services, e):
         window.win.geometry(f"+{wx + e.x_root - x0}+{wy + e.y_root - y0}")
 
 
-def _resize_move(window, services, e, side="se"):
+def _resize_move(window, e, side="se"):
     """Resize a window without a title bar from its edges (the left ones move it too)."""
     if window._drag:
         x0, y0, wx, wy, ww, wh = window._drag
-        mw, mh = window.needed(services.SCALE_MIN / 100)
+        mw, mh = window.needed(common.SCALE_MIN / 100)
         dx, dy = e.x_root - x0, e.y_root - y0
         w = ww + dx if "e" in side else (ww - dx if "w" in side else ww)
         h = wh + dy if "s" in side else wh
@@ -361,13 +364,13 @@ def _resize_move(window, services, e, side="se"):
         window.win.geometry(f"{w}x{h}+{x}+{wy}")
 
 
-def _size_cog(window, services):
+def _size_cog(window):
     d = window.f_bold.metrics("linespace")
     window.cog.configure(width=d, height=d)
     window._draw_cog()
 
 
-def _draw_cog(window, services):
+def _draw_cog(window):
     c, P = window.cog, window.P
     try:
         d = int(c.cget("width"))
@@ -388,7 +391,7 @@ def _draw_cog(window, services):
         pass
 
 
-def toggle_menu(window, services, show=None):
+def toggle_menu(window, show=None):
     window.menu_open = (not window.menu_open) if show is None else bool(show)
     if window.menu_open:
         if window.overlay_open:
@@ -400,7 +403,7 @@ def toggle_menu(window, services, show=None):
     return "break"
 
 
-def _build_menu(window, services):
+def _build_menu(window):
     P, m = window.P, window.menu
     for wdg in m.winfo_children():
         wdg.destroy()
@@ -426,7 +429,7 @@ def _build_menu(window, services):
         row = tk.Frame(m, bg=P["bar"])
         row.pack(fill="x", padx=pad, pady=(window.px(2), 0))
         tk.Label(row, text=text.ljust(8), font=window.f_small, bg=P["bar"], fg=P["tx"]).pack(side="left")
-        sl = services.Slider(window, row, lo, hi, step, value, on_change, live=live)
+        sl = common.Slider(window, row, lo, hi, step, value, on_change, live=live)
         sl.c.pack(side="left", fill="x", expand=True)
         sl.size(width, line + window.px(4))
         window._sliders.append(sl)
@@ -434,15 +437,15 @@ def _build_menu(window, services):
 
     section("window", first=True)
     toggle("pin", "on_top", "always on top")
-    if not services.IS_MAC:
+    if not common.IS_MAC:
         toggle("frame", "frameless", "title bar", inverted=True)
     toggle("each", "separate", "compact (one window for every session)", inverted=True)
     if not o["separate"] and not window.pinned:
         toggle("tabs", "tabbed", "  tabbed (one session at a time)")
-    slider("opacity", services.ALPHA_MIN, 100, services.ALPHA_STEP, o["alpha"], lambda v: window._slide("alpha", v))
-    window.scale_slider = slider("window scale", services.SCALE_MIN, services.SCALE_MAX, services.SCALE_STEP, o["scale"],
+    slider("opacity", common.ALPHA_MIN, 100, common.ALPHA_STEP, o["alpha"], lambda v: window._slide("alpha", v))
+    window.scale_slider = slider("window scale", common.SCALE_MIN, common.SCALE_MAX, common.SCALE_STEP, o["scale"],
                                lambda v: window.set_scale(v / 100), live=False)
-    window.text_scale_slider = slider("text scale", services.TEXT_SCALE_MIN, services.TEXT_SCALE_MAX, services.TEXT_SCALE_STEP,
+    window.text_scale_slider = slider("text scale", common.TEXT_SCALE_MIN, common.TEXT_SCALE_MAX, common.TEXT_SCALE_STEP,
                                     o["text_scale"], window.set_text_scale, live=False)
 
     section("graph")
@@ -450,9 +453,9 @@ def _build_menu(window, services):
     toggle("tools", "tools", "tool calls")
     if not o["separate"] and not window.pinned and not o["tabbed"]:
         toggle("tidy", "tidy", "tidy (each session a titled group)")
-    if services.BG_OPACITY:
-        slider("backgrnd", services.ALPHA_MIN, 100, services.OPACITY_STEP, o["bg_alpha"], lambda v: window._slide("bg_alpha", v))
-    slider("nodes", services.ALPHA_MIN, 100, services.OPACITY_STEP, o["node_alpha"], lambda v: window._slide("node_alpha", v))
+    if common.BG_OPACITY:
+        slider("backgrnd", common.ALPHA_MIN, 100, common.OPACITY_STEP, o["bg_alpha"], lambda v: window._slide("bg_alpha", v))
+    slider("nodes", common.ALPHA_MIN, 100, common.OPACITY_STEP, o["node_alpha"], lambda v: window._slide("node_alpha", v))
 
     section("logs")
     side = tk.Label(m, text=f"[{o['log_side']:^6}] position (click to move)", font=window.f_main, bg=P["bar"],
@@ -465,14 +468,14 @@ def _build_menu(window, services):
     window._place_menu()
 
 
-def _slide(window, services, key, value):
+def _slide(window, key, value):
     window.opts[key] = value
     window._spin_until = time.time() + 0.4
     window._apply_options(changed=key)
     window._save(key, delay=400)
 
 
-def _place_menu(window, services):
+def _place_menu(window):
     try:
         window.menu.place(relx=1.0, x=-window.px(4), y=window.head.winfo_height(), anchor="ne")
         window.menu.lift()
@@ -480,7 +483,7 @@ def _place_menu(window, services):
         pass
 
 
-def _apply_theme(window, services):
+def _apply_theme(window):
     name = theme.T.get("name", "light")
     if name == window.theme:
         return
@@ -498,8 +501,8 @@ def _apply_theme(window, services):
         wdg.configure(fg=P["mu"])
     window.canvas.configure(bg=P["bg"])
     window.sep.configure(bg=P["line"])
-    window.log.configure(bg=P["bg"], fg=P["tx"], insertbackground=P["bg"], selectbackground=services.mix(P["blue"], P["bg"], 0.65),
-                       selectforeground=P["hi"], inactiveselectbackground=services.mix(P["blue"], P["bg"], 0.75))
+    window.log.configure(bg=P["bg"], fg=P["tx"], insertbackground=P["bg"], selectbackground=common.mix(P["blue"], P["bg"], 0.65),
+                       selectforeground=P["hi"], inactiveselectbackground=common.mix(P["blue"], P["bg"], 0.75))
     window.chip.configure(bg=P["redbg"], fg=P["red"], highlightbackground=P["red"])
     window.zoombar.configure(bg=P["bar"], highlightbackground=P["line"])
     for lab in window.zoom_btns:

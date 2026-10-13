@@ -24,9 +24,14 @@ class QuestionOverlayGuiTests(unittest.TestCase):
         self.root.geometry("720x640+80+80")
         self.sent, self.destinations = [], []
         self.waiting = False
-        self.services = SimpleNamespace(core=SimpleNamespace(hook_waiting=lambda _: self.waiting),
-            prompt_agent=lambda net, item: 0 if item.get("state") == "needs_input" else None,
-            suggestion_label=lambda suggestion: str(suggestion))
+        from unittest.mock import patch
+        for target, name, fake in ((component.permission_rules, "hook_waiting", lambda _: self.waiting),
+                                   (component.common, "prompt_agent",
+                                    lambda net, item: 0 if item.get("state") == "needs_input" else None),
+                                   (component.common, "suggestion_label", lambda suggestion: str(suggestion))):
+            stub = patch.object(target, name, fake)
+            stub.start()
+            self.addCleanup(stub.stop)
         self.window = w = SimpleNamespace(win=self.root, P={"node": "#20242b", "tx": "#dddddd",
             "hi": "#ffffff", "red": "#ff9999", "mu": "#aaaaaa", "bar": "#15191f",
             "line": "#444444", "redbg": "#442222"}, px=lambda n: int(n),
@@ -50,7 +55,7 @@ class QuestionOverlayGuiTests(unittest.TestCase):
         w.toggle_menu = lambda _: None
         for name in ("_build_overlay", "_flow_options", "_mark_option", "_place_overlay", "open_overlay",
                      "choose", "_go", "_send", "_send_own", "_pick", "_own_typed", "_always"):
-            setattr(w, name, lambda *args, name=name, **kw: getattr(component, name)(w, self.services, *args, **kw))
+            setattr(w, name, lambda *args, name=name, **kw: getattr(component, name)(w, *args, **kw))
         self.component = component
         self.root.update()
 
@@ -59,7 +64,7 @@ class QuestionOverlayGuiTests(unittest.TestCase):
 
     def show(self, request, agent="codex"):
         self.window.item = {"agent": agent, "state": "needs_input", "request": request}
-        self.component._draw_prompt(self.window, self.services)
+        self.component._draw_prompt(self.window)
         self.window.open_overlay(True)
         self.root.update()
 
@@ -162,7 +167,7 @@ class QuestionOverlayGuiTests(unittest.TestCase):
         self.click(self.window._opt_labels[2])
         self.assertEqual(self.sent[0][1], "deny")
         self.window.item["state"] = "working"
-        self.component._draw_prompt(self.window, self.services)
+        self.component._draw_prompt(self.window)
         self.root.update()
         self.assertFalse(self.window.overlay_open)
         self.assertEqual(self.window.chip.winfo_manager(), "")

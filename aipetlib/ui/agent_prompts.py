@@ -1,14 +1,16 @@
 """Agent prompt chips, question overlays and answer interaction.
 
-The owner supplies widgets and UI state; services supply shared behavior.
+The owning window supplies its widgets and state; shared values come from their owner modules.
 No application entry point is imported by this component.
 """
 import tkinter as tk
 
+from .. import permissions as permission_rules
+from . import agent_common as common
 
-def _draw_prompt(window, services):
+def _draw_prompt(window):
     item = window.item
-    who = services.prompt_agent(window.net, item) if window.net["agents"] else None
+    who = common.prompt_agent(window.net, item) if window.net["agents"] else None
     window._has_prompt = who is not None
     if who is None:
         if window.in_window is not None:
@@ -21,7 +23,7 @@ def _draw_prompt(window, services):
         return
     req = item.get("request") or {}
     name = window.net["agents"][who]["name"]
-    answerable = services.core.hook_waiting(item) and window.pet.answers_enabled(item)
+    answerable = permission_rules.hook_waiting(item) and window.pet.answers_enabled(item)
     window.chip.configure(text=f"[!] {name} needs your input · " + ("space to open" if answerable
                                                                    else "answer it in the window"))
     in_window = None if answerable else who
@@ -30,13 +32,13 @@ def _draw_prompt(window, services):
         window._draw_graph()
     if not window.overlay_open:
         window.chip.place(in_=window.canvas, relx=1.0, rely=1.0, x=-window.px(170), y=-window.px(6), anchor="se")
-    sig = (req.get("id"), str(req.get("questions")), window.theme, window.s, services.core.hook_waiting(item))
+    sig = (req.get("id"), str(req.get("questions")), window.theme, window.s, permission_rules.hook_waiting(item))
     if sig != window._prompt_sig:
         window._prompt_sig = sig
         window._build_overlay(name, req, item)
 
 
-def open_overlay(window, services, show):
+def open_overlay(window, show):
     window.overlay_open = bool(show) and window._has_prompt
     if window.overlay_open:
         if window.menu_open:
@@ -51,7 +53,7 @@ def open_overlay(window, services, show):
     return "break"
 
 
-def _place_overlay(window, services):
+def _place_overlay(window):
     """Over the logs, and up over the graph as far as the prompt needs (never under the bars)."""
     width = max(window.px(200), window.win.winfo_width() - window.px(20))
     for lab in getattr(window, "_wraps", []):
@@ -73,7 +75,7 @@ def _place_overlay(window, services):
     window.overlay.lift()
 
 
-def _build_overlay(window, services, name, req, item):
+def _build_overlay(window, name, req, item):
     P, ov = window.P, window.overlay
     for wdg in ov.winfo_children():
         wdg.destroy()
@@ -101,7 +103,7 @@ def _build_overlay(window, services, name, req, item):
                        wraplength=window.px(560), padx=window.px(6), pady=window.px(3))
         lab.pack(fill="x", padx=pad, pady=window.px(4))
         window._wraps.append(lab)
-    answerable = services.core.hook_waiting(item) and window.pet.answers_enabled(item)
+    answerable = permission_rules.hook_waiting(item) and window.pet.answers_enabled(item)
     window.own = None  # (question, entry) when a typed answer can be sent
     window.radio = False  # the options are a pick-one list (a question)
     if questions:
@@ -136,7 +138,7 @@ def _build_overlay(window, services, name, req, item):
         window.options = [("allow once", lambda: window._send("allow"))]
         for sug in (req.get("suggestions") or [])[:3]:  # the AI's own "don't ask again" choices
             agent_name = "codex" if (item or {}).get("agent") == "codex" else "claude"
-            window.options.append((f"{agent_name}: {services.suggestion_label(sug)}",
+            window.options.append((f"{agent_name}: {common.suggestion_label(sug)}",
                                  lambda sug=sug: window._send("allow", permissions=[sug])))
         window.options += [("aipet: always (whitelist)", window._always),
                          ("deny", lambda: window._send("deny"))]
@@ -190,7 +192,7 @@ def _build_overlay(window, services, name, req, item):
         window._place_overlay()
 
 
-def _flow_options(window, services, width):
+def _flow_options(window, width):
     """The answers side by side when they fit, else one per line (wrapping long ones); a question's answers are
     always one per line, like radio buttons."""
     labels = getattr(window, "_opt_labels", [])
@@ -215,7 +217,7 @@ def _flow_options(window, services, width):
                 lab.configure(wraplength=max(window.px(120), width - window.px(30)))
 
 
-def _mark_option(window, services):
+def _mark_option(window):
     P = window.P
     for n, lab in enumerate(getattr(window, "_opt_labels", [])):
         try:
@@ -227,17 +229,17 @@ def _mark_option(window, services):
             pass
 
 
-def _pick(window, services, n):
+def _pick(window, n):
     window.option = n
     window._mark_option()
 
 
-def _own_typed(window, services, n):
+def _own_typed(window, n):
     if window.own and window.own[1].get().strip():
         window._pick(n)
 
 
-def _send_own(window, services):
+def _send_own(window):
     """Send what was typed as the answer; with nothing typed yet, go to the box."""
     if not window.own:
         return
@@ -250,14 +252,14 @@ def _send_own(window, services):
     window._send("allow", {q["question"]: text})
 
 
-def step_option(window, services, d):
+def step_option(window, d):
     if getattr(window, "options", None):
         window.option = (window.option + d) % len(window.options)
         window._mark_option()
     return "break"
 
 
-def choose(window, services, n):
+def choose(window, n):
     if window.overlay_open and 0 <= n < len(getattr(window, "options", [])):
         window.option = n
         window._mark_option()
@@ -265,7 +267,7 @@ def choose(window, services, n):
     return "break"
 
 
-def _send(window, services, behavior, answers=None, permissions=None):
+def _send(window, behavior, answers=None, permissions=None):
     ok = (window.pet.send_answer(window.key, behavior, answers=answers, permissions=permissions) if permissions
           else window.pet.send_answer(window.key, behavior, answers=answers))
     window.note.configure(text="# sent" if ok else "# couldn't send it: the prompt may have been answered already")
@@ -273,7 +275,7 @@ def _send(window, services, behavior, answers=None, permissions=None):
         window.win.after(600, lambda: window.open_overlay(False))
 
 
-def _go(window, services):
+def _go(window):
     """Go to the session's window. Codex: AIPet lets go of the prompt, so Codex shows its own one there (with
     choices the pet doesn't have, like always allowing that tool)."""
     req = (window.item or {}).get("request") or {}
@@ -284,7 +286,7 @@ def _go(window, services):
     window.open_overlay(False)
 
 
-def _always(window, services):
+def _always(window):
     added = window.pet.whitelist_request(window.item)
     window._send("allow")
     if added:

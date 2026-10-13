@@ -40,7 +40,9 @@ SERVICE_FREE = ["aipetlib.agents", "aipetlib.runtime", "aipetlib.text", "aipetli
                 "aipetlib.ui.font_metrics", "aipetlib.geometry", "aipetlib.windows",
                 "aipetlib.vscode", "aipetlib.click_through", "aipetlib.permissions",
                 "aipetlib.sessions", "aipetlib.ui.pet_style", "aipetlib.ui.pet_view", "aipetlib.ui.tooltips",
-                "aipetlib.ui.appearance_controls", "aipetlib.ui.permission_card"]
+                "aipetlib.ui.appearance_controls", "aipetlib.ui.permission_card", "aipetlib.ui.agent_common",
+                "aipetlib.ui.agent_prompts", "aipetlib.ui.agent_logs", "aipetlib.ui.agent_shell", "aipetlib.ui.agent_graph",
+                "aipetlib.ui.agent_controls"]
 
 
 def module_files():

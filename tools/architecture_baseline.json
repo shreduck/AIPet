@@ -1,21 +1,13 @@
 {
   "module_services": {
-    "aipet_agents_window.py": 98,
     "aipet_app.py": 3,
     "aipet_hook.py": 1
   },
   "services_core": {
-    "aipetlib/ui/agent_controls.py": 2,
-    "aipetlib/ui/agent_prompts.py": 3,
     "aipetlib/ui/app_menus.py": 20
   },
   "services_refs": {
     "aipetlib/hook_events.py": 41,
-    "aipetlib/ui/agent_controls.py": 50,
-    "aipetlib/ui/agent_graph.py": 24,
-    "aipetlib/ui/agent_logs.py": 7,
-    "aipetlib/ui/agent_prompts.py": 5,
-    "aipetlib/ui/agent_shell.py": 7,
     "aipetlib/ui/app_menus.py": 39
   }
 }

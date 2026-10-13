@@ -2,10 +2,10 @@
 import math
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from aipetlib.gestures import GestureBatch, over_graph
-from aipetlib.ui import agent_graph
+from aipetlib.ui import agent_common, agent_graph
 
 
 class Viewport:
@@ -89,7 +89,7 @@ class GestureTests(unittest.TestCase):
             window = graph_window()
             window.gz = zoom
             for _ in range(100):
-                agent_graph.pan(window, None, .05, .03)
+                agent_graph.pan(window, .05, .03)
             self.assertEqual((window.canvas.left, window.canvas.top), (505, 603))
             self.assertTrue(window._user_moved)
             self.assertFalse(window._center_next)
@@ -97,35 +97,33 @@ class GestureTests(unittest.TestCase):
     def test_blocked_pan_discards_distance_so_reversing_responds(self):
         window = graph_window()
         window._scroll_to = lambda left, top: setattr(window.canvas, 'left', min(500, round(left)))
-        agent_graph.pan(window, None, 100, 0)
+        agent_graph.pan(window, 100, 0)
         self.assertEqual(window.canvas.left, 500)
-        agent_graph.pan(window, None, -3, 0)
+        agent_graph.pan(window, -3, 0)
         self.assertEqual(window.canvas.left, 497)
 
     def test_precise_zoom_keeps_small_changes_anchor_and_limits(self):
         window = graph_window()
-        services = SimpleNamespace(ZOOM_MIN=.01, ZOOM_MAX=3.)
         anchor = (200, 150)
         before = window.canvas.canvasx(anchor[0]), window.canvas.canvasy(anchor[1])
-        agent_graph.zoom(window, services, 1.1, at=anchor, precise=True)
+        agent_graph.zoom(window, 1.1, at=anchor, precise=True)
         after = window.canvas.canvasx(anchor[0]), window.canvas.canvasy(anchor[1])
         for old, new in zip(before, after):
             self.assertAlmostEqual(new, old * 1.1)
-        agent_graph.zoom(window, services, 1.00001, precise=True)
+        agent_graph.zoom(window, 1.00001, precise=True)
         self.assertAlmostEqual(window.gz, 1.100011)
-        agent_graph.zoom(window, services, 100, precise=True)
+        agent_graph.zoom(window, 100, precise=True)
         self.assertEqual(window.gz, 3.)
-        agent_graph.zoom(window, services, .00001, precise=True)
+        agent_graph.zoom(window, .00001, precise=True)
         self.assertEqual(window.gz, .01)
 
     def test_legacy_zoom_rounding_and_reset_are_preserved(self):
         window = graph_window()
-        services = SimpleNamespace(ZOOM_MIN=.01, ZOOM_MAX=3.)
-        agent_graph.zoom(window, services, 1.00001)
+        agent_graph.zoom(window, 1.00001)
         self.assertEqual(window.gz, 1.)
-        agent_graph.zoom(window, services, 1.15)
+        agent_graph.zoom(window, 1.15)
         self.assertEqual(window.gz, 1.15)
-        agent_graph.zoom(window, services, reset=True)
+        agent_graph.zoom(window, reset=True)
         self.assertEqual(window.gz, 1.)
         self.assertFalse(window._user_moved)
         self.assertTrue(window._center_next)
@@ -138,7 +136,8 @@ class GestureTests(unittest.TestCase):
                         window = graph_window()
                         window.zoom = Mock(return_value='break')
                         event = SimpleNamespace(delta=delta, num=num, state=state, x=31, y=47)
-                        self.assertEqual(agent_graph._wheel(window, SimpleNamespace(IS_MAC=is_mac), event), 'break')
+                        with patch.object(agent_common, 'IS_MAC', is_mac):
+                            self.assertEqual(agent_graph._wheel(window, event), 'break')
                         if state & 4 or (is_mac and state & 8):
                             window.zoom.assert_called_once_with(1.15 if up else 1 / 1.15, at=(31, 47))
                             self.assertEqual(window.canvas.scrolls, [])
