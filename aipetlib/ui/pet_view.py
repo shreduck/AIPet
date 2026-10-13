@@ -1,21 +1,27 @@
-"""PetView: rendering and interaction, with explicit desktop services.
+"""PetView: rendering and interaction.
 
 This component does not import the application entry point.
 """
-from . import font_metrics
 import math
 import random
+import sys
 import time
 import tkinter as tk
+
 import aipet_usage as usage
+
 from ..agents import context as agent_context
+from ..runtime import preferences
+from . import font_metrics
+from . import pet_style
 from . import sprites
 from . import theme
 
+IS_MAC = sys.platform == "darwin"
+
 
 class PetView:
-    def __init__(self, services, app, key):
-        self.services = services
+    def __init__(self, app, key):
         self.app = app
         self.key = key
         self.data = {}
@@ -23,16 +29,16 @@ class PetView:
         self.last_remind = 0.0
         self.born = 0.0  # when this pet starts popping out of the ground (0 = already out)
         self.seed = (sum(map(ord, key)) % 97) / 13.0  # desync animations
-        self.usage_extra = services.USAGE_GUTTER
+        self.usage_extra = pet_style.USAGE_GUTTER
         self._usage_hover = None
         self._usage_details = {}
-        c = self.canvas = tk.Canvas(app.frame, width=services.px(services.CANVAS_W + services.USAGE_GUTTER), height=services.px(services.CANVAS_H), bg=services.TRANSPARENT,
+        c = self.canvas = tk.Canvas(app.frame, width=pet_style.px(pet_style.CANVAS_W + pet_style.USAGE_GUTTER), height=pet_style.px(pet_style.CANVAS_H), bg=pet_style.TRANSPARENT,
                                     highlightthickness=0, bd=0)
         c.bind("<ButtonPress-1>", app.on_press)
         c.bind("<B1-Motion>", app.on_drag)
         c.bind("<ButtonRelease-1>", lambda e: app.on_release(e, self))
         c.bind("<Button-3>", lambda e: app.on_menu(e, self))
-        if services.IS_MAC:  # macOS Tk: right button is Button-2; ctrl-click is the trackpad equivalent
+        if IS_MAC:  # macOS Tk: right button is Button-2; ctrl-click is the trackpad equivalent
             c.bind("<Button-2>", lambda e: app.on_menu(e, self))
             c.bind("<Control-Button-1>", lambda e: app.on_menu(e, self))
             c.bind("<Control-ButtonRelease-1>", lambda e: "break")
@@ -58,16 +64,15 @@ class PetView:
         self.canvas.destroy()
 
     def draw(self, t):
-        services = self.services
         c = self.canvas
         c.delete("all")
-        if services.STYLE["v"] == "cat":
+        if preferences.STYLE["v"] == "cat":
             self._draw_cat(t)
-        elif services.STYLE["v"] == "mole":
+        elif preferences.STYLE["v"] == "mole":
             self._draw_mole(t)
         else:
             self._draw_robot(t)
-        c.move("all", services.BADGE_GUTTER, -services.TOP_TRIM)  # drop the empty top strip
+        c.move("all", pet_style.BADGE_GUTTER, -pet_style.TOP_TRIM)  # drop the empty top strip
         min_x = self._draw_badges()
         extra = self._draw_usage()
         # compact mode, expanded: the badges stand in a column snapped to the pet's left; widen the canvas to the left
@@ -76,17 +81,16 @@ class PetView:
         if gutter:
             c.move("all", gutter, 0)
         if gutter != getattr(self, "gutter", 0) or extra != getattr(self, "usage_extra", 0):
-            delta = services.px(services.CANVAS_W + gutter + extra) - services.px(services.CANVAS_W + getattr(self, "gutter", 0) + getattr(self, "usage_extra", 0))
+            delta = pet_style.px(pet_style.CANVAS_W + gutter + extra) - pet_style.px(pet_style.CANVAS_W + getattr(self, "gutter", 0) + getattr(self, "usage_extra", 0))
             self.gutter = gutter
             self.usage_extra = extra
-            c.config(width=services.px(services.CANVAS_W + gutter + extra))
+            c.config(width=pet_style.px(pet_style.CANVAS_W + gutter + extra))
             delta += self.app._sync_usage_padding()
             self.app.shift_for_width(delta)  # update the canvas and shared margin in the same redraw
         self._finish()
         self._update_usage_hover()
 
     def _draw_usage(self):
-        services = self.services
         group = self.data.get("everyone") or [self.data]
         cfg = getattr(getattr(self, "app", None), "cfg", None) or {}
         context_rows = agent_context.banner_rows(group, cfg.get("context_windows")) \
@@ -95,8 +99,8 @@ class PetView:
         rows = [(r["agent"], r["window"], r["percent"]) for r in details]
         self._usage_details = {}
         if not rows:
-            return services.USAGE_GUTTER
-        c, left = self.canvas, services.PET_W - 26
+            return pet_style.USAGE_GUTTER
+        c, left = self.canvas, pet_style.PET_W - 26
         # Align a short column with the lower body, ending above the name tag.
         top = 81 - min(6, len(rows)) * 9
         font = sprites.mono(4.5)
@@ -115,9 +119,9 @@ class PetView:
                 self._usage_details[tag] = details[start + i]
                 c.create_rectangle(left, y, left + width, y + 8, fill=theme.T["tag_bg"], outline=colour, width=1, tags=("usage", tag))
                 c.create_text(left + 3, y + 4, text=label, font=font, fill=colour, anchor="w", tags=("usage", tag))
-            extra = max(extra, int(math.ceil(left + width + 2 - services.CANVAS_W)))
+            extra = max(extra, int(math.ceil(left + width + 2 - pet_style.CANVAS_W)))
             left += width + 3
-        return max(services.USAGE_GUTTER, extra)
+        return max(pet_style.USAGE_GUTTER, extra)
 
     def _update_usage_hover(self):
         # Animation recreates canvas items. Track the reading under the pointer
@@ -146,8 +150,7 @@ class PetView:
 
     def _finish(self):
         """Apply the overall size: everything is drawn at 92x122 and scaled here (line widths too)."""
-        services = self.services
-        s = services.SCALE["v"]
+        s = preferences.SCALE["v"]
         if abs(s - 1) < 0.01:
             return
         c = self.canvas
@@ -160,28 +163,27 @@ class PetView:
                     pass
 
     def _draw_tag(self):
-        services = self.services
         c = self.canvas
         st = self.data.get("state", "idle")
-        col, dark = services.COLORS.get(st, services.COLORS["idle"]), services.DARK.get(st, services.DARK["idle"])
+        col, dark = pet_style.COLORS.get(st, pet_style.COLORS["idle"]), pet_style.DARK.get(st, pet_style.DARK["idle"])
         # name label: a pixel-art rounded box like the speech bubbles (solid pixels: no colour fringing on the
         # transparent window), with a small "light" in the state colour like the ones on the robot
-        tw_, th_ = services.PET_W - 6, services.TAG_H
+        tw_, th_ = pet_style.PET_W - 6, pet_style.TAG_H
         try:
-            s_ = services.SCALE["v"]
+            s_ = preferences.SCALE["v"]
             im = sprites.bubble_image(tw_, th_, theme.T["tag_bg"], theme.T["tag_outline"], None)
             self._put(("tag", tw_, th_, theme.T["tag_bg"], theme.T["tag_outline"]), im, int(round(tw_ * s_)), int(round(th_ * s_)),
-                      3, services.PET_H - 2 - services.TAG_H, "nw")
+                      3, pet_style.PET_H - 2 - pet_style.TAG_H, "nw")
         except Exception:  # no Pillow: a plain rectangle
-            c.create_rectangle(3, services.PET_H - 2 - services.TAG_H, services.PET_W - 3, services.PET_H - 2, fill=theme.T["tag_bg"], outline=theme.T["tag_outline"], width=1)
+            c.create_rectangle(3, pet_style.PET_H - 2 - pet_style.TAG_H, pet_style.PET_W - 3, pet_style.PET_H - 2, fill=theme.T["tag_bg"], outline=theme.T["tag_outline"], width=1)
         font, sub_font = sprites.mono(5.0), sprites.mono(4.0)  # console-style text, like the robot's screen
-        room, left = services.PET_W - 14, 7  # inside the tag's rounded border
+        room, left = pet_style.PET_W - 14, 7  # inside the tag's rounded border
         everyone = self.data.get("everyone") or []
         entries = [(m.get("raw_title") or m.get("title") or "session", m.get("conv") or "", m.get("state"))
                    for m in (everyone if len(everyone) > 1 else [self.data])]
         two = any(e[1] for e in entries)  # a conversation title to show: the name moves up, the title goes below it
-        y_top0 = services.PET_H - 2 - services.TAG_H
-        y1 = y_top0 + 6.4 if two else services.PET_H - 2 - services.TAG_H / 2 + 1.5  # name near the top; one line: a bit low (badges)
+        y_top0 = pet_style.PET_H - 2 - pet_style.TAG_H
+        y1 = y_top0 + 6.4 if two else pet_style.PET_H - 2 - pet_style.TAG_H / 2 + 1.5  # name near the top; one line: a bit low (badges)
         y2 = y_top0 + 13.9  # clear of the tag's bottom border
         sub_fg = "#d1d5db" if theme.T.get("name") == "dark" else "#374151"
         if len(everyone) > 1:  # compact mode: every session scrolls past like a banner, its title right below it
@@ -195,10 +197,9 @@ class PetView:
     def _marquee(self, text, font, y, fill, left, room):
         """One line of the name tag: centred if it fits, else scrolling round like a ticker (characters drawn one by one
         and only while wholly inside the tag, since a Tk canvas can't clip text)."""
-        services = self.services
         c = self.canvas
         if self._text_w(font, text) <= room:
-            c.create_text(services.PET_W / 2, y, text=text, fill=fill, font=font)
+            c.create_text(pet_style.PET_W / 2, y, text=text, fill=fill, font=font)
             return
         gap = self.BANNER_GAP
         loop_text = text + gap
@@ -238,7 +239,6 @@ class PetView:
         and - when y2 is given - its conversation title in small text right below, both scrolling together through
         the name tag. Shown whole and centred when it all fits. Tk canvases can't clip text, so while scrolling each
         character is drawn on its own and only those wholly inside the tag are shown."""
-        services = self.services
         c, cols = self.canvas, []  # cols: (top text, colour, bottom text, width)
         gap = self._text_w(font, self.BANNER_GAP)
         for name, title, state in entries:
@@ -249,7 +249,7 @@ class PetView:
             cols.append((top, colour, sub, max(tw, self._text_w(sub_font, sub))))
         total = sum(w for *_, w in cols) + gap * (len(cols) - 1)
         if total <= room:  # it all fits: centred, no scrolling
-            x = services.PET_W / 2 - total / 2
+            x = pet_style.PET_W / 2 - total / 2
             for top, colour, sub, w in cols:
                 c.create_text(x, y1, text=top, anchor="w", fill=colour, font=font)
                 if sub:
@@ -278,9 +278,8 @@ class PetView:
         name tag and sitting like tabs on its top edge, faint red while that session needs you. In compact mode there is
         one per session shown. Badges wrap onto rows above when a row is full. Called after the drawing has been moved
         (see draw())."""
-        services = self.services
         c = self.canvas
-        texts = [services.BADGE_NAMES.get(b, b) for b in self.data.get("badges", [])]
+        texts = [pet_style.BADGE_NAMES.get(b, b) for b in self.data.get("badges", [])]
         if not texts:
             return
         flags = self.data.get("badge_attention") or [self.data.get("state") == "needs_input"] * len(texts)
@@ -289,15 +288,15 @@ class PetView:
         collapse = False
         if len(everyone) > 1:  # compact mode: one merged badge, or every session's badge plus a collapse badge
             if not self.app.badges_expanded:
-                texts = [services.merge_badges([(m.get("badges") or ["?"])[0] for m in everyone]) + " " + self.EXPAND]
+                texts = [pet_style.merge_badges([(m.get("badges") or ["?"])[0] for m in everyone]) + " " + self.EXPAND]
                 flags = [any(m.get("state") == "needs_input" for m in everyone)]
                 keys = ["__expand"]
             else:  # the collapse badge goes on a row of its own, above all the others (see below)
                 collapse = True
-        font = services.fnt(4.5)
-        arrow_font = services.fnt(4.5 * 1.2)  # the expand / collapse arrows, 20% bigger than the badge text
-        h, gap, s_ = 11, 2, services.SCALE["v"]
-        left, right = services.BADGE_GUTTER + 6, services.BADGE_GUTTER + services.PET_W - 6
+        font = pet_style.fnt(4.5)
+        arrow_font = pet_style.fnt(4.5 * 1.2)  # the expand / collapse arrows, 20% bigger than the badge text
+        h, gap, s_ = 11, 2, preferences.SCALE["v"]
+        left, right = pet_style.BADGE_GUTTER + 6, pet_style.BADGE_GUTTER + pet_style.PET_W - 6
 
         def split(text):  # (label, arrow): the merged badge ends with the expand arrow, the collapse badge is one
             if text and text[-1] in (self.EXPAND, self.COLLAPSE):
@@ -310,7 +309,7 @@ class PetView:
             return int(round(4 + dot + self._text_w(font, label) + (2 if label and arrow else 0)
                              + (self._text_w(arrow_font, arrow) if arrow else 0)))
         # expanded compact badges: each session's conversation title on a second, smaller line
-        sub_font, sub_h = services.fnt(4.5 * 0.85), 7
+        sub_font, sub_h = pet_style.fnt(4.5 * 0.85), 7
         sub_fg = "#d1d5db" if theme.T.get("name") == "dark" else "#374151"  # almost black grey (light grey on dark tags)
         titles = list(self.data.get("badge_titles") or []) if collapse else []
         titles += [""] * (len(texts) - len(titles))
@@ -340,7 +339,7 @@ class PetView:
             # expanded compact mode: one column to the LEFT of the pet, right-aligned against it, from the name tag's
             # bottom upwards (the collapse badge on top); a further column to the left when a column is full
             entries = [e for row in rows for e in row]
-            col_right, bottom0 = -2, services.PET_H - 2 - services.TOP_TRIM
+            col_right, bottom0 = -2, pet_style.PET_H - 2 - pet_style.TOP_TRIM
             bottom, col_w = bottom0, 0
             for text, hot, _, w, key, sub in entries:
                 bh = h + (sub_h if sub else 0)
@@ -351,7 +350,7 @@ class PetView:
                 bottom -= bh + gap
                 col_w = max(col_w, w)
         else:
-            bottom = services.PET_H - 2 - services.TAG_H - services.TOP_TRIM + 4  # the first row overlaps the tag's top border by 4 units
+            bottom = pet_style.PET_H - 2 - pet_style.TAG_H - pet_style.TOP_TRIM + 4  # the first row overlaps the tag's top border by 4 units
             for row in rows:
                 row_h = h + (sub_h if any(e[5] for e in row) else 0)
                 for text, hot, bx, w, key, sub in row:
@@ -359,7 +358,7 @@ class PetView:
                     placed.append((text, hot, bx, bottom - bh, w, bh, key, sub))  # a row's badges share one line
                 bottom -= row_h + gap
         for text, hot, bx, y, w, bh, key, sub in placed:
-            bg = services.BADGE_ATTENTION_BG if hot else theme.T["tag_bg"]
+            bg = pet_style.BADGE_ATTENTION_BG if hot else theme.T["tag_bg"]
             tags = ("badge", "badge:" + (key or ""))
             try:
                 im = sprites.bubble_image(w, bh, bg, theme.T["tag_outline"], None)
@@ -374,7 +373,7 @@ class PetView:
             fg = "#111827" if hot else theme.T["tag_fg"]
             tx = bx + 2
             if label:
-                dot = services.COLORS["needs_input"] if text.startswith("+") else services.badge_dot(text)
+                dot = pet_style.COLORS["needs_input"] if text.startswith("+") else pet_style.badge_dot(text)
                 # the dot at the badge's middle; the text a unit higher than its anchor box would put it, because
                 # its visual middle sits below the box's middle (room for descenders)
                 c.create_rectangle(bx + 3, y + 4, bx + 6, y + 7, fill=dot, outline="", tags=tags)
@@ -388,11 +387,10 @@ class PetView:
         return font_metrics._text_w(font, text)
 
     def _mole_head(self, cx, bc, k, st, ph):
-        services = self.services
         c = self.canvas
         rx, ry = 21 * k, 29 * k
-        c.create_oval(cx - rx, bc - ry, cx + rx, bc + ry, fill=services.MOLE_BODY, outline=services.MOLE_EDGE, width=2)
-        c.create_oval(cx - rx * 0.62, bc - ry * 0.85, cx - rx * 0.2, bc - ry * 0.5, fill=services.MOLE_LIGHT, outline="")
+        c.create_oval(cx - rx, bc - ry, cx + rx, bc + ry, fill=pet_style.MOLE_BODY, outline=pet_style.MOLE_EDGE, width=2)
+        c.create_oval(cx - rx * 0.62, bc - ry * 0.85, cx - rx * 0.2, bc - ry * 0.5, fill=pet_style.MOLE_LIGHT, outline="")
         ey, ex = bc - 9 * k, 8 * k
         for side in (-1, 1):  # eyes
             x = cx + side * ex
@@ -410,24 +408,23 @@ class PetView:
                 c.create_oval(x - r * 0.15, ey - r * 0.95, x + r * 0.45, ey - r * 0.25, fill="white", outline="")
         wig = math.sin(ph * 10) * 1.2 * k if st == "working" else 0  # nose wiggles while digging
         ny = bc + 5 * k
-        c.create_oval(cx - 9 * k + wig, ny - 6 * k, cx + 9 * k + wig, ny + 7 * k, fill=services.MOLE_NOSE,
-                      outline=services.MOLE_NOSE_EDGE, width=2)
+        c.create_oval(cx - 9 * k + wig, ny - 6 * k, cx + 9 * k + wig, ny + 7 * k, fill=pet_style.MOLE_NOSE,
+                      outline=pet_style.MOLE_NOSE_EDGE, width=2)
         c.create_oval(cx - 5 * k + wig, ny - 4 * k, cx - 1.5 * k + wig, ny - 0.5 * k, fill="white", outline="")
 
     def _draw_mole(self, t):
-        services = self.services
         c = self.canvas
         st = self.data.get("state", "idle")
-        col = services.COLORS.get(st, services.COLORS["idle"])
+        col = pet_style.COLORS.get(st, pet_style.COLORS["idle"])
         t += self.seed
-        cx0, ground = services.PET_W / 2, 90
-        p = max(0.0, min(1.0, (time.time() - self.born) / services.EMERGE_SECONDS)) if self.born else 1.0
+        cx0, ground = pet_style.PET_W / 2, 90
+        p = max(0.0, min(1.0, (time.time() - self.born) / pet_style.EMERGE_SECONDS)) if self.born else 1.0
         e = 1 + 2.70158 * (p - 1) ** 3 + 1.70158 * (p - 1) ** 2 if p > 0 else 0.0
         emerging = p < 1.0
-        heads = services.HEAD_LAYOUTS[min(3, int(self.data.get("subagents", 0) or 0)) + 1]
+        heads = pet_style.HEAD_LAYOUTS[min(3, int(self.data.get("subagents", 0) or 0)) + 1]
 
         # the ground disc: its rim shows the state colour
-        c.create_oval(cx0 - 40, ground - 9, cx0 + 40, ground + 9, fill=services.MOLE_EDGE, outline=col, width=3)
+        c.create_oval(cx0 - 40, ground - 9, cx0 + 40, ground + 9, fill=pet_style.MOLE_EDGE, outline=col, width=3)
         top = 99
         for i, (dx, k) in enumerate(heads):
             main = i == len(heads) - 1
@@ -441,12 +438,12 @@ class PetView:
                 cx += 2 * math.sin(ph * 25)
             elif st in ("done", "idle"):  # asleep, mostly underground
                 dy = 8 + 1.5 * math.sin(ph * 2)
-            bc = ground - 34 * k + dy + services.EMERGE_DEPTH * (1 - e)
+            bc = ground - 34 * k + dy + pet_style.EMERGE_DEPTH * (1 - e)
             top = min(top, bc - 29 * k)
             self._mole_head(cx, bc, k, st, ph)
 
         # the front hill hides the buried part of the heads
-        c.create_oval(cx0 - 31, ground - 15, cx0 + 31, ground + 1, fill=services.MOLE_HILL, outline=services.MOLE_HILL_EDGE, width=2)
+        c.create_oval(cx0 - 31, ground - 15, cx0 + 31, ground + 1, fill=pet_style.MOLE_HILL, outline=pet_style.MOLE_HILL_EDGE, width=2)
         c.create_oval(cx0 - 16, ground - 11, cx0 + 8, ground - 4, fill="#7a4e2b", outline="")
         if not emerging:
             if st == "working":  # flying dirt
@@ -455,12 +452,12 @@ class PetView:
                     x = cx0 + (1 if i % 2 else -1) * (26 + ph * 14)
                     y = ground - 8 - 26 * math.sin(math.pi * ph)
                     r = 2.6 * (1 - ph * 0.5)
-                    c.create_oval(x - r, y - r, x + r, y + r, fill=services.MOLE_EDGE, outline="")
+                    c.create_oval(x - r, y - r, x + r, y + r, fill=pet_style.MOLE_EDGE, outline="")
             elif st == "needs_input":
                 bx, by = cx0 + 28, max(14.0, top - 4)
                 r = 10 + (0 if self.acked else 1.5 * math.sin(t * 8))
-                c.create_oval(bx - r, by - r, bx + r, by + r, fill="white", outline=services.DARK["needs_input"], width=2)
-                c.create_text(bx, by, text="!", fill="#dc2626", font=services.fnt(12, "bold"))
+                c.create_oval(bx - r, by - r, bx + r, by + r, fill="white", outline=pet_style.DARK["needs_input"], width=2)
+                c.create_text(bx, by, text="!", fill="#dc2626", font=pet_style.fnt(12, "bold"))
             elif st == "done":
                 self._completion_seal(cx0 - 28, top + 8)
             elif st == "idle":  # rising z's
@@ -475,27 +472,25 @@ class PetView:
 
     def _terminal_rows(self, rows=3, cols=13):
         """Scrolling hacker text for the working bubble; each row advances at its own speed."""
-        services = self.services
         tx = self.__dict__.setdefault("_tx", {"rows": None, "t": 0.0})
         now = time.time()
         if tx["rows"] is None or len(tx["rows"][0]) != cols:
-            tx["rows"] = ["".join(random.choice(services.TERMINAL_CHARS) for _ in range(cols)) for _ in range(rows)]
+            tx["rows"] = ["".join(random.choice(pet_style.TERMINAL_CHARS) for _ in range(cols)) for _ in range(rows)]
         if now - tx["t"] > 0.09:
             tx["t"] = now
             for i in range(rows):
                 if random.random() < (0.55, 0.85, 0.4)[i % 3]:
-                    tx["rows"][i] = tx["rows"][i][1:] + random.choice(services.TERMINAL_CHARS)
+                    tx["rows"][i] = tx["rows"][i][1:] + random.choice(pet_style.TERMINAL_CHARS)
         return tx["rows"]
 
     def _put(self, key, image, w, h, x, y, anchor="nw", tags=()):
         """Draw a PIL image scaled to w x h (final pixels) at canvas point (x, y). Canvas coordinates are at base size
         and _finish() scales them by SCALE, which is why rectangles use w / SCALE. See RECT_SPRITES."""
-        services = self.services
         c = self.canvas
-        if not services.RECT_SPRITES:
+        if not pet_style.RECT_SPRITES:
             c.create_image(x, y, image=sprites.sprite_photo(key, image, w, h), anchor=anchor, tags=tags)
             return
-        s = services.SCALE["v"]
+        s = preferences.SCALE["v"]
         bw, bh = w / s, h / s  # size in base coordinates
         left = x - (bw / 2 if anchor in ("center", "n", "s") else (bw if "e" in anchor else 0))
         top = y - (bh / 2 if anchor in ("center", "e", "w") else (bh if "s" in anchor else 0))
@@ -506,34 +501,31 @@ class PetView:
 
     def _bubble(self, x1, y1, x2, y2, tail_x, fill, outline, tags=()):
         """Pixel-art speech bubble (see bubble_image) with its top-left at (x1, y1); the tail points down at tail_x."""
-        services = self.services
         w, h = max(14, int(round(x2 - x1))), max(9, int(round(y2 - y1)))
         tcx = max(5, min(w - 6, int(round(tail_x - x1))))
         im = sprites.bubble_image(w, h, fill, outline, tcx)
-        s = services.SCALE["v"]
+        s = preferences.SCALE["v"]
         self._put(("bubble", w, h, fill, outline, tcx), im, int(round(w * s)), int(round(im.height * s)),
                   int(round(x1)), int(round(y1)), "nw", tags)
 
     def _mark(self, kind, cx, cy, k=1, tags=()):
-        services = self.services
         im = sprites.mark_image(kind, k)
-        s = services.SCALE["v"]
+        s = preferences.SCALE["v"]
         self._put(("mark", kind, k), im, int(round(im.width * s)), int(round(im.height * s)),
                   int(round(cx)), int(round(cy)), "center", tags)
 
     def _draw_robot(self, t):
-        services = self.services
         spr = sprites.load_sprites()
         if not spr:
             return self._draw_mole(t)
         c = self.canvas
         st = self.data.get("state", "idle")
         t += self.seed
-        s = services.SCALE["v"]
-        cx0, ground = services.PET_W / 2, 90
-        p = max(0.0, min(1.0, (time.time() - self.born) / services.EMERGE_SECONDS)) if self.born else 1.0
+        s = preferences.SCALE["v"]
+        cx0, ground = pet_style.PET_W / 2, 90
+        p = max(0.0, min(1.0, (time.time() - self.born) / pet_style.EMERGE_SECONDS)) if self.born else 1.0
         e = 1 + 2.70158 * (p - 1) ** 3 + 1.70158 * (p - 1) ** 2 if p > 0 else 0.0
-        rise = services.EMERGE_DEPTH * (1 - e)  # new pets rise up from behind the name tag
+        rise = pet_style.EMERGE_DEPTH * (1 - e)  # new pets rise up from behind the name tag
         emerging = p < 1.0
         shadow = spr["img"]["shadow"]
 
@@ -542,10 +534,10 @@ class PetView:
         rw0, rh0 = rm["size"]
         members = self.data.get("members")
         if members:  # compact mode: a robot per session, each in its own state; the front one is the focus
-            heads = services.HEAD_LAYOUTS[len(members)]
+            heads = pet_style.HEAD_LAYOUTS[len(members)]
             states = [(m["state"], self.app.ack.get(m["key"], False)) for m in members[1:]] + [(st, self.acked)]
         else:  # one session: the main robot in front, its subagents smaller beside it, all in the session's state
-            heads = services.HEAD_LAYOUTS[min(3, int(self.data.get("subagents", 0) or 0)) + 1]
+            heads = pet_style.HEAD_LAYOUTS[min(3, int(self.data.get("subagents", 0) or 0)) + 1]
             states = [(st, self.acked)] * len(heads)
         top_main = ground
         flash = bool(self.data.get("auto_flash")) and st not in ("needs_input", "error")
@@ -565,7 +557,7 @@ class PetView:
                 frame = int(ph * 8) % sprites.TALK_FRAMES  # the wave travels along the mouth (one loop = 0.5 s, 2 Hz)
                 # Blink on a cosine at BLINK_RATIO x the mouth's frequency: a short blink near each peak. The two
                 # rhythms drift apart and line up again now and then.
-                blink = math.cos(2 * math.pi * services.BLINK_RATIO * (8 / sprites.TALK_FRAMES) * ph) > services.BLINK_THRESHOLD
+                blink = math.cos(2 * math.pi * pet_style.BLINK_RATIO * (8 / sprites.TALK_FRAMES) * ph) > pet_style.BLINK_THRESHOLD
                 face = f"talkblink{frame}" if blink else f"talk{frame}"
                 if main and done_flash:
                     face = "joy"
@@ -594,7 +586,7 @@ class PetView:
                 self._bubble(cx0 - 26, top, cx0 + 16, by2, tail, "#f0fdf4", "#4b8f63")
                 y = (top + by2) / 2
                 self._mark("ok", cx0 - 15, y)
-                c.create_text(cx0 + 3, y, text="auto", fill="#4b8f63", font=services.fnt(5))
+                c.create_text(cx0 + 3, y, text="auto", fill="#4b8f63", font=pet_style.fnt(5))
             elif done_flash:
                 self._completion_seal(cx0 - 27, top_main + 8)
             elif st == "working":  # hacker-screen bubble
@@ -627,19 +619,18 @@ class PetView:
                 for i in range(3):
                     ph = (t * 0.5 + i / 3) % 1
                     zx, zy = cx0 + 14 + ph * 14, top_main + 4 - ph * 22
-                    c.create_text(zx, zy, text="z", fill="#9ca3af", font=services.fnt(8 + 5 * ph, "bold"))
+                    c.create_text(zx, zy, text="z", fill="#9ca3af", font=pet_style.fnt(8 + 5 * ph, "bold"))
         self._draw_tag()
 
     def _draw_cat(self, t):
-        services = self.services
         c = self.canvas
         st = self.data.get("state", "idle")
-        col, dark = services.COLORS.get(st, services.COLORS["idle"]), services.DARK.get(st, services.DARK["idle"])
+        col, dark = pet_style.COLORS.get(st, pet_style.COLORS["idle"]), pet_style.DARK.get(st, pet_style.DARK["idle"])
         t += self.seed
-        cx, base, rx, ry, dy = services.PET_W / 2, 66, 26, 22, 0.0
+        cx, base, rx, ry, dy = pet_style.PET_W / 2, 66, 26, 22, 0.0
 
         # Diglett-style entrance: rise out of a dirt mound with a little overshoot.
-        p = max(0.0, min(1.0, (time.time() - self.born) / services.EMERGE_SECONDS)) if self.born else 1.0
+        p = max(0.0, min(1.0, (time.time() - self.born) / pet_style.EMERGE_SECONDS)) if self.born else 1.0
         e = 1 + 2.70158 * (p - 1) ** 3 + 1.70158 * (p - 1) ** 2 if p > 0 else 0.0
         emerging = p < 1.0
 
@@ -652,7 +643,7 @@ class PetView:
         else:
             ry *= 1 + 0.04 * math.sin(t * 2)  # breathing
 
-        by = base + dy + services.EMERGE_DEPTH * (1 - e)
+        by = base + dy + pet_style.EMERGE_DEPTH * (1 - e)
         ground = base + 26
         sw = rx * (1 + dy / 40)
         c.create_oval(cx - sw, ground - 3, cx + sw, ground + 4, fill="#2b2b2b", outline="")
@@ -693,8 +684,8 @@ class PetView:
 
         if emerging:  # dirt mound hides the part of the body still underground
             mw = 34 * (1 - 0.5 * p)
-            c.create_oval(cx - mw, ground - 12, cx + mw, ground + 3, fill=services.MOUND, outline=services.MOUND_DARK, width=2)
-            c.create_oval(cx - mw * 0.55, ground - 8, cx + mw * 0.55, ground - 1, fill=services.MOUND_DARK, outline="")
+            c.create_oval(cx - mw, ground - 12, cx + mw, ground + 3, fill=pet_style.MOUND, outline=pet_style.MOUND_DARK, width=2)
+            c.create_oval(cx - mw * 0.55, ground - 8, cx + mw * 0.55, ground - 1, fill=pet_style.MOUND_DARK, outline="")
 
         if emerging:
             pass
@@ -708,7 +699,7 @@ class PetView:
             pulse = 0 if self.acked else 1.5 * math.sin(t * 8)
             r = 10 + pulse
             c.create_oval(bx - r, byy - r, bx + r, byy + r, fill="white", outline=dark, width=2)
-            c.create_text(bx, byy, text="!", fill="#dc2626", font=services.fnt(12, "bold"))
+            c.create_text(bx, byy, text="!", fill="#dc2626", font=pet_style.fnt(12, "bold"))
         elif st == "done":
             self._completion_seal(cx - 28, top + 8)
 

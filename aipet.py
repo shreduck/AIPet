@@ -87,53 +87,14 @@ from aipetlib.text import ago, fmt_left, fmt_wait
 from aipetlib.config import DEFAULT_CONFIG, ConfigStore, deep_merge
 
 IS_MAC = sys.platform == "darwin"
-TRANSPARENT = "systemTransparent" if IS_MAC else "#ff00fe"
-COLORS = {"working": "#5b8def", "needs_input": "#f59e0b", "done": "#22c55e", "error": "#ef4444", "idle": "#9ca3af"}
-DARK = {"working": "#2f5bb7", "needs_input": "#b45309", "done": "#15803d", "error": "#991b1b", "idle": "#4b5563"}
-LABELS = {"working": "working…", "needs_input": "needs you!", "done": "done", "error": "error", "idle": "idle"}
-BADGE_DOTS = {"Claude": "#d97757", "Codex": "#0f8a6a", "Workbench": "#0f766e"}  # badge dot colour by its first word
-BADGE_DOT_COWORK = "#c2410c"
-BADGE_ATTENTION_BG = "#fde4e4"  # a very faint red: this session needs you
-
-
-def merge_badges(labels):
-    """Compact mode's collapsed badge for several sessions: different agents are listed by name ("Claude + Codex"),
-    one agent gets all its tags ("Claude Cowork+WSL+VS")."""
-    agents, tags = [], {}
-    for label in labels:
-        words = label.split(" ")
-        if not words or words[0].startswith("+"):
-            continue
-        a = words[0]
-        if a not in agents:
-            agents.append(a)
-        for q in words[1:]:
-            if q not in tags.setdefault(a, []):
-                tags[a].append(q)
-    if len(agents) != 1:
-        return " + ".join(agents)
-    a = agents[0]
-    return a + (" " + "+".join(tags.get(a, [])) if tags.get(a) else "")
-
-
-def badge_dot(text):
-    return BADGE_DOT_COWORK if text.endswith("Cowork") else BADGE_DOTS.get(text.split(" ")[0], "#6b7280")
-
-
-BADGE_NAMES = {"CC": "Claude", "CW": "Cowork", "CX": "Codex", "WSL": "WSL", "VS": "VS", "WB": "Workbench"}
-SOURCE_NAMES = {"CC": "Claude Code", "CW": "Cowork", "CX": "Codex", "WB": "Workbench"}
-BADGE_COLORS = {"CC": "#6b7280", "CW": "#c2410c", "CX": "#0f8a6a", "WSL": "#7c3aed", "VS": "#007acc", "WB": "#0f766e"}
-PET_W, PET_H = 92, 122  # the drawing area of one pet, before the badge column and top trim below
-BADGE_GUTTER = 0  # extra width on the pet's left (badges now sit on the name tag's top edge, so none is needed)
-TAG_H = 19  # name tag height (one unit taller than it was, for the name + conversation title lines)
-TOP_TRIM = 14  # the empty strip the badges used to take above the bubble
-CANVAS_W, CANVAS_H = PET_W + BADGE_GUTTER, PET_H - TOP_TRIM
-USAGE_GUTTER = 0  # individual pets reserve quota space only when they show readings
-USAGE_EDGE_ROOM = 18  # one shared margin keeps the rightmost pet stable as usage appears
-MOUND, MOUND_DARK = "#a16207", "#713f12"
-EMERGE_SECONDS, EMERGE_DEPTH, EMERGE_STAGGER = 0.7, 62, 0.25
-DONE_FLASH_SECONDS = 1.6  # a working pet shows the done check this long when a subagent or another session finishes
-BUBBLE_W = 270
+from aipetlib.ui.pet_style import (  # noqa: E402,F401
+    TRANSPARENT, COLORS, DARK, LABELS, BADGE_DOTS, BADGE_DOT_COWORK, BADGE_ATTENTION_BG, merge_badges, badge_dot,
+    BADGE_NAMES, SOURCE_NAMES, BADGE_COLORS, PET_W, PET_H, BADGE_GUTTER, TAG_H, TOP_TRIM, CANVAS_W, CANVAS_H,
+    USAGE_GUTTER, USAGE_EDGE_ROOM, MOUND, MOUND_DARK, EMERGE_SECONDS, EMERGE_DEPTH, EMERGE_STAGGER,
+    DONE_FLASH_SECONDS, BUBBLE_W, px, fnt, MOLE_BODY, MOLE_EDGE, MOLE_LIGHT, MOLE_NOSE, MOLE_NOSE_EDGE, MOLE_HILL,
+    MOLE_HILL_EDGE, HEAD_LAYOUTS, TERMINAL_CHARS, BLINK_RATIO, BLINK_SECONDS, BLINK_THRESHOLD, RECT_SPRITES,
+    _CARD_FONTS, card_font, rescale_card_fonts, NO_CHOICE, OWN_CHOICE,
+)
 
 
 def fill_menu(menu, entries):
@@ -379,44 +340,12 @@ def sweep_leftovers(home=None, now=None):
     return removed
 
 
-def px(n):
-    return int(round(n * SCALE["v"]))
-
-
-def fnt(size, weight=""):
-    f = (UI_FONT, max(5, int(round(size * SCALE["v"]))))
-    return f + (weight,) if weight else f
-
-
-MOLE_BODY, MOLE_EDGE, MOLE_LIGHT = "#a5703e", "#6b4423", "#c18f5a"
-MOLE_NOSE, MOLE_NOSE_EDGE, MOLE_HILL, MOLE_HILL_EDGE = "#f4a6b8", "#d97a94", "#8a5a33", "#5a3a1c"
-# (x offset, size) of each head, left to right; the LAST entry is the main agent, drawn last and in front
-HEAD_LAYOUTS = {
-    1: [(0, 1.0)],
-    2: [(-15, 0.78), (13, 0.92)],
-    3: [(-27, 0.7), (27, 0.7), (0, 0.92)],
-    4: [(-31, 0.62), (31, 0.62), (-11, 0.78), (11, 0.92)],
-}
-
-
-
 # --------------------------------------------------------------------------- Workbench source
 from aipetlib.workbench import ID_KEYS, McpHttpClient, WorkbenchPoller, tool_result_to_obj, find_chat_list, normalize_state, normalize_chat
 
 
 # --------------------------------------------------------------------------- the pet
 # --------------------------------------------------------------------------- robot sprites
-TERMINAL_CHARS = "0123456789ABCDEF$#%&@<>/=+*;:"
-# Working robots blink at 0.075x the mouth wave's 2 Hz: every 6.7 s (3/40, so blink and wave line up every 20 s).
-# The threshold keeps each blink about 0.13 s long whatever the ratio.
-BLINK_RATIO, BLINK_SECONDS = 0.075, 0.13
-BLINK_THRESHOLD = math.cos(math.pi * BLINK_SECONDS * BLINK_RATIO * 2)
-
-
-# macOS Tk paints no images at all on a transparent canvas (systemTransparent), whatever the image format, while
-# rectangles and text do render (found with tools/mac_image_probe.py on CI). So on macOS the pet window draws its pixel
-# art as rectangles: each image becomes merged runs of same-coloured pixels, computed once per image.
-RECT_SPRITES = IS_MAC
 
 
 def log_error(msg):
@@ -425,11 +354,7 @@ def log_error(msg):
 
 
 class Pet(PetView):
-    """Compatibility constructor for the desktop runtime."""
-    services = sys.modules[__name__]
-
-    def __init__(self, app, key):
-        super().__init__(self.services, app, key)
+    """The pet view, with the text metrics the tests and the drawing code reach on the class."""
 
     @staticmethod
     def _text_w(font, text):
@@ -549,36 +474,11 @@ from aipetlib.windows import (  # noqa: E402,F401
 
 
 # --------------------------------------------------------------------------- app
-_CARD_FONTS = {}  # (family, size, style) -> tkfont.Font, resized in place when the scale changes
-
-
-def card_font(size, *style, family=None):
-    from tkinter import font as tkfont
-    key = (family or UI_FONT, size, style)
-    f = _CARD_FONTS.get(key)
-    if f is None:
-        f = _CARD_FONTS[key] = tkfont.Font(family=key[0], size=max(6, int(round(size * CARD_SCALE["v"]))),
-                                            weight="bold" if "bold" in style else "normal",
-                                            underline="underline" in style)
-    return f
-
-
-def rescale_card_fonts():
-    for (family, size, style), f in _CARD_FONTS.items():
-        f.configure(size=max(6, int(round(size * CARD_SCALE["v"]))))
-
-
-NO_CHOICE = "\x00none"  # "nothing picked" for a question's radio buttons (Tk draws "" as all of them selected)
-OWN_CHOICE = "\x00own"  # the "Your own answer" radio button: send the typed text
 
 
 class Detail(PermissionCard):
-    """Compatibility constructor for the desktop runtime."""
+    """The permission / question card, in the needs-you colour."""
     ACCENT = COLORS["needs_input"]
-    services = sys.modules[__name__]
-
-    def __init__(self, app, key, item):
-        super().__init__(self.services, app, key, item)
 
 
 # --------------------------------------------------------------------------- app
@@ -985,13 +885,13 @@ class PetApp:
 
     # ---- resizing (the Size... slider in the right-click menu)
     def set_size(self, size):
-        return appearance_controls.set_size(self, sys.modules[__name__], size)
+        return appearance_controls.set_size(self, size)
 
     def tooltip_text_scale(self):
-        return tooltips.tooltip_text_scale(self, sys.modules[__name__])
+        return tooltips.tooltip_text_scale(self)
 
     def set_tooltip_text_scale(self, scale):
-        return tooltips.set_tooltip_text_scale(self, sys.modules[__name__], scale)
+        return tooltips.set_tooltip_text_scale(self, scale)
 
     def set_answer_wait(self, seconds):
         ANSWER_WAIT["v"] = clamp_wait(round(float(seconds) / 15) * 15)
@@ -1010,25 +910,25 @@ class PetApp:
         save_setting("health_check_seconds", HEALTH["v"])
 
     def set_scale(self, v):
-        return appearance_controls.set_scale(self, sys.modules[__name__], v)
+        return appearance_controls.set_scale(self, v)
 
     def _place_above_pet(self, w):
-        return appearance_controls._place_above_pet(self, sys.modules[__name__], w)
+        return appearance_controls._place_above_pet(self, w)
 
     def open_size_slider(self):
-        return appearance_controls.open_size_slider(self, sys.modules[__name__])
+        return appearance_controls.open_size_slider(self)
 
     def open_tooltip_text_slider(self):
-        return appearance_controls.open_tooltip_text_slider(self, sys.modules[__name__])
+        return appearance_controls.open_tooltip_text_slider(self)
 
     def open_answer_slider(self):
-        return appearance_controls.open_answer_slider(self, sys.modules[__name__])
+        return appearance_controls.open_answer_slider(self)
 
     def open_done_slider(self):
-        return appearance_controls.open_done_slider(self, sys.modules[__name__])
+        return appearance_controls.open_done_slider(self)
 
     def reset_scale(self):
-        return appearance_controls.reset_scale(self, sys.modules[__name__])
+        return appearance_controls.reset_scale(self)
 
     def focus_key(self, key):
         pet = self.pets.get(key)
@@ -1080,7 +980,7 @@ class PetApp:
             log_error(f"mark as finished: {e!r}")
 
     def open_health_slider(self):
-        return appearance_controls.open_health_slider(self, sys.modules[__name__])
+        return appearance_controls.open_health_slider(self)
 
     def dismiss_menu_pet(self):
         if self.menu_pet and self.menu_pet.key != "_none":
@@ -1583,10 +1483,10 @@ class PetApp:
             self.root.after(1200, lambda: vscode.open_uri(uri))
 
     def show_tip(self, pet):
-        return tooltips.show_tip(self, sys.modules[__name__], pet)
+        return tooltips.show_tip(self, pet)
 
     def show_usage_tip(self, pet, detail):
-        return tooltips.show_usage_tip(self, sys.modules[__name__], pet, detail)
+        return tooltips.show_usage_tip(self, pet, detail)
 
     def set_card_scale(self, value):
         """Size of the permission / question cards (all open ones follow at once); saved as card_scale."""
@@ -1626,16 +1526,16 @@ class PetApp:
                 + (" Your blacklist still asks for it, though." if blocked else ""))
 
     def set_tooltip(self, kind, on):
-        return tooltips.set_tooltip(self, sys.modules[__name__], kind, on)
+        return tooltips.set_tooltip(self, kind, on)
 
     def _show_tooltip(self, pet, text, usage_detail=None):
-        return tooltips._show_tooltip(self, sys.modules[__name__], pet, text, usage_detail)
+        return tooltips._show_tooltip(self, pet, text, usage_detail)
 
     def _build_tooltip(self, pet, text, usage_detail):
-        return tooltips._build_tooltip(self, sys.modules[__name__], pet, text, usage_detail)
+        return tooltips._build_tooltip(self, pet, text, usage_detail)
 
     def hide_tip(self):
-        return tooltips.hide_tip(self, sys.modules[__name__])
+        return tooltips.hide_tip(self)
 
 
 # --------------------------------------------------------------------------- entry points

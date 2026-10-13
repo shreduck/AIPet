@@ -1,31 +1,35 @@
 """Pet appearance and behavior slider controls.
 
-The owner supplies widgets and UI state; services supply shared behavior.
+The owning app supplies its widgets and state; shared values come from their owner modules.
 No application entry point is imported by this component.
 """
 import tkinter as tk
-from . import theme
+
 from .. import geometry
+from .. import text as textfmt
+from ..runtime import preferences
+from ..runtime import settings
+from . import pet_style
+from . import theme
 
-
-def set_size(app, services, size):
-    app.set_scale(float(size) * services.SCALE_UNIT)
+def set_size(app, size):
+    app.set_scale(float(size) * preferences.SCALE_UNIT)
     app.reposition()
-    app.cfg["size"] = round(services.SCALE["v"] / services.SCALE_UNIT, 2)
-    services.save_setting("size", app.cfg["size"])
+    app.cfg["size"] = round(preferences.SCALE["v"] / preferences.SCALE_UNIT, 2)
+    settings.save_setting("size", app.cfg["size"])
 
 
-def set_scale(app, services, v):
-    v = services.clamp_scale(v)
-    if abs(v - services.SCALE["v"]) < 0.005:
+def set_scale(app, v):
+    v = preferences.clamp_scale(v)
+    if abs(v - preferences.SCALE["v"]) < 0.005:
         return
-    services.SCALE["v"] = v
+    preferences.SCALE["v"] = v
     for pet in app.pets.values():
-        pet.canvas.config(width=services.px(services.CANVAS_W + getattr(pet, "gutter", 0) + getattr(pet, "usage_extra", 0)), height=services.px(services.CANVAS_H))
+        pet.canvas.config(width=pet_style.px(pet_style.CANVAS_W + getattr(pet, "gutter", 0) + getattr(pet, "usage_extra", 0)), height=pet_style.px(pet_style.CANVAS_H))
     app._sync_usage_padding()
 
 
-def _place_above_pet(app, services, w):
+def _place_above_pet(app, w):
     """Put a small window directly above the pet overlay, centred on it (just below it if there is no room)."""
     w.update_idletasks()
     app.root.update_idletasks()
@@ -39,7 +43,7 @@ def _place_above_pet(app, services, w):
     w.geometry(geometry.geo(*geometry.fit_on_screen(x, y, ww, wh, ref, w, margin=10)))
 
 
-def open_size_slider(app, services):
+def open_size_slider(app):
     """A small window with a slider (30% - 300%; 100% = SCALE_UNIT). The pet follows it live, saved on release."""
     if app.size_win is not None:
         try:
@@ -52,13 +56,13 @@ def open_size_slider(app, services):
     w.title("Pet size")
     w.attributes("-topmost", True)
     w.resizable(False, False)
-    var = tk.DoubleVar(value=services.SCALE["v"] / services.SCALE_UNIT)
+    var = tk.DoubleVar(value=preferences.SCALE["v"] / preferences.SCALE_UNIT)
     pct = tk.Label(w, width=6, font=(theme.UI_FONT, 12, "bold"))
 
     def apply(_v=None):
-        app.set_scale(var.get() * services.SCALE_UNIT)
+        app.set_scale(var.get() * preferences.SCALE_UNIT)
         app.reposition()
-        pct.config(text=f"{int(round(services.SCALE['v'] / services.SCALE_UNIT * 100))}%")
+        pct.config(text=f"{int(round(preferences.SCALE['v'] / preferences.SCALE_UNIT * 100))}%")
 
     def commit(_e=None):
         app.set_size(var.get())
@@ -91,7 +95,7 @@ def open_size_slider(app, services):
     app._place_above_pet(w)
 
 
-def open_tooltip_text_slider(app, services):
+def open_tooltip_text_slider(app):
     """The context menu's text-size slider; settings embeds the same control."""
     existing = getattr(app, "tooltip_text_win", None)
     if existing is not None:
@@ -143,7 +147,7 @@ def open_tooltip_text_slider(app, services):
     app._place_above_pet(w)
 
 
-def open_answer_slider(app, services):
+def open_answer_slider(app):
     """Slider for how long a permission prompt can be answered from the pet: 0 (off) to 5 minutes."""
     if getattr(app, "answer_win", None) is not None:
         try:
@@ -156,16 +160,16 @@ def open_answer_slider(app, services):
     w.title("Answer timeout")
     w.attributes("-topmost", True)
     w.resizable(False, False)
-    var = tk.DoubleVar(value=services.ANSWER_WAIT["v"])
+    var = tk.DoubleVar(value=preferences.ANSWER_WAIT["v"])
     val = tk.Label(w, width=10, font=(theme.UI_FONT, 12, "bold"))
 
     def apply(_v=None):
-        services.ANSWER_WAIT["v"] = services.clamp_wait(round(var.get() / 15) * 15)  # steps of 15 s
-        val.config(text=services.fmt_wait(services.ANSWER_WAIT["v"]))
+        preferences.ANSWER_WAIT["v"] = preferences.clamp_wait(round(var.get() / 15) * 15)  # steps of 15 s
+        val.config(text=textfmt.fmt_wait(preferences.ANSWER_WAIT["v"]))
 
     def commit(_e=None):
         apply()
-        app.set_answer_wait(services.ANSWER_WAIT["v"])
+        app.set_answer_wait(preferences.ANSWER_WAIT["v"])
 
     def reset():
         var.set(180)
@@ -178,7 +182,7 @@ def open_answer_slider(app, services):
 
     tk.Label(w, text="Answer permission prompts from the pet for up to:", font=(theme.UI_FONT, 10, "bold")
              ).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
-    scale = ttk.Scale(w, from_=0, to=services.MAX_WAIT, orient="horizontal", length=260, variable=var, command=apply)
+    scale = ttk.Scale(w, from_=0, to=preferences.MAX_WAIT, orient="horizontal", length=260, variable=var, command=apply)
     scale.grid(row=1, column=0, padx=(14, 6), pady=8)
     scale.bind("<ButtonRelease-1>", commit)
     val.grid(row=1, column=1, padx=(0, 14))
@@ -199,7 +203,7 @@ def open_answer_slider(app, services):
     app._place_above_pet(w)
 
 
-def open_done_slider(app, services):
+def open_done_slider(app):
     """Slider for how long a finished session's pet stays: 0 (never cleared) to 30 minutes."""
     if getattr(app, "done_win", None) is not None:
         try:
@@ -212,16 +216,16 @@ def open_done_slider(app, services):
     w.title("Clear finished sessions")
     w.attributes("-topmost", True)
     w.resizable(False, False)
-    var = tk.DoubleVar(value=services.DONE_TIMEOUT["v"])
+    var = tk.DoubleVar(value=preferences.DONE_TIMEOUT["v"])
     val = tk.Label(w, width=10, font=(theme.UI_FONT, 12, "bold"))
 
     def apply(_v=None):
-        services.DONE_TIMEOUT["v"] = services.clamp_done(var.get())  # whole minutes
-        val.config(text="never" if services.DONE_TIMEOUT["v"] <= 0 else f"{services.DONE_TIMEOUT['v']} min")
+        preferences.DONE_TIMEOUT["v"] = preferences.clamp_done(var.get())  # whole minutes
+        val.config(text="never" if preferences.DONE_TIMEOUT["v"] <= 0 else f"{preferences.DONE_TIMEOUT['v']} min")
 
     def commit(_e=None):
         apply()
-        app.set_done_timeout(services.DONE_TIMEOUT["v"])
+        app.set_done_timeout(preferences.DONE_TIMEOUT["v"])
 
     def reset():
         var.set(3)
@@ -234,7 +238,7 @@ def open_done_slider(app, services):
 
     tk.Label(w, text="Clear a finished session's pet after:", font=(theme.UI_FONT, 10, "bold")
              ).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
-    scale = ttk.Scale(w, from_=0, to=services.MAX_WAIT // 60, orient="horizontal", length=260, variable=var, command=apply)
+    scale = ttk.Scale(w, from_=0, to=preferences.MAX_WAIT // 60, orient="horizontal", length=260, variable=var, command=apply)
     scale.grid(row=1, column=0, padx=(14, 6), pady=8)
     scale.bind("<ButtonRelease-1>", commit)
     val.grid(row=1, column=1, padx=(0, 14))
@@ -253,11 +257,11 @@ def open_done_slider(app, services):
     app._place_above_pet(w)
 
 
-def reset_scale(app, services):
+def reset_scale(app):
     app.set_size(1.0)
 
 
-def open_health_slider(app, services):
+def open_health_slider(app):
     """Slider for how often a working session's process is checked: 0 (off) to 5 minutes."""
     if getattr(app, "health_win", None) is not None:
         try:
@@ -270,16 +274,16 @@ def open_health_slider(app, services):
     w.title("Health check")
     w.attributes("-topmost", True)
     w.resizable(False, False)
-    var = tk.DoubleVar(value=services.HEALTH["v"])
+    var = tk.DoubleVar(value=preferences.HEALTH["v"])
     val = tk.Label(w, width=10, font=(theme.UI_FONT, 12, "bold"))
 
     def apply(_v=None):
-        services.HEALTH["v"] = services.clamp_health(round(var.get() / 5) * 5)  # steps of 5 s
-        val.config(text="off" if services.HEALTH["v"] <= 0 else services.fmt_wait(services.HEALTH["v"]))
+        preferences.HEALTH["v"] = preferences.clamp_health(round(var.get() / 5) * 5)  # steps of 5 s
+        val.config(text="off" if preferences.HEALTH["v"] <= 0 else textfmt.fmt_wait(preferences.HEALTH["v"]))
 
     def commit(_e=None):
         apply()
-        app.set_health_interval(services.HEALTH["v"])
+        app.set_health_interval(preferences.HEALTH["v"])
 
     def reset():
         var.set(15)
@@ -292,7 +296,7 @@ def open_health_slider(app, services):
 
     tk.Label(w, text="Check that working sessions are still running every:", font=(theme.UI_FONT, 10, "bold")
              ).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
-    scale = ttk.Scale(w, from_=0, to=services.MAX_HEALTH, orient="horizontal", length=260, variable=var, command=apply)
+    scale = ttk.Scale(w, from_=0, to=preferences.MAX_HEALTH, orient="horizontal", length=260, variable=var, command=apply)
     scale.grid(row=1, column=0, padx=(14, 6), pady=8)
     scale.bind("<ButtonRelease-1>", commit)
     val.grid(row=1, column=1, padx=(0, 14))

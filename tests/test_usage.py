@@ -139,7 +139,8 @@ class UsageTests(unittest.TestCase):
         app.cfg, app.pets = {}, {"pet": MagicMock()}
         app.hide_tip = MagicMock()
         app.tooltip_vars = {"usage": MagicMock()}
-        with patch.object(aipet, "save_setting") as save:
+        from aipetlib.runtime import settings
+        with patch.object(settings, "save_setting") as save:  # where the tooltip switch saves it
             app.set_tooltip("usage", False)
         self.assertFalse(app.cfg["usage_tooltips"])
         save.assert_called_once_with("usage_tooltips", False)

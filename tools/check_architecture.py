@@ -39,7 +39,8 @@ HOOK_OPTIONAL = {"certifi"}  # imported inside try/except by aipet_usage; never 
 SERVICE_FREE = ["aipetlib.agents", "aipetlib.runtime", "aipetlib.text", "aipetlib.ui.theme", "aipetlib.ui.sprites",
                 "aipetlib.ui.font_metrics", "aipetlib.geometry", "aipetlib.windows",
                 "aipetlib.vscode", "aipetlib.click_through", "aipetlib.permissions",
-                "aipetlib.sessions"]
+                "aipetlib.sessions", "aipetlib.ui.pet_style", "aipetlib.ui.pet_view", "aipetlib.ui.tooltips",
+                "aipetlib.ui.appearance_controls", "aipetlib.ui.permission_card"]
 
 
 def module_files():

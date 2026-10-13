@@ -1,14 +1,22 @@
-"""PermissionCard: rendering and interaction, with explicit desktop services.
+"""PermissionCard: rendering and interaction.
 
 This component does not import the application entry point.
 """
 import math
+import sys
 import time
 import tkinter as tk
-from . import sprites
-from . import theme
+
 from .. import geometry
 from .. import permissions
+from .. import text as textfmt
+from ..mac_panels import MacOverlayWindow
+from ..runtime import preferences
+from . import pet_style
+from . import sprites
+from . import theme
+
+IS_MAC = sys.platform == "darwin"
 
 
 class PermissionCard:
@@ -18,19 +26,17 @@ class PermissionCard:
     ACCENT = "#f59e0b"
 
     def f(self, size, *style, family=None):
-        services = self.services
-        return services.card_font(size, *style, family=family)
+        return pet_style.card_font(size, *style, family=family)
 
-    def __init__(self, services, app, key, item):
-        self.services = services
+    def __init__(self, app, key, item):
         self.app, self.key, self._shown, self.sent = app, key, None, None
         self.pinned = item.get("state") != "needs_input"  # opened from the menu: not a prompt that closes when answered
         self._after, self._t0, self._moved, self._size = None, time.time(), False, None
         bg, fg, msg_fg, muted = theme.T["bubble_bg"], theme.T["bubble_fg"], theme.T["bubble_msg"], theme.T["bubble_muted"]
-        w = self.win = services.MacOverlayWindow(app.root) if services.IS_MAC else tk.Toplevel(app.root)
+        w = self.win = MacOverlayWindow(app.root) if IS_MAC else tk.Toplevel(app.root)
         w.withdraw()
         w.title(f"AIPet permission — {key}")
-        if services.IS_MAC:
+        if IS_MAC:
             w.attributes("-alpha", 0.0)
         w.overrideredirect(True)  # our own frame: accent border, draggable header, close button
         w.attributes("-topmost", True)
@@ -47,16 +53,16 @@ class PermissionCard:
         left = tk.Frame(cols, bg=bg)
         left.pack(side="left", anchor="n", fill="y", padx=(0, 16))
         if spr:  # left column: the robot (room below it for its whole shadow)
-            sc = services.CARD_SCALE["v"]
+            sc = preferences.CARD_SCALE["v"]
             self.robot = tk.Canvas(left, width=int(140 * sc), height=int(212 * sc), bg=bg, highlightthickness=0, bd=0)
             self.robot.pack(side="top", anchor="n", pady=(int(12 * sc), 0))
         # size of this card: slider under the robot; also Ctrl + plus / minus / 0 and Ctrl + mouse wheel on the card
         size_row = tk.Frame(left, bg=bg)
         size_row.pack(side="bottom", fill="x", pady=(8, 0))
-        self.size_var = tk.DoubleVar(master=w, value=services.CARD_SCALE["v"])
-        self.size_label = tk.Label(size_row, text=f"{int(round(services.CARD_SCALE['v'] * 100))}%", bg=bg, fg=muted,
+        self.size_var = tk.DoubleVar(master=w, value=preferences.CARD_SCALE["v"])
+        self.size_label = tk.Label(size_row, text=f"{int(round(preferences.CARD_SCALE['v'] * 100))}%", bg=bg, fg=muted,
                                    font=self.f(8), width=5, anchor="e")
-        self.size_scale = tk.Scale(size_row, from_=services.CARD_SCALE_MIN, to=services.CARD_SCALE_MAX, resolution=services.CARD_SCALE_STEP,
+        self.size_scale = tk.Scale(size_row, from_=preferences.CARD_SCALE_MIN, to=preferences.CARD_SCALE_MAX, resolution=preferences.CARD_SCALE_STEP,
                                    orient="horizontal", variable=self.size_var, showvalue=False, length=90,
                                    sliderlength=14, width=8, bg=theme.T["primary"], troughcolor=theme.T["entry_bg"],
                                    activebackground=theme.T["primary_active"], sliderrelief="flat", highlightthickness=0,
@@ -65,12 +71,12 @@ class PermissionCard:
         self.size_scale.pack(side="left")
         self.size_label.pack(side="left")
         self.size_scale.bind("<ButtonRelease-1>", lambda e: self.app.set_card_scale(self.size_var.get()))
-        mod = "Command" if services.IS_MAC else "Control"
+        mod = "Command" if IS_MAC else "Control"
         for seq, step in (("plus", 1), ("equal", 1), ("KP_Add", 1), ("minus", -1), ("KP_Subtract", -1),
                           ("0", 0), ("KP_0", 0)):
             w.bind(f"<{mod}-{seq}>", lambda e, s=step: self.zoom_by(s))
         w.bind("<MouseWheel>", lambda e: self.zoom_by(1 if e.delta > 0 else -1)
-               if e.state & (0x8 if services.IS_MAC else 0x4) else None)
+               if e.state & (0x8 if IS_MAC else 0x4) else None)
         w.bind("<Control-Button-4>", lambda e: self.zoom_by(1))
         w.bind("<Control-Button-5>", lambda e: self.zoom_by(-1))
         right = tk.Frame(cols, bg=bg, width=430)
@@ -138,7 +144,7 @@ class PermissionCard:
         self.btn_allow = tk.Button(self.answer_row, text="Allow once", width=14, bg=allow_bg, fg=allow_fg,
                                    activebackground=allow_active, activeforeground=allow_fg, relief="flat", cursor="hand2",
                                    font=self.f(10, "bold"), command=lambda: self.answer("allow"))
-        if services.IS_MAC:
+        if IS_MAC:
             self.btn_allow.configure(**theme.button_style("primary"))
             self.btn_deny.configure(**theme.button_style("danger"))
         # Allow + whitelist: allows this one and adds it to the hook config's auto-approve whitelist (lighter green)
@@ -160,7 +166,7 @@ class PermissionCard:
         self.apply_scale()
         self._place(first=True)
         w.deiconify()
-        if services.IS_MAC:
+        if IS_MAC:
             import mac_statusbar as mac
             w.update_idletasks()
             mac.set_all_spaces(w.title(), app.cfg.get("all_spaces", True))
@@ -176,7 +182,6 @@ class PermissionCard:
 
     # ---- placement: centred on the screen, cascading a little when several are open
     def _place(self, first=False):
-        services = self.services
         w = self.win
         w.update_idletasks()
         size = (w.winfo_reqwidth(), w.winfo_reqheight())
@@ -229,7 +234,6 @@ class PermissionCard:
         self._after = self.win.after(60, self._tick)
 
     def _draw_robot(self, t):
-        services = self.services
         spr = sprites.load_sprites()
         if not spr:
             return
@@ -244,7 +248,7 @@ class PermissionCard:
         else:
             face, state, dy = "ask", "needs_input", -abs(math.sin(t * 4)) * 10
         rw, rh = spr["meta"]["robot"]["size"]
-        sc = services.CARD_SCALE["v"]
+        sc = preferences.CARD_SCALE["v"]
         z, cx, base, dy = 3 * sc, 70 * sc, 186 * sc, dy * sc
         shadow = spr["img"]["shadow"]
         sw = int(rw * z * 1.1 * (1 - min(0.35, abs(dy) / (40 * sc))))
@@ -261,7 +265,6 @@ class PermissionCard:
                               font=self.f(int(9 + 7 * (1 - ph)), "bold"))
 
     def update(self, item):
-        services = self.services
         self._item = item
         self._state = item.get("state", "needs_input")
         req = item.get("request") or {}
@@ -300,7 +303,7 @@ class PermissionCard:
         else:
             self.ask.config(text=item.get("message") or "Waiting for your input")
             self.ask.pack(fill="x")
-        self.wait.config(text=f"waiting {services.ago(item['changed'])}" if item.get("changed") else "")
+        self.wait.config(text=f"waiting {textfmt.ago(item['changed'])}" if item.get("changed") else "")
         can_answer = self.app.answers_enabled(item) and permissions.hook_waiting(item) and not self.sent
         who = "Codex" if item.get("agent") == "codex" else "Claude Code"
         stop = None if can_answer or self.sent or not req else permissions.hook_stop(item, permissions.answers_dir())
@@ -331,11 +334,11 @@ class PermissionCard:
             note = ("This session type (the VS Code extension) sends no permission events, so the pet can't answer for it. "
                     "This is what Claude is asking, so you know what to approve there. Press Go to window to jump there.")
         elif req:
-            if services.ANSWER_WAIT["v"] <= 0:
+            if preferences.ANSWER_WAIT["v"] <= 0:
                 note = ("The pet stopped waiting for this prompt (it was closed or restarted meanwhile). "
                         "Answer in the session window: press Go to window.")
             else:
-                note = (f"The pet's {services.fmt_wait(services.ANSWER_WAIT['v'])} answer window has passed. "
+                note = (f"The pet's {textfmt.fmt_wait(preferences.ANSWER_WAIT['v'])} answer window has passed. "
                         "Answer in the session window: press Go to window.")
         else:
             note = ("No command details were reported for this prompt, so there is nothing to answer here. "
@@ -362,7 +365,7 @@ class PermissionCard:
             self.clearlink.pack_forget()
         if can_answer and not question:
             grant = permissions.timed_grants().get(str(item.get("session_id")))
-            self.timedlink.config(text=(f"Auto approving this session \u00b7 {services.fmt_left(grant['until'] - time.time())} left"
+            self.timedlink.config(text=(f"Auto approving this session \u00b7 {textfmt.fmt_left(grant['until'] - time.time())} left"
                                         if grant else
                                         f"Auto approve this session for {self.app.timed_minutes()} min\u2026"))
             self.timedlink.pack(fill="x", pady=(0, 4), after=self.note)
@@ -378,7 +381,6 @@ class PermissionCard:
 
     def _show_questions(self, req):
         """Build the question blocks once per prompt (the card refreshes every poll: keep what was picked)."""
-        services = self.services
         self.qframe.pack(fill="x")
         readonly = not permissions.hook_waiting({"request": req}) or not self.app.answers_enabled(self._item or {})
         if self._qid == (req.get("id"), readonly):
@@ -399,8 +401,8 @@ class PermissionCard:
             picks = {}
             # Single choice starts on the first option. Never "" as the value: that is Tk's tristate value, which
             # draws every radio button as selected
-            first = next((o["label"] for o in q.get("options") or []), services.NO_CHOICE)
-            choice = tk.StringVar(master=self.win, value=services.NO_CHOICE if multi else first)
+            first = next((o["label"] for o in q.get("options") or []), pet_style.NO_CHOICE)
+            choice = tk.StringVar(master=self.win, value=pet_style.NO_CHOICE if multi else first)
             for opt in q.get("options") or []:
                 row = tk.Frame(block, bg=bg)
                 row.pack(fill="x", pady=1)
@@ -436,7 +438,7 @@ class PermissionCard:
             if multi:
                 pick = tk.Checkbutton(other, text="Your own answer:", variable=own_on, anchor="w")
             else:
-                pick = tk.Radiobutton(other, text="Your own answer:", variable=choice, value=services.OWN_CHOICE, anchor="w",
+                pick = tk.Radiobutton(other, text="Your own answer:", variable=choice, value=pet_style.OWN_CHOICE, anchor="w",
                                       tristatevalue="\x00none")
             pick.configure(bg=bg, fg=fg, activebackground=bg, activeforeground=fg, selectcolor=theme.T["entry_bg"],
                            highlightthickness=0, font=self.f(10, "bold"), cursor="hand2")
@@ -448,7 +450,7 @@ class PermissionCard:
             if multi:
                 own.trace_add("write", lambda *_, v=own_on, o=own: v.set(True) if o.get().strip() else None)
             else:
-                own.trace_add("write", lambda *_, c=choice, o=own: c.set(services.OWN_CHOICE) if o.get().strip() else None)
+                own.trace_add("write", lambda *_, c=choice, o=own: c.set(pet_style.OWN_CHOICE) if o.get().strip() else None)
                 pick.configure(command=lambda e=entry: e.focus_set())
             self._qvars.append((q, multi, choice, picks, own, own_on))
         self.win.after(60, self.apply_scale)
@@ -457,16 +459,15 @@ class PermissionCard:
         """{question text: label} (single choice) or {question text: [labels]} (multi-select); typed answers count
         as a label, but only while its own radio button (check box) is selected. None until every question has an
         answer."""
-        services = self.services
         answers = {}
         for q, multi, choice, picks, own, own_on in self._qvars:
             typed = own.get().strip()
             if multi:
                 value = [label for label, var in picks.items() if var.get()] + ([typed] if typed and own_on.get() else [])
-            elif choice.get() == services.OWN_CHOICE:
+            elif choice.get() == pet_style.OWN_CHOICE:
                 value = typed
             else:
-                value = choice.get() if choice.get() != services.NO_CHOICE else ""
+                value = choice.get() if choice.get() != pet_style.NO_CHOICE else ""
             if not value:
                 return None
             answers[q["question"]] = value
@@ -485,9 +486,8 @@ class PermissionCard:
 
     def _update_status(self, item):
         """A session that isn't asking anything: show what it's doing, with no answer buttons."""
-        services = self.services
         state = item.get("state")
-        self.status.config(text=services.LABELS.get(state, state or ""), fg=services.COLORS.get(state, self.ACCENT))
+        self.status.config(text=pet_style.LABELS.get(state, state or ""), fg=pet_style.COLORS.get(state, self.ACCENT))
         self.head.config(text=item.get("title", "session"))
         self.where.config(text=" · ".join(x for x in (item.get("where"), item.get("detail")) if x))
         for widget in (self.ask, self.desc, self.code):
@@ -495,7 +495,7 @@ class PermissionCard:
         if item.get("message"):
             self.ask.config(text=item["message"])
             self.ask.pack(fill="x")
-        self.wait.config(text=f"since {services.ago(item['changed'])}" if item.get("changed") else "")
+        self.wait.config(text=f"since {textfmt.ago(item['changed'])}" if item.get("changed") else "")
         self.note.config(text="Press Go to window to jump to the session.")
         self.answer_row.pack_forget()
         self.q_row.pack_forget()
@@ -508,17 +508,15 @@ class PermissionCard:
     # ---- size
     def zoom_by(self, step):
         """Ctrl + plus / minus (step 1 / -1) and Ctrl + 0 (back to 100%) on the card."""
-        services = self.services
-        value = 1.0 if step == 0 else services.clamp_card_scale(services.CARD_SCALE["v"] + step * services.CARD_SCALE_STEP)
-        if value != services.CARD_SCALE["v"]:
+        value = 1.0 if step == 0 else preferences.clamp_card_scale(preferences.CARD_SCALE["v"] + step * preferences.CARD_SCALE_STEP)
+        if value != preferences.CARD_SCALE["v"]:
             self.app.set_card_scale(value)
         return "break"
 
     def apply_scale(self):
         """Follow CARD_SCALE: fonts resize by themselves (shared named fonts); wrap widths, the robot and the
         slider are set here."""
-        services = self.services
-        sc = services.CARD_SCALE["v"]
+        sc = preferences.CARD_SCALE["v"]
         try:
             self.size_var.set(sc)
             self.size_label.configure(text=f"{int(round(sc * 100))}%")
@@ -559,7 +557,6 @@ class PermissionCard:
 
     def auto_approve_for_a_while(self):
         """Start the timed auto approve for this session (after its confirmation), and allow the prompt on screen."""
-        services = self.services
         item = next((i for i in self.app._last_items if i["key"] == self.key), {})
         if permissions.timed_grants().get(str(item.get("session_id"))):
             self.answer("allow")

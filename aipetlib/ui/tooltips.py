@@ -1,39 +1,48 @@
 """Session and usage hover tooltip presentation.
 
-The owner supplies widgets and UI state; services supply shared behavior.
+The owning app supplies its widgets and state; shared values come from their owner modules.
 No application entry point is imported by this component.
 """
+import sys
 import time
 import tkinter as tk
+
 import aipet_usage as usage
+
+from .. import geometry
+from .. import text as textfmt
 from ..agents import context as agent_context
+from ..mac_panels import MacOverlayWindow
+from ..runtime import settings
+from . import pet_style
 from . import sprites
 from . import theme
-from .. import geometry
+
+IS_MAC = sys.platform == "darwin"
 
 
-def tooltip_text_scale(app, services):
+def tooltip_text_scale(app):
     return max(0.5, min(2.5, float(app.cfg.get("tooltip_text_scale", 1.0))))
 
 
-def set_tooltip_text_scale(app, services, scale):
+def set_tooltip_text_scale(app, scale):
     app.cfg["tooltip_text_scale"] = round(max(0.5, min(2.5, float(scale))), 2)
-    services.save_setting("tooltip_text_scale", app.cfg["tooltip_text_scale"])
+    settings.save_setting("tooltip_text_scale", app.cfg["tooltip_text_scale"])
     app.hide_tip()
 
 
-def show_tip(app, services, pet):
+def show_tip(app, pet):
     if getattr(app, "_menu_open", False):
         return
     app.hide_tip()
     if not app.cfg.get("session_tooltips", True):
         return
     d = pet.data
-    lines = [d.get("title", ""), f"{d.get('where') or services.SOURCE_NAMES.get(d.get('source'), '')} · {services.LABELS.get(d.get('state'), d.get('state'))}".strip(" ·")]
+    lines = [d.get("title", ""), f"{d.get('where') or pet_style.SOURCE_NAMES.get(d.get('source'), '')} · {pet_style.LABELS.get(d.get('state'), d.get('state'))}".strip(" ·")]
     overrides = app.cfg.get("context_windows")
     if d.get("everyone"):  # compact mode: every session, the one in front first
         lines += [""] + [f"{'> ' if m['key'] == d.get('focus') else '   '}{m.get('title', '')} · "
-                         f"{services.LABELS.get(m.get('state'), m.get('state'))}"
+                         f"{pet_style.LABELS.get(m.get('state'), m.get('state'))}"
                          + (f" · ctx {agent_context.banner_rows([m], overrides)[0]['percent']}%" if m.get("context") else "")
                          for m in d["everyone"][:12]]
     elif d.get("context"):
@@ -43,17 +52,17 @@ def show_tip(app, services, pet):
     if d.get("detail"):
         lines.append(d["detail"])
     if d.get("changed"):
-        lines.append("since " + services.ago(d["changed"]))
+        lines.append("since " + textfmt.ago(d["changed"]))
     if d.get("pid"):
         lines.append(f"PID {d['pid']}" + (" (WSL)" if d.get("env") == "wsl" else ""))
     if d.get("auto_what") and time.time() - (d.get("auto_t") or 0) < 120:
-        lines.append(f"Auto-approved {services.ago(d['auto_t'])}: {d['auto_what'][:90]}")
+        lines.append(f"Auto-approved {textfmt.ago(d['auto_t'])}: {d['auto_what'][:90]}")
     if d.get("auto_approved"):
         lines.append(f"Auto-approved {d['auto_approved']} permission prompt{'s' if d['auto_approved'] != 1 else ''}")
     app._show_tooltip(pet, "\n".join(lines))
 
 
-def show_usage_tip(app, services, pet, detail):
+def show_usage_tip(app, pet, detail):
     if getattr(app, "_menu_open", False):
         return
     app.hide_tip()
@@ -63,11 +72,11 @@ def show_usage_tip(app, services, pet, detail):
     app._show_tooltip(pet, text, usage_detail=detail)
 
 
-def set_tooltip(app, services, kind, on):
+def set_tooltip(app, kind, on):
     if kind not in ("session", "usage"):
         return
     app.cfg[kind + "_tooltips"] = bool(on)
-    services.save_setting(kind + "_tooltips", bool(on))
+    settings.save_setting(kind + "_tooltips", bool(on))
     var = getattr(app, "tooltip_vars", {}).get(kind)
     if var is not None:
         var.set(bool(on))
@@ -76,10 +85,10 @@ def set_tooltip(app, services, kind, on):
         pet._usage_hover = None
 
 
-def _show_tooltip(app, services, pet, text, usage_detail=None):
+def _show_tooltip(app, pet, text, usage_detail=None):
     if getattr(app, "_menu_open", False):
         return
-    if services.IS_MAC:
+    if IS_MAC:
         import mac_statusbar as mac
         with mac.passive_window_mapping():
             app._build_tooltip(pet, text, usage_detail)
@@ -87,23 +96,23 @@ def _show_tooltip(app, services, pet, text, usage_detail=None):
         app._build_tooltip(pet, text, usage_detail)
 
 
-def _build_tooltip(app, services, pet, text, usage_detail):
-    tip = app.tip = services.MacOverlayWindow(app.root) if services.IS_MAC else tk.Toplevel(app.root)
+def _build_tooltip(app, pet, text, usage_detail):
+    tip = app.tip = MacOverlayWindow(app.root) if IS_MAC else tk.Toplevel(app.root)
     # Configure the native panel and position it before it becomes visible.
     tip.withdraw()
     # Cocoa can retain a closed panel through the next event cycle. A unique
     # title keeps native configuration from finding an earlier hover panel.
     tip.title(f"AIPet tooltip {time.monotonic_ns()}")
-    if services.IS_MAC:
+    if IS_MAC:
         tip.attributes("-alpha", 0.0)
     tip.overrideredirect(True)
     tip.attributes("-topmost", True)
-    tip.configure(bg=services.TRANSPARENT)
+    tip.configure(bg=pet_style.TRANSPARENT)
     try:
-        tip.attributes("-transparent", True) if services.IS_MAC else tip.attributes("-transparentcolor", services.TRANSPARENT)
+        tip.attributes("-transparent", True) if IS_MAC else tip.attributes("-transparentcolor", pet_style.TRANSPARENT)
     except tk.TclError:
         pass
-    c = tk.Canvas(tip, bg=services.TRANSPARENT, highlightthickness=0, bd=0)
+    c = tk.Canvas(tip, bg=pet_style.TRANSPARENT, highlightthickness=0, bd=0)
     c.pack()
     title, _, body = text.partition("\n")
     title = title.strip() or "Session details"
@@ -130,12 +139,12 @@ def _build_tooltip(app, services, pet, text, usage_detail):
     tip.update_idletasks()
     # Both session and usage details belong above the pet, clear of its body
     # and badges. Centre on the pet itself, excluding the usage badge gutter.
-    x = pet.canvas.winfo_rootx() + services.px(services.BADGE_GUTTER + getattr(pet, "gutter", 0) + services.PET_W / 2) - tip.winfo_reqwidth() // 2
+    x = pet.canvas.winfo_rootx() + pet_style.px(pet_style.BADGE_GUTTER + getattr(pet, "gutter", 0) + pet_style.PET_W / 2) - tip.winfo_reqwidth() // 2
     y = pet.canvas.winfo_rooty() - tip.winfo_reqheight() - 6
     tip.geometry(geometry.geo(*geometry.fit_on_screen(x, y, tip.winfo_reqwidth(), tip.winfo_reqheight(),
                                     (pet.canvas.winfo_rootx() + 10, pet.canvas.winfo_rooty() + 10), tip)))
     tip.deiconify()
-    if services.IS_MAC:
+    if IS_MAC:
         import mac_statusbar as mac
         # Tk creates/resets the native window on mapping. Keep it invisible
         # until its Space and mouse behavior have been applied.
@@ -152,7 +161,7 @@ def _build_tooltip(app, services, pet, text, usage_detail):
         tip.attributes("-alpha", 1.0)
 
 
-def hide_tip(app, services):
+def hide_tip(app):
     if app.tip:
         app.tip.destroy()
         app.tip = None
