@@ -2,6 +2,7 @@
 
 This component does not import the application entry point.
 """
+import json
 import math
 import sys
 import time
@@ -129,6 +130,7 @@ class PermissionCard:
         # Questions (Claude's AskUserQuestion): one block per question, options as toggles, plus an own-answer field
         self.qframe = tk.Frame(self.body, bg=bg)
         self._qid, self._qvars = None, []
+        self._view, self._timed_grant = None, False  # what the card last laid out (see update)
         self.q_row = tk.Frame(right, bg=bg)
         self.btn_send = tk.Button(self.q_row, text="Send answer", command=self.send_answers,
                                   **dict(theme.button_style("primary"), font=self.f(10, "bold")))
@@ -265,11 +267,50 @@ class PermissionCard:
                               font=self.f(int(9 + 7 * (1 - ph)), "bold"))
 
     def update(self, item):
-        self._item = item
-        self._state = item.get("state", "needs_input")
+        """Called with the session's latest data on every pet refresh (about every 0.7 s). The card is laid out again
+        only when something it shows changed (the prompt, whether it can be answered here, the session's title...);
+        otherwise only the texts that tick are refreshed. Re-packing an unchanged card on every poll was wasted work,
+        and on Windows it left the question options unpainted until the pointer passed over them."""
         req = item.get("request") or {}
-        if self.sent and self._state == "needs_input" and req.get("id") and req.get("id") != getattr(self, "_sent_id", None):
+        state = item.get("state", "needs_input")
+        if self.sent and state == "needs_input" and req.get("id") and req.get("id") != getattr(self, "_sent_id", None):
             self.sent = None  # that prompt is settled and the next queued one is showing: answer it too
+        view = self._view_of(item)
+        self._item, self._state = item, state
+        if view == self._view:
+            return self._tick_texts(item)
+        self._view = view
+        self._render(item)
+
+    def _view_of(self, item):
+        """Everything the card's layout and texts depend on, except the ticking ones (how long it has waited, a timed
+        auto approve's countdown)."""
+        req = item.get("request") or {}
+        can_answer = bool(self.app.answers_enabled(item) and permissions.hook_waiting(item) and not self.sent)
+        stop = None if can_answer or self.sent or not req else permissions.hook_stop(item, permissions.answers_dir())
+        grant = permissions.timed_grants().get(str(item.get("session_id"))) if can_answer else None
+        return (item.get("state", "needs_input"), self.sent, getattr(self, "_sent_id", None),
+                json.dumps(req, sort_keys=True, default=str), item.get("pending", 0), item.get("title"),
+                item.get("where"), item.get("detail"), item.get("agent"), item.get("message"), bool(item.get("changed")),
+                can_answer, bool(self.app.answers_enabled(item)), json.dumps(stop, default=str),
+                self.app.cfg.get("codex_answers", True), preferences.ANSWER_WAIT["v"], grant is not None,
+                self.app.timed_minutes() if can_answer else None)
+
+    def _tick_texts(self, item):
+        if item.get("changed"):
+            prefix = "waiting" if self._state == "needs_input" or self.sent else "since"
+            self.wait.config(text=f"{prefix} {textfmt.ago(item['changed'])}")
+        if self._timed_grant:
+            grant = permissions.timed_grants().get(str(item.get("session_id")))
+            if grant:
+                self.timedlink.config(text=self._timed_text(grant))
+
+    def _timed_text(self, grant):
+        return (f"Auto approving this session \u00b7 {textfmt.fmt_left(grant['until'] - time.time())} left" if grant
+                else f"Auto approve this session for {self.app.timed_minutes()} min\u2026")
+
+    def _render(self, item):
+        req = item.get("request") or {}
         if self._state != "needs_input" and not self.sent:
             return self._update_status(item)
         pending = item.get("pending", 0)
@@ -363,11 +404,11 @@ class PermissionCard:
             self.clearlink.pack(fill="x", pady=(0, 6), after=self.note)
         else:
             self.clearlink.pack_forget()
+        self._timed_grant = False
         if can_answer and not question:
             grant = permissions.timed_grants().get(str(item.get("session_id")))
-            self.timedlink.config(text=(f"Auto approving this session \u00b7 {textfmt.fmt_left(grant['until'] - time.time())} left"
-                                        if grant else
-                                        f"Auto approve this session for {self.app.timed_minutes()} min\u2026"))
+            self.timedlink.config(text=self._timed_text(grant))
+            self._timed_grant = bool(grant)
             self.timedlink.pack(fill="x", pady=(0, 4), after=self.note)
         else:
             self.timedlink.pack_forget()
