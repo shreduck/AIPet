@@ -7,6 +7,12 @@ import aipet_app
 
 
 class MenuTests(unittest.TestCase):
+    def setUp(self):
+        # Menus list live timed auto-approvals from ~/.aipet: never let the machine running the tests change them
+        grants = patch.object(aipet, 'timed_grants', return_value={})
+        grants.start()
+        self.addCleanup(grants.stop)
+
     @patch.object(aipet_app.hi, 'list_backups', return_value=[])
     @patch.object(aipet, 'auto_approve_rules', return_value={})
     def test_tooltip_text_slider_is_beside_pet_size_in_both_menus(self, *_):
