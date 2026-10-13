@@ -13,6 +13,7 @@ from ..runtime import settings
 from . import agent_common as common
 from . import theme
 
+
 def tool(window, name, d=1):
     o = window.opts
     if name == "close":

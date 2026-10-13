@@ -9,7 +9,7 @@ import aipet_app
 class MenuTests(unittest.TestCase):
     def setUp(self):
         # Menus list live timed auto-approvals from ~/.aipet: never let the machine running the tests change them
-        grants = patch.object(aipet, 'timed_grants', return_value={})
+        grants = patch.object(aipet.permissions, 'timed_grants', return_value={})
         grants.start()
         self.addCleanup(grants.stop)
 
@@ -34,7 +34,7 @@ class MenuTests(unittest.TestCase):
     def test_sound_choices_on_mac_and_windows(self, *_):
         app = self.make_app()
         for mac, name, system_label in ((True, 'posix', 'macOS sounds'), (False, 'nt', 'Windows sounds')):
-            with patch.object(aipet_app, 'IS_MAC', mac), patch.object(aipet_app.os, 'name', name):
+            with patch.object(aipet_app.app_menus, 'IS_MAC', mac), patch.object(aipet_app.os, 'name', name):
                 for selected in ('chimes', 'system'):
                     app.pet.cfg['sound_style'] = selected
                     behavior = next(e for e in app._mac_menu_spec() if e and e['label'] == 'Behavior')

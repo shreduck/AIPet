@@ -41,8 +41,6 @@ except ImportError:  # still runs, just without a tray icon
     pystray = None
 
 APP_NAME = "AIPet"
-PET_STYLES = [("robot", "Robot"), ("mole", "Mole"), ("cat", "Cat")]
-# Remnants of earlier versions, kept under Appearance > Alpha
 CONFIG_WATCH_MS = 1500  # how often config.json is checked for hand edits
 RESTART_KEYS = {"workbench", "claude_code", "click_through", "max_pets"}  # read once at start
 
@@ -55,13 +53,13 @@ def config_stamp():
         return None
 
 
-BETA_STYLES = {"mole": "The very first pet, rising from a dirt mound.", "cat": "An early experiment: a round cat."}
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 LAUNCH_AGENT = os.path.expanduser("~/Library/LaunchAgents/com.aipet.app.plist")
 RANK = {"needs_input": 0, "error": 1, "working": 2, "done": 3, "idle": 4}
 _mutex = None
 SETUP_MARKER = os.path.join(core.HOME_DIR, "setup-done")
-DEBUG_FLAG = os.path.join(core.HOME_DIR, "debug-events")  # while it exists, hooks append to events.log
+from aipetlib.runtime.paths import DEBUG_FLAG  # noqa: E402
+from aipetlib.ui.pet_style import BETA_STYLES, PET_STYLES  # noqa: E402
 
 
 # --------------------------------------------------------------------------- helpers
@@ -730,6 +728,15 @@ class TrayApp:
                      f"+{max(0, (win.winfo_screenheight() - win.winfo_reqheight()) // 3)}")
 
     # ---- Auto approve: answer every permission prompt of chosen hook configs with "allow" (all off by default)
+    # ---- hook targets, as the shared menu definitions ask for them (they don't import the installer)
+    LOCAL_TARGET = hi.LOCAL  # key of the machine this app runs on
+
+    def hook_backups(self, key):
+        return hi.list_backups(key)
+
+    def is_codex_target(self, key):
+        return hi.is_codex(key)
+
     def auto_sections(self):
         """[(section title, [(label, key)])] for every hook config that can be auto-approved, plus any switched-on key
         that isn't detected right now, so it can always be switched off again."""
@@ -1260,7 +1267,7 @@ class TrayApp:
         return pystray.Menu(entries)
 
     def _context_menu_spec(self, pet):
-        return app_menus._context_menu_spec(self, sys.modules[__name__], pet)
+        return app_menus._context_menu_spec(self, pet)
 
     def _fast_cancel_item(self, pet, session):
         """Fix fast cancel: a prompt cancelled the instant it was sent leaves no trace Claude Code reports, so the pet
@@ -1278,10 +1285,10 @@ class TrayApp:
 
     # Shared menu specification; all actions are executed on the Tk thread.
     def _mac_menu_spec(self, settings=False):
-        return app_menus._mac_menu_spec(self, sys.modules[__name__], settings)
+        return app_menus._mac_menu_spec(self, settings)
 
     def _live_spec(self, item, settings=False):
-        return app_menus._live_spec(self, sys.modules[__name__], item, settings)
+        return app_menus._live_spec(self, item, settings)
 
     def _start_timed(self, d):
         if self.pet.start_timed_approve(d):

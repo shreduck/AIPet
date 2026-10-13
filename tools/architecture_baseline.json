@@ -1,13 +1,9 @@
 {
   "module_services": {
-    "aipet_app.py": 3,
     "aipet_hook.py": 1
   },
-  "services_core": {
-    "aipetlib/ui/app_menus.py": 20
-  },
+  "services_core": {},
   "services_refs": {
-    "aipetlib/hook_events.py": 41,
-    "aipetlib/ui/app_menus.py": 39
+    "aipetlib/hook_events.py": 41
   }
 }

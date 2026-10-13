@@ -11,6 +11,7 @@ from ..agents.records import fmt_tokens
 from . import agent_common as common
 from . import sprites
 
+
 def robot(window, state, height):
     key = (state, height, window.theme)
     if key not in window._robots:

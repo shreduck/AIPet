@@ -10,6 +10,7 @@ from ..agents import log_filters
 from ..agents.records import fmt_tokens, short
 from . import agent_common as common
 
+
 def _arrange(window):
     """The logs below, above, left or right of the graph (settings: logs position), split by a draggable line."""
     side = window.opts.get("log_side", "bottom")

@@ -12,6 +12,7 @@ from ..runtime import settings
 from . import pet_style
 from . import theme
 
+
 def set_size(app, size):
     app.set_scale(float(size) * preferences.SCALE_UNIT)
     app.reposition()

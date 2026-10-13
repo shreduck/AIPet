@@ -8,6 +8,7 @@ import tkinter as tk
 from .. import permissions as permission_rules
 from . import agent_common as common
 
+
 def _draw_prompt(window):
     item = window.item
     who = common.prompt_agent(window.net, item) if window.net["agents"] else None

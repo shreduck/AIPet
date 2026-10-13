@@ -1,15 +1,25 @@
 """Shared settings, tray, pet context and live-management menu definitions.
 
-The owner supplies widgets and UI state; services supply shared behavior.
+The owning app supplies its actions and state; shared values come from their owner modules.
 No application entry point is imported by this component.
 """
 import os
+import sys
 import threading
 import time
+
+from .. import permissions
+from .. import sessions as session_text
+from .. import text as textfmt
+from ..runtime import paths
+from ..runtime import preferences
+from . import pet_style
 from . import theme
 
+IS_MAC = sys.platform == "darwin"
 
-def _context_menu_spec(app, services, pet):
+
+def _context_menu_spec(app, pet):
     def item(label, action, enabled=True):
         return {"label": label, "action": action, "enabled": enabled}
     session = app.pet._menu_session(pet)
@@ -32,7 +42,7 @@ def _context_menu_spec(app, services, pet):
                                   {"label": "This session", "submenu": session_actions}, None] + shared[2:]
 
 
-def _mac_menu_spec(app, services, settings=False):
+def _mac_menu_spec(app, settings=False):
     """settings=True: the settings window's version, with a few entries that only make sense there."""
     def item(label, action=None, checked=None, enabled=True, submenu=None, default=False, help=None, icon=None,
              choice=False, slider=None):
@@ -54,7 +64,7 @@ def _mac_menu_spec(app, services, settings=False):
 
     def target(name, key):
         st = app.status.get(key, "checking…")
-        backups = services.hi.list_backups(key)[:15]
+        backups = app.hook_backups(key)[:15]
         restore = [item(f"{b['when']} - {b['reason']}" + ("  [original]" if b["original"] else ""),
                         lambda b=b: app.confirm_restore(key, b)) for b in backups] or [item("No backups yet", enabled=False)]
         return item(f"{'✓ ' if st.startswith('installed') else ''}{name}  ({st})", submenu=[
@@ -62,7 +72,7 @@ def _mac_menu_spec(app, services, settings=False):
                  help="Adds AIPet's hooks to this install's settings, or brings them up to date. Your own hooks stay."),
             item("Remove hooks", lambda: app.confirm(key, False),
                  help="Takes AIPet's hooks out again. The pet stops seeing sessions from here."),
-            *([] if services.hi.is_codex(key) else [item(
+            *([] if app.is_codex_target(key) else [item(
                 "Claude usage status line...", lambda: app.confirm_usage(key),
                 help="Lets the pet show Claude's usage limits by recording them from Claude Code's status line.")]),
             None,
@@ -74,7 +84,7 @@ def _mac_menu_spec(app, services, settings=False):
         ], help=f"Hook status: {st}.")
 
     refresh = lambda: threading.Thread(target=app.refresh_targets, daemon=True).start()  # noqa: E731
-    claude = [target("This Mac" if services.IS_MAC else "This PC (Windows)", services.hi.LOCAL)]
+    claude = [target("This Mac" if IS_MAC else "This PC (Windows)", app.LOCAL_TARGET)]
     claude += [target(f"WSL: {name}", "wsl:" + name) for name, _ in app.distros]
     claude += [None, item("Cowork (Claude desktop app)...", app.show_cowork,
                           help="How to let the pet follow Cowork sessions in the Claude desktop app."),
@@ -98,7 +108,7 @@ def _mac_menu_spec(app, services, settings=False):
         item("Clear finished sessions", app.pet.clear_finished,
              help="Removes the pets of sessions that are done."),
         item("Open config and data folder", app.open_config, icon="home",
-             help=f"{services.core.HOME_DIR}: settings (config.json, auto-approve.json), sessions, logs and backups."),
+             help=f"{paths.HOME_DIR}: settings (config.json, auto-approve.json), sessions, logs and backups."),
         *([item("Copy settings guide for AI", app.copy_ai_guide,
                 help="Copies a Markdown guide to AIPet's settings files (where they are, every option and its "
                      "values) to the clipboard. Paste it into Claude, Codex or another assistant and ask it to "
@@ -108,10 +118,10 @@ def _mac_menu_spec(app, services, settings=False):
              help="Your running sessions right now: give one a timed auto approve, and see its subagents."),
         item("Appearance", icon="palette", help="How the pet and its windows look.", submenu=[
             item("Pet style", choice=True, help="Which creature sits on your screen.",
-                 submenu=[item(label, lambda k=key: app.set_style(k), checked=services.core.STYLE["v"] == key)
-                          for key, label in services.PET_STYLES if key not in services.BETA_STYLES]),
+                 submenu=[item(label, lambda k=key: app.set_style(k), checked=preferences.STYLE["v"] == key)
+                          for key, label in pet_style.PET_STYLES if key not in pet_style.BETA_STYLES]),
             item("Pet size...", app.pet.open_size_slider, help="Make the pet bigger or smaller.",
-                 slider={"value": services.core.SCALE["v"] / services.core.SCALE_UNIT, "min": 0.3, "max": 3.0, "step": 0.05,
+                 slider={"value": preferences.SCALE["v"] / preferences.SCALE_UNIT, "min": 0.3, "max": 3.0, "step": 0.05,
                          "set": app.pet.set_size, "format": lambda v: f"{int(round(v * 100))}%"}),
             item("Tooltip text size...", app.pet.open_tooltip_text_slider,
                  help="Text in both session and usage tooltips. 100% is the default.",
@@ -129,8 +139,8 @@ def _mac_menu_spec(app, services, settings=False):
                  help="Dark name tags, bubbles and windows."),
             item("Window scale", choice=True,
                  help="Text and icons in this window. Also Ctrl + plus / minus / 0, or Ctrl + mouse wheel here.",
-                 slider={"value": app.settings_zoom(), "min": services.aipet_settings.ZOOM_MIN,
-                         "max": services.aipet_settings.ZOOM_MAX, "step": services.aipet_settings.ZOOM_STEP,
+                 slider={"value": app.settings_zoom(), "min": preferences.ZOOM_MIN,
+                         "max": preferences.ZOOM_MAX, "step": preferences.ZOOM_STEP,
                          "set": app.set_settings_zoom, "format": lambda v: f"{int(round(v * 100))}%"},
                  submenu=[item(f"{int(v * 100)}%", lambda v=v: app.set_settings_zoom(v),
                                checked=abs(app.settings_zoom() - v) < 0.01)
@@ -149,15 +159,15 @@ def _mac_menu_spec(app, services, settings=False):
             item("Alpha", icon="wrench",
                  help="Pet styles left over from earlier AIPet versions, no longer looked after. "
                       "Switch one off to go back to the robot.",
-                 submenu=[item(f"{label} style", lambda k=key: app.set_style("robot" if services.core.STYLE["v"] == k else k),
-                               checked=services.core.STYLE["v"] == key, help=services.BETA_STYLES[key])
-                          for key, label in services.PET_STYLES if key in services.BETA_STYLES]),
+                 submenu=[item(f"{label} style", lambda k=key: app.set_style("robot" if preferences.STYLE["v"] == k else k),
+                               checked=preferences.STYLE["v"] == key, help=pet_style.BETA_STYLES[key])
+                          for key, label in pet_style.PET_STYLES if key in pet_style.BETA_STYLES]),
         ]),
         item("Behavior", icon="gear", help="What the pet does and when.", submenu=[
             *([item("Show on all desktops", lambda: app.pet.set_all_spaces(not cfg.get("all_spaces", True)),
                     checked=bool(cfg.get("all_spaces", True)),
                     help="Keep the pet visible when you switch virtual desktops" +
-                         (" or Spaces." if services.IS_MAC else "."))] if services.IS_MAC or os.name == "nt" else []),
+                         (" or Spaces." if IS_MAC else "."))] if IS_MAC or os.name == "nt" else []),
             item("Reset pet position (main screen)", app.reset_position,
                  help="Moves the pet back to the main screen, in case it ended up out of sight."),
             item("Click goes to the session's window",
@@ -175,8 +185,8 @@ def _mac_menu_spec(app, services, settings=False):
                         submenu=[item(text, lambda v=value: app.pet.set_sound_style(v),
                                       checked=cfg.get("sound_style", "chimes") == value)
                                  for value, text in (("chimes", "AIPet chimes (default)"),
-                                                     ("system", "macOS sounds" if services.IS_MAC else "Windows sounds"))])]
-                  if services.IS_MAC or os.name == "nt" else []),
+                                                     ("system", "macOS sounds" if IS_MAC else "Windows sounds"))])]
+                  if IS_MAC or os.name == "nt" else []),
                 item("Test sounds", icon="speaker", help="Hear each sound the pet makes, and when it plays it.",
                      submenu=[
                          item("Needs you: a permission prompt or a question", lambda: app.pet.beep(True, force=True),
@@ -190,23 +200,23 @@ def _mac_menu_spec(app, services, settings=False):
             item("Session timing", icon="clock", help="How long the pet waits for things.", submenu=[
                 item("Answer timeout...", app.pet.open_answer_slider,
                      help="How long a permission prompt waits for your answer from the pet. 0 means no limit.",
-                     slider={"value": services.core.ANSWER_WAIT["v"], "min": 0, "max": services.core.MAX_WAIT, "step": 15,
-                             "set": app.pet.set_answer_wait, "format": services.core.fmt_wait}),
+                     slider={"value": preferences.ANSWER_WAIT["v"], "min": 0, "max": preferences.MAX_WAIT, "step": 15,
+                             "set": app.pet.set_answer_wait, "format": textfmt.fmt_wait}),
                 item("Clear finished after...", app.pet.open_done_slider,
                      help="How long a finished session's pet stays before it leaves. 0 keeps it until you dismiss it.",
-                     slider={"value": services.core.DONE_TIMEOUT["v"], "min": 0, "max": services.core.MAX_WAIT // 60, "step": 1,
+                     slider={"value": preferences.DONE_TIMEOUT["v"], "min": 0, "max": preferences.MAX_WAIT // 60, "step": 1,
                              "set": app.pet.set_done_timeout,
                              "format": lambda v: "never" if v <= 0 else f"{int(v)} min"}),
                 item("Health check every...", app.pet.open_health_slider,
                      help="How often the pet checks that sessions are still running. 0 turns the check off.",
-                     slider={"value": services.core.HEALTH["v"], "min": 0, "max": services.core.MAX_HEALTH, "step": 5,
+                     slider={"value": preferences.HEALTH["v"], "min": 0, "max": preferences.MAX_HEALTH, "step": 5,
                              "set": app.pet.set_health_interval,
-                             "format": lambda v: "off" if v <= 0 else services.core.fmt_wait(v)}),
+                             "format": lambda v: "off" if v <= 0 else textfmt.fmt_wait(v)}),
             ]),
             None,
-            *([item("Start at login" if services.IS_MAC else "Start with Windows", app.toggle_autostart,
+            *([item("Start at login" if IS_MAC else "Start with Windows", app.toggle_autostart,
                     checked=app.c_autostart, help="Start AIPet automatically when you sign in.")]
-              if services.IS_MAC or os.name == "nt" else []),
+              if IS_MAC or os.name == "nt" else []),
         ]),
         item("Integrations", icon="plug", help="Where the pet gets its sessions from.", submenu=[
             item("Claude Code hooks", icon="link", submenu=claude,
@@ -249,7 +259,7 @@ def _mac_menu_spec(app, services, settings=False):
                 item("Save diagnostics...", app.pet.save_diagnostics,
                      help="Saves a report you can attach to a bug report."),
                 item("Open config folder", app.open_config, help="Where AIPet keeps its settings and logs."),
-                item("Log hook events (debug)", app.toggle_debug, checked=os.path.exists(services.DEBUG_FLAG),
+                item("Log hook events (debug)", app.toggle_debug, checked=os.path.exists(paths.DEBUG_FLAG),
                      help="Writes what the hooks report to events.log (no prompt text)."),
             ]),
         ]),
@@ -258,20 +268,20 @@ def _mac_menu_spec(app, services, settings=False):
     ]
 
 
-def _live_spec(app, services, item, settings=False):
+def _live_spec(app, item, settings=False):
     """Live Management: the timed auto approve (per session, with its countdown) and each session's subagents.
     Menus show exact countdowns (they are built when opened); the settings window rounds to minutes so it
     doesn't redraw every second."""
-    grants, now = services.core.timed_grants(), time.time()
+    grants, now = permissions.timed_grants(), time.time()
     default = app.pet.timed_minutes()
 
     def left(grant):
         secs = grant["until"] - now
-        return f"{max(1, int(-(-secs // 60)))} min left" if settings else f"{services.core.fmt_left(secs)} left"
+        return f"{max(1, int(-(-secs // 60)))} min left" if settings else f"{textfmt.fmt_left(secs)} left"
 
     spec = [item("Timed auto approve length", choice=True,
                  help='How long "Auto approve for ..." lasts. Every start asks you to confirm first.',
-                 slider={"value": default, "min": services.core.TIMED_MIN, "max": services.core.TIMED_MAX, "step": 1,
+                 slider={"value": default, "min": permissions.TIMED_MIN, "max": permissions.TIMED_MAX, "step": 1,
                          "set": app.pet.set_timed_minutes, "format": lambda v: f"{int(v)} min"},
                  submenu=[item(f"{m} min", lambda m=m: app.pet.set_timed_minutes(m), checked=default == m)
                           for m in (5, 10, 15, 30, 60)]),
@@ -284,7 +294,7 @@ def _live_spec(app, services, item, settings=False):
         name = d.get("title") or "session"
         if d.get("conv"):
             name += f" · {d['conv']}"
-        state = services.core.LABELS.get(d.get("state"), d.get("state") or "")
+        state = pet_style.LABELS.get(d.get("state"), d.get("state") or "")
         agents = d.get("agent_types") or []
         entries = ([item(f"Auto approving · {left(grant)}", enabled=False),
                     item("Stop auto approving", lambda sid=d["session_id"]: app._stop_timed(sid))]
@@ -296,7 +306,7 @@ def _live_spec(app, services, item, settings=False):
                                enabled=False)]
         entries += [item(f"• {a}", enabled=False) for a in agents]
         entries += [None, item("Agent network...", lambda k=d.get("key"): app.show_agent_network(k))]
-        said = services.core.last_said(d)  # the newest reply phrase or your latest prompt, from the transcript
+        said = session_text.last_said(d)  # the newest reply phrase or your latest prompt, from the transcript
         who = "Codex" if d.get("agent") == "codex" else "Claude"
         said_text = (f"{who if said[0] == 'ai' else 'You'}: “{said[1]}”" if said else "")
         if said_text:

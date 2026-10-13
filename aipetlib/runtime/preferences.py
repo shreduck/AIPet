@@ -14,6 +14,7 @@ HEALTH = {"v": 15}  # seconds between checks that a working session's process st
 MAX_HEALTH = 300
 CARD_SCALE = {"v": 1.0}  # the permission / question card's size (its slider, Ctrl + plus / minus / 0, Ctrl + wheel)
 CARD_SCALE_MIN, CARD_SCALE_MAX, CARD_SCALE_STEP = 0.5, 1.5, 0.1
+ZOOM_MIN, ZOOM_MAX, ZOOM_STEP = 0.5, 1.5, 0.1  # the AIPet menu window's zoom
 
 
 def clamp_health(v):
@@ -47,5 +48,12 @@ def clamp_scale(v):
 def clamp_card_scale(value):
     try:
         return round(min(CARD_SCALE_MAX, max(CARD_SCALE_MIN, float(value))), 2)
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def clamp_zoom(value):
+    try:
+        return round(min(ZOOM_MAX, max(ZOOM_MIN, float(value))), 2)
     except (TypeError, ValueError):
         return 1.0

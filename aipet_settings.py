@@ -143,15 +143,8 @@ def draw_icon(canvas, name, color=None, x=0, y=0, px=2, tile=True, bright=False)
                 dot(c + off, r + off, color)
 
 
-ZOOM_MIN, ZOOM_MAX, ZOOM_STEP = 0.5, 1.5, 0.1
+from aipetlib.runtime.preferences import ZOOM_MAX, ZOOM_MIN, ZOOM_STEP, clamp_zoom  # noqa: E402,F401
 BASE_SCALE = 1.5  # "100%" is drawn half again as big as the pet's other windows: easier to read
-
-
-def clamp_zoom(value):
-    try:
-        return round(min(ZOOM_MAX, max(ZOOM_MIN, float(value))), 2)
-    except (TypeError, ValueError):
-        return 1.0
 
 
 class SettingsWindow:

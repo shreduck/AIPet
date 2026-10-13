@@ -109,3 +109,8 @@ def rescale_card_fonts():
 
 NO_CHOICE = "\x00none"  # "nothing picked" for a question's radio buttons (Tk draws "" as all of them selected)
 OWN_CHOICE = "\x00own"  # the "Your own answer" radio button: send the typed text
+
+
+PET_STYLES = [("robot", "Robot"), ("mole", "Mole"), ("cat", "Cat")]
+# Remnants of earlier versions, kept under Appearance > Alpha
+BETA_STYLES = {"mole": "The very first pet, rising from a dirt mound.", "cat": "An early experiment: a round cat."}

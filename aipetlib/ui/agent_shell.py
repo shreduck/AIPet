@@ -11,6 +11,7 @@ from ..agents.stats import network_stats
 from . import agent_common as common
 from . import theme
 
+
 def _build(window):
     s = window._font_scale()
     window.f_main = tkfont.Font(root=window.win, family=theme.UI_FONT, size=max(5, int(round(8 * s))))
