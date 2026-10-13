@@ -40,6 +40,44 @@ class MenuTests(unittest.TestCase):
                         entry['action']()
                         app.pet.set_sound_style.assert_called_with(value)
 
+    @patch.object(aipet_app.hi, 'list_backups', return_value=[])
+    @patch.object(aipet, 'auto_approve_rules', return_value={})
+    def test_tray_menu_built_off_the_tk_thread_never_calls_tk(self, *_):
+        """The Windows tray builds its menu on pystray's thread. A Tk call from there (an agent window's
+        winfo_exists) waits for the Tk thread, and after Quit forever: the process and its tray icon stayed alive."""
+        import threading
+        app = self.make_app()
+        app._tk_thread = threading.current_thread()
+        calls = []
+        window = MagicMock()
+        window.alive.side_effect = lambda: calls.append(threading.current_thread().name) or True
+        app.agents_wins = {'k': window}
+        self.assertTrue(app.agent_network_open())  # on the Tk thread: asks the window and caches the answer
+        self.assertEqual(calls, ['MainThread'])
+        found = {}
+
+        def walk(spec):
+            for e in spec or []:
+                if e:
+                    yield e
+                    yield from walk(e.get('submenu'))
+
+        def tray():
+            try:
+                found['checked'] = [e['checked'] for e in walk(app._mac_menu_spec())
+                                    if e['label'] == 'Agent network window']
+            except Exception as e:  # reported below
+                found['error'] = e
+
+        worker = threading.Thread(target=tray, name='tray')
+        worker.start()
+        worker.join(5)
+        self.assertEqual(calls, ['MainThread'])  # nothing asked Tk from the tray thread
+        self.assertNotIn('error', found)
+        self.assertTrue(found['checked'] and all(found['checked']))  # the cached answer
+        app.agents_wins = {}
+        self.assertFalse(app.agent_network_open())
+
     def make_app(self):
         app = object.__new__(aipet_app.TrayApp)
         app.pet = MagicMock(cfg=dict(aipet.DEFAULT_CONFIG))

@@ -323,6 +323,8 @@ class TrayApp:
         self.c_autostart = autostart_enabled()
         self.c_notify = bool(self.pet.cfg.get("notifications", False))
         self.c_wb = "off"
+        self.c_agent_open = False  # whether an agent network window is open, for the tray menu (see agent_network_open)
+        self._tk_thread = threading.current_thread()
         self.c_auto = core.auto_approve_targets()  # hook configs with auto-approval on (all off by default)
         self.version = upd.current_version()
         self.update_state = upd.State(core.HOME_DIR)
@@ -370,6 +372,7 @@ class TrayApp:
             print(f"[aipet] ui error: {e}", file=sys.stderr)
         self.c_muted = self.pet.muted.get()
         self.c_wb = self.pet.wb.status if self.pet.wb else "off"
+        self.agent_network_open()  # refresh the cached answer the tray menu reads
         self.update_tray()
         self.root.after(250, self.pump)
 
@@ -1329,7 +1332,13 @@ class TrayApp:
         return wins
 
     def agent_network_open(self):
-        return bool(self._agent_windows())
+        """Whether an agent network window is open. The Windows tray builds its menu on pystray's own thread, which
+        must never call into Tk: a Tk call from another thread waits for the Tk thread, and after Quit that wait never
+        ends, so the tray thread (and the process, with its icon) would stay alive. Off the Tk thread this returns the
+        answer last cached on it (by pump, the menus and the toggles)."""
+        if threading.current_thread() is getattr(self, "_tk_thread", threading.main_thread()):
+            self.c_agent_open = bool(self._agent_windows())
+        return getattr(self, "c_agent_open", False)
 
     def agent_network_separate(self):
         return aipet_agents_window.load_options(self.pet.cfg)["separate"]
