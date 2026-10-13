@@ -5,6 +5,8 @@ This component does not import the application entry point.
 import math
 import time
 import tkinter as tk
+from . import sprites
+from . import theme
 
 
 class PermissionCard:
@@ -22,7 +24,7 @@ class PermissionCard:
         self.app, self.key, self._shown, self.sent = app, key, None, None
         self.pinned = item.get("state") != "needs_input"  # opened from the menu: not a prompt that closes when answered
         self._after, self._t0, self._moved, self._size = None, time.time(), False, None
-        bg, fg, msg_fg, muted = services.T["bubble_bg"], services.T["bubble_fg"], services.T["bubble_msg"], services.T["bubble_muted"]
+        bg, fg, msg_fg, muted = theme.T["bubble_bg"], theme.T["bubble_fg"], theme.T["bubble_msg"], theme.T["bubble_muted"]
         w = self.win = services.MacOverlayWindow(app.root) if services.IS_MAC else tk.Toplevel(app.root)
         w.withdraw()
         w.title(f"AIPet permission — {key}")
@@ -38,7 +40,7 @@ class PermissionCard:
         cols = tk.Frame(card, bg=bg)
         cols.pack(fill="both", padx=16, pady=(12, 14))
 
-        spr = services.load_sprites()
+        spr = sprites.load_sprites()
         self.robot = None
         left = tk.Frame(cols, bg=bg)
         left.pack(side="left", anchor="n", fill="y", padx=(0, 16))
@@ -54,8 +56,8 @@ class PermissionCard:
                                    font=self.f(8), width=5, anchor="e")
         self.size_scale = tk.Scale(size_row, from_=services.CARD_SCALE_MIN, to=services.CARD_SCALE_MAX, resolution=services.CARD_SCALE_STEP,
                                    orient="horizontal", variable=self.size_var, showvalue=False, length=90,
-                                   sliderlength=14, width=8, bg=services.T["primary"], troughcolor=services.T["entry_bg"],
-                                   activebackground=services.T["primary_active"], sliderrelief="flat", highlightthickness=0,
+                                   sliderlength=14, width=8, bg=theme.T["primary"], troughcolor=theme.T["entry_bg"],
+                                   activebackground=theme.T["primary_active"], sliderrelief="flat", highlightthickness=0,
                                    bd=0, relief="flat",
                                    command=lambda v: self.size_label.configure(text=f"{int(round(float(v) * 100))}%"))
         self.size_scale.pack(side="left")
@@ -84,7 +86,7 @@ class PermissionCard:
         self.status.pack(fill="x")
         self.where = tk.Label(right, bg=bg, fg=muted, anchor="w", justify="left", wraplength=430, font=self.f(8))
         self.where.pack(fill="x", pady=(2, 0))
-        tk.Frame(right, bg=services.T["border"], height=1).pack(fill="x", pady=8)
+        tk.Frame(right, bg=theme.T["border"], height=1).pack(fill="x", pady=8)
         for widget in (top, self.head):  # drag the card by its header
             widget.bind("<ButtonPress-1>", self._drag_start)
             widget.bind("<B1-Motion>", self._drag_move)
@@ -94,7 +96,7 @@ class PermissionCard:
         self.ask = tk.Label(self.body, bg=bg, fg=fg, anchor="w", justify="left", wraplength=430, font=self.f(11, "bold"))
         self.desc = tk.Label(self.body, bg=bg, fg=msg_fg, anchor="w", justify="left", wraplength=430, font=self.f(10))
         self.code = tk.Text(self.body, height=1, width=60, wrap="word", bg="#0b1220", fg="#d1fae5", relief="flat",
-                            borderwidth=0, highlightthickness=0, padx=10, pady=8, font=self.f(9, family=services.MONO_FAMILY), state="disabled",
+                            borderwidth=0, highlightthickness=0, padx=10, pady=8, font=self.f(9, family=sprites.MONO_FAMILY), state="disabled",
                             insertbackground="#d1fae5")
         wait_row = tk.Frame(right, bg=bg)
         wait_row.pack(fill="x", pady=(8, 0))
@@ -104,8 +106,8 @@ class PermissionCard:
                                highlightthickness=1, highlightbackground=self.ACCENT, highlightcolor=self.ACCENT,
                                font=self.f(9, "bold"))
         self.golink.bind("<Button-1>", lambda e: self.go())
-        self.golink.bind("<Enter>", lambda e: self.golink.configure(bg=services.T["btn_active"]))
-        self.golink.bind("<Leave>", lambda e: self.golink.configure(bg=services.T["bubble_bg"]))
+        self.golink.bind("<Enter>", lambda e: self.golink.configure(bg=theme.T["btn_active"]))
+        self.golink.bind("<Leave>", lambda e: self.golink.configure(bg=theme.T["bubble_bg"]))
         self.note = tk.Label(right, bg=bg, fg=muted, anchor="w", justify="left", wraplength=430, font=self.f(8))
         self.note.pack(fill="x", pady=(2, 8))
         # Escape hatch for a prompt that is gone (its agent died, it was settled elsewhere) but still shows here
@@ -113,7 +115,7 @@ class PermissionCard:
                                   anchor="w", font=self.f(8, "underline"))
         self.clearlink.bind("<Button-1>", lambda e: self.clear_prompt())
         # Timed auto approve for this session (asks to confirm first)
-        self.timedlink = tk.Label(right, bg=bg, fg=services.themed_color("#b45309"), cursor="hand2", anchor="w",
+        self.timedlink = tk.Label(right, bg=bg, fg=theme.themed_color("#b45309"), cursor="hand2", anchor="w",
                                   font=self.f(8, "underline"))
         self.timedlink.bind("<Button-1>", lambda e: self.auto_approve_for_a_while())
         # Questions (Claude's AskUserQuestion): one block per question, options as toggles, plus an own-answer field
@@ -121,22 +123,22 @@ class PermissionCard:
         self._qid, self._qvars = None, []
         self.q_row = tk.Frame(right, bg=bg)
         self.btn_send = tk.Button(self.q_row, text="Send answer", command=self.send_answers,
-                                  **dict(services.button_style("primary"), font=self.f(10, "bold")))
+                                  **dict(theme.button_style("primary"), font=self.f(10, "bold")))
         self.btn_send.pack(side="right", ipady=2)
         self.answer_row = tk.Frame(right, bg=bg)
-        self.btn_deny = tk.Button(self.answer_row, text="Deny", width=12, bg=bg, fg=services.themed_color("#dc2626"),
-                                  activebackground=services.T["btn_active"], activeforeground=services.themed_color("#b91c1c"),
-                                  relief="flat", bd=0, highlightthickness=1, highlightbackground=services.themed_color("#dc2626"),
+        self.btn_deny = tk.Button(self.answer_row, text="Deny", width=12, bg=bg, fg=theme.themed_color("#dc2626"),
+                                  activebackground=theme.T["btn_active"], activeforeground=theme.themed_color("#b91c1c"),
+                                  relief="flat", bd=0, highlightthickness=1, highlightbackground=theme.themed_color("#dc2626"),
                                   cursor="hand2",
                                   font=self.f(10, "bold"), command=lambda: self.answer("deny"))
-        dark = services.T.get("name") == "dark"  # dark theme: black text on a brighter green
+        dark = theme.T.get("name") == "dark"  # dark theme: black text on a brighter green
         allow_fg, allow_bg, allow_active = ("#111827", "#22c55e", "#16a34a") if dark else ("white", "#16a34a", "#15803d")
         self.btn_allow = tk.Button(self.answer_row, text="Allow once", width=14, bg=allow_bg, fg=allow_fg,
                                    activebackground=allow_active, activeforeground=allow_fg, relief="flat", cursor="hand2",
                                    font=self.f(10, "bold"), command=lambda: self.answer("allow"))
         if services.IS_MAC:
-            self.btn_allow.configure(**services.button_style("primary"))
-            self.btn_deny.configure(**services.button_style("danger"))
+            self.btn_allow.configure(**theme.button_style("primary"))
+            self.btn_deny.configure(**theme.button_style("danger"))
         # Allow + whitelist: allows this one and adds it to the hook config's auto-approve whitelist (lighter green)
         wl_bg, wl_fg, wl_active = ("#14532d", "#bbf7d0", "#166534") if dark else ("#dcfce7", "#166534", "#bbf7d0")
         self.btn_whitelist = tk.Button(self.answer_row, text="Allow + whitelist", bg=wl_bg, fg=wl_fg,
@@ -226,7 +228,7 @@ class PermissionCard:
 
     def _draw_robot(self, t):
         services = self.services
-        spr = services.load_sprites()
+        spr = sprites.load_sprites()
         if not spr:
             return
         c = self.robot
@@ -235,8 +237,8 @@ class PermissionCard:
             face, state, dy = "joy", "done", -abs(math.sin(t * 6)) * 4
         elif self.sent == "Deny":
             face, state, dy = "worried", "error", 0.0
-        elif getattr(self, "_state", "needs_input") != "needs_input" and self._state in services.STATE_FACE:
-            face, state, dy = services.STATE_FACE[self._state], self._state, -abs(math.sin(t * 2)) * 3
+        elif getattr(self, "_state", "needs_input") != "needs_input" and self._state in sprites.STATE_FACE:
+            face, state, dy = sprites.STATE_FACE[self._state], self._state, -abs(math.sin(t * 2)) * 3
         else:
             face, state, dy = "ask", "needs_input", -abs(math.sin(t * 4)) * 10
         rw, rh = spr["meta"]["robot"]["size"]
@@ -244,11 +246,11 @@ class PermissionCard:
         z, cx, base, dy = 3 * sc, 70 * sc, 186 * sc, dy * sc
         shadow = spr["img"]["shadow"]
         sw = int(rw * z * 1.1 * (1 - min(0.35, abs(dy) / (40 * sc))))
-        c.create_image(cx, base + 4 * sc, image=services.sprite_photo("popup-shadow", shadow, sw, max(2, sw // 4)),
+        c.create_image(cx, base + 4 * sc, image=sprites.sprite_photo("popup-shadow", shadow, sw, max(2, sw // 4)),
                        anchor="center")
-        lights = services.light_cycle(state, t)
-        im = services.robot_image(face, lights, spr)
-        c.create_image(cx, base + dy, image=services.sprite_photo(("popup", face, lights), im, int(rw * z), int(rh * z)),
+        lights = sprites.light_cycle(state, t)
+        im = sprites.robot_image(face, lights, spr)
+        c.create_image(cx, base + dy, image=sprites.sprite_photo(("popup", face, lights), im, int(rw * z), int(rh * z)),
                        anchor="s")
         if state == "needs_input":  # floating question marks
             for i in range(3):
@@ -373,7 +375,7 @@ class PermissionCard:
         self._qid, self._qvars = (req.get("id"), readonly), []
         for child in self.qframe.winfo_children():
             child.destroy()
-        bg, fg, muted = services.T["bubble_bg"], services.T["bubble_fg"], services.T["bubble_muted"]
+        bg, fg, muted = theme.T["bubble_bg"], theme.T["bubble_fg"], theme.T["bubble_muted"]
         for i, q in enumerate(req.get("questions") or []):
             block = tk.Frame(self.qframe, bg=bg)
             block.pack(fill="x", pady=(0 if i == 0 else 12, 0))
@@ -406,7 +408,7 @@ class PermissionCard:
                     # tristate value, "" by default - exactly the empty "nothing picked yet" value used here
                     box = tk.Radiobutton(row, text=opt["label"], variable=choice, value=opt["label"], anchor="w",
                                          tristatevalue="\x00none")
-                box.configure(bg=bg, fg=fg, activebackground=bg, activeforeground=fg, selectcolor=services.T["entry_bg"],
+                box.configure(bg=bg, fg=fg, activebackground=bg, activeforeground=fg, selectcolor=theme.T["entry_bg"],
                               highlightthickness=0, font=self.f(10, "bold"), cursor="hand2")
                 box.pack(fill="x")
                 if opt.get("description"):
@@ -425,12 +427,12 @@ class PermissionCard:
             else:
                 pick = tk.Radiobutton(other, text="Your own answer:", variable=choice, value=services.OWN_CHOICE, anchor="w",
                                       tristatevalue="\x00none")
-            pick.configure(bg=bg, fg=fg, activebackground=bg, activeforeground=fg, selectcolor=services.T["entry_bg"],
+            pick.configure(bg=bg, fg=fg, activebackground=bg, activeforeground=fg, selectcolor=theme.T["entry_bg"],
                            highlightthickness=0, font=self.f(10, "bold"), cursor="hand2")
             pick.pack(side="left")
-            entry = tk.Entry(other, textvariable=own, bg=services.T["entry_bg"], fg=services.T["entry_fg"], relief="flat",
-                             insertbackground=services.T["entry_fg"], highlightthickness=1, highlightbackground=services.T["border"],
-                             highlightcolor=services.T["primary"], font=self.f(9))
+            entry = tk.Entry(other, textvariable=own, bg=theme.T["entry_bg"], fg=theme.T["entry_fg"], relief="flat",
+                             insertbackground=theme.T["entry_fg"], highlightthickness=1, highlightbackground=theme.T["border"],
+                             highlightcolor=theme.T["primary"], font=self.f(9))
             entry.pack(side="left", fill="x", expand=True, padx=(6, 0))
             if multi:
                 own.trace_add("write", lambda *_, v=own_on, o=own: v.set(True) if o.get().strip() else None)

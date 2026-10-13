@@ -10,9 +10,11 @@ Rules
      through other repository modules, so background work and tests run without a display.
   3. The hook (aipet_hook.py and what it imports from this repository) uses only the standard library and only the
      source files hooks_installer.deploy_files copies next to it.
-  4. Ratchets on the transitional wiring; counts may only go down:
+  4. Modules that have been given explicit interfaces never take or use a `services` object again.
+  5. Ratchets on the transitional wiring; counts may only go down:
        services_core     `services.core.X` reaches back into aipet.py from aipetlib
        module_services   `sys.modules[__name__]` passes a whole entry module as the services object
+       services_refs     `services.X` lookups in aipetlib: what components still reach through the services object
      Lower counts are reported so the baseline can be tightened with --update-baseline.
 """
 import argparse
@@ -33,6 +35,9 @@ HEADLESS = ["aipetlib.agents", "aipetlib.runtime", "aipetlib.config", "aipetlib.
 # What hooks_installer.deploy_files copies to ~/.aipet/bin for the source hook (keep both lists in step)
 HOOK_SOURCES = {"aipet_hook", "aipet_codex", "aipet_usage", "aipet_claude_usage", "aipetlib", "aipetlib.hook_events"}
 HOOK_OPTIONAL = {"certifi"}  # imported inside try/except by aipet_usage; never required
+# Modules with explicit interfaces (restructure.md step 3 onwards): no `services` parameter or name
+SERVICE_FREE = ["aipetlib.agents", "aipetlib.runtime", "aipetlib.text", "aipetlib.ui.theme", "aipetlib.ui.sprites",
+                "aipetlib.ui.font_metrics"]
 
 
 def module_files():
@@ -109,6 +114,11 @@ def count_services_core(tree):
                 (isinstance(node.value, ast.Attribute) and node.value.attr == "services")))
 
 
+def count_services_refs(tree):
+    return sum(1 for node in ast.walk(tree)
+               if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "services")
+
+
 def count_module_services(tree):
     return sum(1 for node in ast.walk(tree)
                if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute)
@@ -143,11 +153,19 @@ def analyse():
         elif mod not in local and mod not in HOOK_OPTIONAL and stdlib is not None and mod not in stdlib:
             errors.append(f"rule 3: the hook imports non-stdlib {mod}: {path_to('aipet_hook', mod, graph)}")
 
-    counts = {"services_core": {}, "module_services": {}}
+    for prefix in SERVICE_FREE:
+        for name in sorted(n for n in local if n == prefix or n.startswith(prefix + ".")):
+            if any((isinstance(node, ast.Name) and node.id == "services") or
+                   (isinstance(node, ast.arg) and node.arg == "services") for node in ast.walk(trees[name])):
+                errors.append(f"rule 4: {name} has an explicit interface but uses a services object")
+
+    counts = {"services_core": {}, "module_services": {}, "services_refs": {}}
     for name, tree in trees.items():
         rel = local[name].relative_to(ROOT).as_posix()
         if name.startswith("aipetlib") and count_services_core(tree):
             counts["services_core"][rel] = count_services_core(tree)
+        if name.startswith("aipetlib") and count_services_refs(tree):
+            counts["services_refs"][rel] = count_services_refs(tree)
         if count_module_services(tree):
             counts["module_services"][rel] = count_module_services(tree)
     return errors, counts
@@ -159,7 +177,7 @@ def compare(counts, baseline):
         allowed = baseline.get(rule, {})
         for path, n in sorted(now.items()):
             if n > allowed.get(path, 0):
-                errors.append(f"rule 4 ({rule}): {path} has {n}, baseline allows {allowed.get(path, 0)}")
+                errors.append(f"rule 5 ({rule}): {path} has {n}, baseline allows {allowed.get(path, 0)}")
         for path, n in sorted(allowed.items()):
             if now.get(path, 0) < n:
                 lower.append(f"{rule}: {path} {n} -> {now.get(path, 0)}")

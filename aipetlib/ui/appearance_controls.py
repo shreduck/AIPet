@@ -4,6 +4,7 @@ The owner supplies widgets and UI state; services supply shared behavior.
 No application entry point is imported by this component.
 """
 import tkinter as tk
+from . import theme
 
 
 def set_size(app, services, size):
@@ -51,7 +52,7 @@ def open_size_slider(app, services):
     w.attributes("-topmost", True)
     w.resizable(False, False)
     var = tk.DoubleVar(value=services.SCALE["v"] / services.SCALE_UNIT)
-    pct = tk.Label(w, width=6, font=(services.UI_FONT, 12, "bold"))
+    pct = tk.Label(w, width=6, font=(theme.UI_FONT, 12, "bold"))
 
     def apply(_v=None):
         app.set_scale(var.get() * services.SCALE_UNIT)
@@ -73,7 +74,7 @@ def open_size_slider(app, services):
         app.size_win = None
         w.destroy()
 
-    tk.Label(w, text="Pet size", font=(services.UI_FONT, 10, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
+    tk.Label(w, text="Pet size", font=(theme.UI_FONT, 10, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
     scale = ttk.Scale(w, from_=0.3, to=3.0, orient="horizontal", length=260, variable=var, command=apply)
     scale.grid(row=1, column=0, padx=(14, 6), pady=8)
     scale.bind("<ButtonRelease-1>", commit)
@@ -85,7 +86,7 @@ def open_size_slider(app, services):
     w.protocol("WM_DELETE_WINDOW", close)
     w.bind("<Escape>", lambda e: close())
     apply()
-    services.theme_window(w)
+    theme.theme_window(w)
     app._place_above_pet(w)
 
 
@@ -104,7 +105,7 @@ def open_tooltip_text_slider(app, services):
     w.attributes("-topmost", True)
     w.resizable(False, False)
     var = tk.DoubleVar(w, value=app.tooltip_text_scale())
-    pct = tk.Label(w, width=6, font=(services.UI_FONT, 12, "bold"))
+    pct = tk.Label(w, width=6, font=(theme.UI_FONT, 12, "bold"))
 
     def preview(_v=None):
         pct.config(text=f"{round(var.get() * 100)}%")
@@ -122,7 +123,7 @@ def open_tooltip_text_slider(app, services):
         app.tooltip_text_win = None
         w.destroy()
 
-    tk.Label(w, text="Tooltip text size", font=(services.UI_FONT, 10, "bold")).grid(
+    tk.Label(w, text="Tooltip text size", font=(theme.UI_FONT, 10, "bold")).grid(
         row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
     slider = ttk.Scale(w, from_=0.5, to=2.5, orient="horizontal", length=260,
                        variable=var, command=preview)
@@ -137,7 +138,7 @@ def open_tooltip_text_slider(app, services):
     w.protocol("WM_DELETE_WINDOW", close)
     w.bind("<Escape>", lambda e: close())
     preview()
-    services.theme_window(w)
+    theme.theme_window(w)
     app._place_above_pet(w)
 
 
@@ -155,7 +156,7 @@ def open_answer_slider(app, services):
     w.attributes("-topmost", True)
     w.resizable(False, False)
     var = tk.DoubleVar(value=services.ANSWER_WAIT["v"])
-    val = tk.Label(w, width=10, font=(services.UI_FONT, 12, "bold"))
+    val = tk.Label(w, width=10, font=(theme.UI_FONT, 12, "bold"))
 
     def apply(_v=None):
         services.ANSWER_WAIT["v"] = services.clamp_wait(round(var.get() / 15) * 15)  # steps of 15 s
@@ -174,13 +175,13 @@ def open_answer_slider(app, services):
         app.answer_win = None
         w.destroy()
 
-    tk.Label(w, text="Answer permission prompts from the pet for up to:", font=(services.UI_FONT, 10, "bold")
+    tk.Label(w, text="Answer permission prompts from the pet for up to:", font=(theme.UI_FONT, 10, "bold")
              ).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
     scale = ttk.Scale(w, from_=0, to=services.MAX_WAIT, orient="horizontal", length=260, variable=var, command=apply)
     scale.grid(row=1, column=0, padx=(14, 6), pady=8)
     scale.bind("<ButtonRelease-1>", commit)
     val.grid(row=1, column=1, padx=(0, 14))
-    tk.Label(w, justify="left", wraplength=360, fg="#6b7280", font=(services.UI_FONT, 8),
+    tk.Label(w, justify="left", wraplength=360, fg="#6b7280", font=(theme.UI_FONT, 8),
              text="0 means no limit: the pet waits until you answer (or until it is closed). "
                   "While the pet waits, Claude Code's own prompt is still shown and the first answer wins, "
                   "except for background subagents, where Claude Code may hold its prompt until this time is up "
@@ -193,7 +194,7 @@ def open_answer_slider(app, services):
     w.protocol("WM_DELETE_WINDOW", close)
     w.bind("<Escape>", lambda e: close())
     apply()
-    services.theme_window(w)
+    theme.theme_window(w)
     app._place_above_pet(w)
 
 
@@ -211,7 +212,7 @@ def open_done_slider(app, services):
     w.attributes("-topmost", True)
     w.resizable(False, False)
     var = tk.DoubleVar(value=services.DONE_TIMEOUT["v"])
-    val = tk.Label(w, width=10, font=(services.UI_FONT, 12, "bold"))
+    val = tk.Label(w, width=10, font=(theme.UI_FONT, 12, "bold"))
 
     def apply(_v=None):
         services.DONE_TIMEOUT["v"] = services.clamp_done(var.get())  # whole minutes
@@ -230,13 +231,13 @@ def open_done_slider(app, services):
         app.done_win = None
         w.destroy()
 
-    tk.Label(w, text="Clear a finished session's pet after:", font=(services.UI_FONT, 10, "bold")
+    tk.Label(w, text="Clear a finished session's pet after:", font=(theme.UI_FONT, 10, "bold")
              ).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
     scale = ttk.Scale(w, from_=0, to=services.MAX_WAIT // 60, orient="horizontal", length=260, variable=var, command=apply)
     scale.grid(row=1, column=0, padx=(14, 6), pady=8)
     scale.bind("<ButtonRelease-1>", commit)
     val.grid(row=1, column=1, padx=(0, 14))
-    tk.Label(w, justify="left", wraplength=360, fg="#6b7280", font=(services.UI_FONT, 8),
+    tk.Label(w, justify="left", wraplength=360, fg="#6b7280", font=(theme.UI_FONT, 8),
              text="Counted from when the session finished. 0 keeps finished pets until you dismiss them "
                   "(right-click > Dismiss / Clear finished). A new message brings a cleared session back."
              ).grid(row=2, column=0, columnspan=2, sticky="w", padx=14)
@@ -247,7 +248,7 @@ def open_done_slider(app, services):
     w.protocol("WM_DELETE_WINDOW", close)
     w.bind("<Escape>", lambda e: close())
     apply()
-    services.theme_window(w)
+    theme.theme_window(w)
     app._place_above_pet(w)
 
 
@@ -269,7 +270,7 @@ def open_health_slider(app, services):
     w.attributes("-topmost", True)
     w.resizable(False, False)
     var = tk.DoubleVar(value=services.HEALTH["v"])
-    val = tk.Label(w, width=10, font=(services.UI_FONT, 12, "bold"))
+    val = tk.Label(w, width=10, font=(theme.UI_FONT, 12, "bold"))
 
     def apply(_v=None):
         services.HEALTH["v"] = services.clamp_health(round(var.get() / 5) * 5)  # steps of 5 s
@@ -288,13 +289,13 @@ def open_health_slider(app, services):
         app.health_win = None
         w.destroy()
 
-    tk.Label(w, text="Check that working sessions are still running every:", font=(services.UI_FONT, 10, "bold")
+    tk.Label(w, text="Check that working sessions are still running every:", font=(theme.UI_FONT, 10, "bold")
              ).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
     scale = ttk.Scale(w, from_=0, to=services.MAX_HEALTH, orient="horizontal", length=260, variable=var, command=apply)
     scale.grid(row=1, column=0, padx=(14, 6), pady=8)
     scale.bind("<ButtonRelease-1>", commit)
     val.grid(row=1, column=1, padx=(0, 14))
-    tk.Label(w, justify="left", wraplength=360, fg="#6b7280", font=(services.UI_FONT, 8),
+    tk.Label(w, justify="left", wraplength=360, fg="#6b7280", font=(theme.UI_FONT, 8),
              text="A working or waiting session whose Claude Code / Codex process has ended (the app was closed, or "
                   "the conversation moved to a new session) is shown as finished. 0 turns the check off. Sessions in "
                   "WSL can't be checked; use right-click > Mark as finished for those."
@@ -306,5 +307,5 @@ def open_health_slider(app, services):
     w.protocol("WM_DELETE_WINDOW", close)
     w.bind("<Escape>", lambda e: close())
     apply()
-    services.theme_window(w)
+    theme.theme_window(w)
     app._place_above_pet(w)

@@ -7,16 +7,17 @@ import sys
 import tkinter as tk
 
 from ..agents.stats import network_stats
+from . import theme
 
 
 def _build(window, services):
     s = window._font_scale()
-    window.f_main = services.tkfont.Font(root=window.win, family=services.core.UI_FONT, size=max(5, int(round(8 * s))))
-    window.f_bold = services.tkfont.Font(root=window.win, family=services.core.UI_FONT, size=max(5, int(round(8 * s))), weight="bold")
-    window.f_small = services.tkfont.Font(root=window.win, family=services.core.UI_FONT, size=max(5, int(round(7 * s))))
-    window.g_main = services.tkfont.Font(root=window.win, family=services.core.UI_FONT, size=max(5, int(round(8 * s))))
-    window.g_bold = services.tkfont.Font(root=window.win, family=services.core.UI_FONT, size=max(5, int(round(8 * s))), weight="bold")
-    window.g_small = services.tkfont.Font(root=window.win, family=services.core.UI_FONT, size=max(5, int(round(7 * s))))
+    window.f_main = services.tkfont.Font(root=window.win, family=theme.UI_FONT, size=max(5, int(round(8 * s))))
+    window.f_bold = services.tkfont.Font(root=window.win, family=theme.UI_FONT, size=max(5, int(round(8 * s))), weight="bold")
+    window.f_small = services.tkfont.Font(root=window.win, family=theme.UI_FONT, size=max(5, int(round(7 * s))))
+    window.g_main = services.tkfont.Font(root=window.win, family=theme.UI_FONT, size=max(5, int(round(8 * s))))
+    window.g_bold = services.tkfont.Font(root=window.win, family=theme.UI_FONT, size=max(5, int(round(8 * s))), weight="bold")
+    window.g_small = services.tkfont.Font(root=window.win, family=theme.UI_FONT, size=max(5, int(round(7 * s))))
     w = window.win
     window.head = tk.Frame(w)
     window.head.pack(fill="x")

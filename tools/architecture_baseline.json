@@ -1,15 +1,31 @@
 {
   "module_services": {
-    "aipet.py": 98,
+    "aipet.py": 71,
     "aipet_agents_window.py": 98,
     "aipet_app.py": 3,
     "aipet_hook.py": 1
   },
   "services_core": {
-    "aipetlib/ui/agent_controls.py": 4,
-    "aipetlib/ui/agent_graph.py": 2,
+    "aipetlib/ui/agent_controls.py": 2,
     "aipetlib/ui/agent_prompts.py": 3,
-    "aipetlib/ui/agent_shell.py": 6,
-    "aipetlib/ui/app_menus.py": 21
+    "aipetlib/ui/app_menus.py": 20
+  },
+  "services_refs": {
+    "aipetlib/geometry.py": 9,
+    "aipetlib/hook_events.py": 41,
+    "aipetlib/permissions.py": 27,
+    "aipetlib/sessions.py": 35,
+    "aipetlib/ui/agent_controls.py": 50,
+    "aipetlib/ui/agent_graph.py": 24,
+    "aipetlib/ui/agent_logs.py": 7,
+    "aipetlib/ui/agent_prompts.py": 5,
+    "aipetlib/ui/agent_shell.py": 7,
+    "aipetlib/ui/app_menus.py": 39,
+    "aipetlib/ui/appearance_controls.py": 41,
+    "aipetlib/ui/permission_card.py": 40,
+    "aipetlib/ui/pet_view.py": 104,
+    "aipetlib/ui/tooltips.py": 21,
+    "aipetlib/vscode.py": 11,
+    "aipetlib/windows.py": 17
   }
 }

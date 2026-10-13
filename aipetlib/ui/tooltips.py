@@ -6,6 +6,8 @@ No application entry point is imported by this component.
 import time
 import tkinter as tk
 import aipet_usage as usage
+from . import sprites
+from . import theme
 
 
 def tooltip_text_scale(app, services):
@@ -99,22 +101,22 @@ def _build_tooltip(app, services, pet, text, usage_detail):
     title = title.strip() or "Session details"
     data = usage_detail if usage_detail is not None else getattr(pet, "data", {})
     agent = data.get("agent")
-    accent = "#5b8def" if agent == "codex" else "#d98960" if agent == "claude" or data.get("source") == "CC" else services.T["tag_fg"]
+    accent = "#5b8def" if agent == "codex" else "#d98960" if agent == "claude" or data.get("source") == "CC" else theme.T["tag_fg"]
     text_scale = app.tooltip_text_scale()
     wrap_width = round(320 * text_scale)
-    head = c.create_text(12, 10, text=title, font=(services.MONO_FAMILY, round(9 * text_scale), "bold"),
+    head = c.create_text(12, 10, text=title, font=(sprites.MONO_FAMILY, round(9 * text_scale), "bold"),
                          fill=accent, anchor="nw", width=wrap_width)
     header_box = c.bbox(head)
     w, h = header_box[2] + 12, header_box[3] + 10
     if body.strip():
-        content = c.create_text(12, header_box[3] + 6, text=body, font=(services.MONO_FAMILY, round(8 * text_scale)),
-                                fill=services.T["tag_fg"], anchor="nw", width=wrap_width)
+        content = c.create_text(12, header_box[3] + 6, text=body, font=(sprites.MONO_FAMILY, round(8 * text_scale)),
+                                fill=theme.T["tag_fg"], anchor="nw", width=wrap_width)
         box = c.bbox(content)
         w, h = max(header_box[2], box[2]) + 12, box[3] + 10
     border = c.create_polygon(6, 1, w - 6, 1, w - 6, 3, w - 3, 3, w - 3, 6, w - 1, 6,
                              w - 1, h - 6, w - 3, h - 6, w - 3, h - 3, w - 6, h - 3, w - 6, h - 1,
                              6, h - 1, 6, h - 3, 3, h - 3, 3, h - 6, 1, h - 6, 1, 6, 3, 6, 3, 3, 6, 3,
-                             fill=services.T["tag_bg"], outline=services.T["tag_outline"], width=2)
+                             fill=theme.T["tag_bg"], outline=theme.T["tag_outline"], width=2)
     c.tag_lower(border)
     c.config(width=w, height=h)
     tip.update_idletasks()

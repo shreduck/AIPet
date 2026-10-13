@@ -414,6 +414,7 @@ class MacWindowTests(unittest.TestCase):
         from types import SimpleNamespace
         from unittest.mock import MagicMock, patch
         import aipet
+        import aipetlib.ui.sprites as aipet_sprites
         import mac_statusbar as mac
 
         root = aipet.MacPetWindow()
@@ -428,7 +429,7 @@ class MacWindowTests(unittest.TestCase):
                               answers_enabled=lambda _: True, send_answer=MagicMock(return_value=False))
         detail = None
         try:
-            with patch.object(aipet, "load_sprites", return_value=None), patch.object(aipet, "hook_waiting", return_value=True):
+            with patch.object(aipet_sprites, "load_sprites", return_value=None), patch.object(aipet, "hook_waiting", return_value=True):
                 detail = aipet.Detail(app, item["key"], item)
                 root.update()
                 window = mac.window_titled(detail.win.title())

@@ -7,6 +7,7 @@ import math
 import sys
 import time
 import tkinter as tk
+from . import theme
 
 
 def tool(window, services, name, d=1):
@@ -480,7 +481,7 @@ def _place_menu(window, services):
 
 
 def _apply_theme(window, services):
-    name = services.core.T.get("name", "light")
+    name = theme.T.get("name", "light")
     if name == window.theme:
         return
     window.theme = name
@@ -507,7 +508,7 @@ def _apply_theme(window, services):
     window._statc_sig = None
     window.overlay.configure(bg=P["node"], highlightbackground=P["red"], highlightthickness=1, bd=0)
     try:
-        services.core.titlebar_theme(window.win)
+        theme.titlebar_theme(window.win)
     except Exception:
         pass
     window._robots.clear()

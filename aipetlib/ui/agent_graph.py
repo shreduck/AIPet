@@ -8,13 +8,14 @@ import time
 import tkinter as tk
 
 from ..agents.records import fmt_tokens
+from . import sprites
 
 
 def robot(window, services, state, height):
     key = (state, height, window.theme)
     if key not in window._robots:
         from PIL import Image
-        im = services.core.state_image(services.ROBOT_STATE.get(state, "idle")).convert("RGBA")
+        im = sprites.state_image(services.ROBOT_STATE.get(state, "idle")).convert("RGBA")
         if state == "needs_input":  # red when that agent needs you
             a = im.split()[3]
             tinted = Image.blend(im, Image.new("RGBA", im.size, (214, 48, 40, 255)), 0.55)
@@ -22,7 +23,7 @@ def robot(window, services, state, height):
             im = tinted
         width = max(1, round(im.width * height / im.height))
         im = im.resize((width, max(1, height)), Image.LANCZOS)
-        window._robots[key] = services.core._to_photo(im)
+        window._robots[key] = sprites._to_photo(im)
     return window._robots[key]
 
 

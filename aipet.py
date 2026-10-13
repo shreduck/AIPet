@@ -36,7 +36,6 @@ import urllib.error
 import urllib.request
 import tkinter as tk
 import aipet_usage as usage
-import aipetlib.ui.sprites as sprites
 import aipetlib.ui.theme as theme
 from aipetlib.ui.permission_card import PermissionCard
 from aipetlib.ui.pet_view import PetView
@@ -48,9 +47,17 @@ import aipetlib.geometry as geometry
 import aipetlib.permissions as permissions
 import aipetlib.sessions as sessions
 from aipetlib.records import STATE_ORDER, first
-
-# Every AIPet window uses a console font, like the pet's own name tags and tooltips
-UI_FONT = "Consolas" if os.name == "nt" else ("Menlo" if sys.platform == "darwin" else "DejaVu Sans Mono")
+from aipetlib.ui.theme import (
+    INK, THEMES, DARK_TEXT, T, THEMED, _DEFAULT_FG, MUTED_FG, DIALOG_ACCENTS, UI_FONT, set_theme, _fg_role,
+    themed_color, button_style, style_menu, _ttk_scale_style, theme_widget, titlebar_theme, native_menu_theme,
+    use_console_font, theme_window, retheme_all, themed_dialog,
+)
+from aipetlib.ui.sprites import (
+    SPRITE_DIR, _SPR, _PHOTOS, CYAN_LIGHT, LIGHT_COLORS, STATE_FACE, FACE_PARTS, EYE_PIXELS, QUESTION_PIXELS,
+    MOUTH_PIXELS, TALK_FRAMES, _PNG_PHOTOS, _RUNS, MONO_FAMILY, BUBBLE_TAIL, _BUBBLE_INSET, _IMG_CACHE, MARKS,
+    MARK_COLORS, load_sprites, _rgb, robot_image, state_image, light_cycle, _to_photo, sprite_photo, pixel_rects,
+    mono, bubble_image, mark_image, _solid_shadow, _sine_mouth,
+)
 
 try:
     import winsound
@@ -123,73 +130,13 @@ TOP_TRIM = 14  # the empty strip the badges used to take above the bubble
 CANVAS_W, CANVAS_H = PET_W + BADGE_GUTTER, PET_H - TOP_TRIM
 USAGE_GUTTER = 0  # individual pets reserve quota space only when they show readings
 USAGE_EDGE_ROOM = 18  # one shared margin keeps the rightmost pet stable as usage appears
-INK = "#1f2937"
 MOUND, MOUND_DARK = "#a16207", "#713f12"
 EMERGE_SECONDS, EMERGE_DEPTH, EMERGE_STAGGER = 0.7, 62, 0.25
 DONE_FLASH_SECONDS = 1.6  # a working pet shows the done check this long when a subagent or another session finishes
 BUBBLE_W = 270
-# Colours of what the pet draws around the creatures (name tags, bubbles, tooltips). Light is the default.
-THEMES = {
-    "light": {"tag_bg": "#ffffff", "tag_fg": "#111827", "label_dark": True,
-              "bubble_bg": "#ffffff", "bubble_fg": "#111827", "bubble_msg": "#374151", "bubble_muted": "#6b7280",
-              "tip_bg": "#ffffff", "tip_fg": "#111827", "tip_border": "#cbd5e1", "tag_outline": "#111827",
-              "code_bg": "#f3f4f6", "code_fg": "#111827",
-              # windows, dialogs and menus
-              "win_bg": "#ffffff", "win_fg": "#111827", "muted": "#6b7280", "border": "#cbd5e1",
-              "btn_bg": "#f3f4f6", "btn_fg": "#111827", "btn_active": "#e5e7eb",
-              "entry_bg": "#f3f4f6", "entry_fg": "#111827", "select_bg": "#dbeafe",
-              "primary": "#2563eb", "primary_active": "#1d4ed8", "primary_fg": "#ffffff",
-              "danger": "#dc2626", "danger_active": "#b91c1c",
-              "menu_bg": "#ffffff", "menu_fg": "#111827", "menu_active_bg": "#e5e7eb", "menu_active_fg": "#111827",
-              "menu_disabled": "#9ca3af"},
-    "dark": {"tag_bg": INK, "tag_fg": "#ffffff", "label_dark": False,
-             "bubble_bg": "#111827", "bubble_fg": "#ffffff", "bubble_msg": "#e5e7eb", "bubble_muted": "#9ca3af",
-             "tip_bg": "#111827", "tip_fg": "#f9fafb", "tip_border": "#111827", "tag_outline": "#0b1220",
-             "code_bg": "#0b1220", "code_fg": "#e5e7eb",
-             "win_bg": "#111827", "win_fg": "#f9fafb", "muted": "#9ca3af", "border": "#374151",
-             "btn_bg": "#1f2937", "btn_fg": "#f9fafb", "btn_active": "#374151",
-             "entry_bg": "#0b1220", "entry_fg": "#e5e7eb", "select_bg": "#1e3a8a",
-             "primary": "#3b82f6", "primary_active": "#2563eb", "primary_fg": "#ffffff",
-             "danger": "#ef4444", "danger_active": "#dc2626",
-             "menu_bg": "#1f2937", "menu_fg": "#f9fafb", "menu_active_bg": "#374151", "menu_active_fg": "#ffffff",
-             "menu_disabled": "#6b7280"},
-}
-# Fixed status colours used in the windows (green / amber / red notes) and their readable versions on a dark background
-DARK_TEXT = {"#15803d": "#4ade80", "#b45309": "#fbbf24", "#b91c1c": "#f87171", "#dc2626": "#f87171",
-             "#d97706": "#fbbf24"}
-T = {}  # the active theme; set_theme() mutates it in place so every module sees the change
-
-
-def set_theme(name):
-    return theme.set_theme(sys.modules[__name__], name)
-
-
-set_theme("light")
-
-
-# --------------------------------------------------------------------------- themed windows, dialogs and menus
-# The pet's own drawings use T directly. Ordinary Tk windows (setup, sliders, Cowork help...) are styled after they are
-# built by theme_window(), which also remembers them so a theme switch restyles them live. Colours a window set on
-# purpose (green "installed", amber "out of date"...) are kept, brightened on the dark background.
-THEMED = []
-_DEFAULT_FG = {"", "black", "#000000", "systembuttontext", "systemwindowtext", "systemmenutext", "#111827"}
-MUTED_FG = {"#6b7280", "grey", "gray"}
-
-
-def _fg_role(w, opt="fg"):
-    return theme._fg_role(sys.modules[__name__], w, opt)
-
-
-def themed_color(c):
-    return theme.themed_color(sys.modules[__name__], c)
-
-
-def button_style(kind="secondary"):
-    return theme.button_style(sys.modules[__name__], kind)
-
-
-def style_menu(menu):
-    return theme.style_menu(sys.modules[__name__], menu)
+# Dialogs placed on the monitor of the window that opened them; looked up at call time, so a patched work_area or
+# geo here still applies.
+theme.set_screen_helpers(lambda x, y, widget: work_area(x, y, widget), lambda x, y: geo(x, y))
 
 
 def fill_menu(menu, entries):
@@ -378,45 +325,8 @@ def chime_path(kind):
     return path
 
 
-def _ttk_scale_style(widget):
-    return theme._ttk_scale_style(sys.modules[__name__], widget)
-
-
-def theme_widget(w):
-    return theme.theme_widget(sys.modules[__name__], w)
-
-
-def titlebar_theme(win):
-    return theme.titlebar_theme(sys.modules[__name__], win)
-
-
-def native_menu_theme():
-    return theme.native_menu_theme(sys.modules[__name__])
-
-
-def use_console_font(root):
-    return theme.use_console_font(sys.modules[__name__], root)
-
-
-def theme_window(win):
-    return theme.theme_window(sys.modules[__name__], win)
-
-
-def retheme_all():
-    return theme.retheme_all(sys.modules[__name__])
-
-
-DIALOG_ACCENTS = {"info": "#5b8def", "question": "#5b8def", "warning": "#f59e0b", "error": "#ef4444"}
-
-
-def themed_dialog(root, title, text, buttons=(("OK", True, "primary"),), kind="info", heading=None, cancel=None,
-                  enter_confirms=True, on_result=None):
-    return theme.themed_dialog(sys.modules[__name__], root, title, text, buttons, kind, heading, cancel, enter_confirms, on_result)
-
-
 STYLE ={"v": "robot"}  # "robot", "mole" or "cat"
-SCALE_UNIT = 2.0  # the absolute drawing scale that counts as 100% (it was the old 200%, the size people settled on)
-SCALE = {"v": SCALE_UNIT}  # absolute drawing scale: 92x122 px per pet at 1.0; the slider shows SCALE / SCALE_UNIT
+from aipetlib.runtime.preferences import SCALE, SCALE_UNIT  # live drawing scale (see preferences)
 
 
 ANSWER_WAIT = {"v": 180}  # seconds; mirrored into <pet dir>/answer-wait for the hook (0 = wait until answered)
@@ -711,120 +621,22 @@ from aipetlib.workbench import ID_KEYS, McpHttpClient, WorkbenchPoller, tool_res
 
 # --------------------------------------------------------------------------- the pet
 # --------------------------------------------------------------------------- robot sprites
-SPRITE_DIR = os.path.join(getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__))), "assets", "sprites")
-_SPR = {"state": None}  # None = not tried yet, False = unavailable (no Pillow / no files) -> the mole is used instead
-_PHOTOS = {}  # (key, w, h) -> ImageTk.PhotoImage, so a frame never re-resizes the same sprite
 TERMINAL_CHARS = "0123456789ABCDEF$#%&@<>/=+*;:"
-CYAN_LIGHT = (214, 251, 255)
-LIGHT_COLORS = {"amber": (245, 165, 36), "green": (34, 197, 94), "red": (239, 68, 68), "off": (55, 65, 81)}
-# state -> (face, light colours). "working" cycles its lights in light_cycle().
-STATE_FACE = {"working": "happy", "done": "joy", "error": "worried", "idle": "sleep", "needs_input": "ask"}
-FACE_PARTS = {"ask": (None, None), "happy": ("open", "smile"), "blink": ("line", "smile"), "joy": ("arc", "smile"),
-              "sleep": ("line", "flat"), "worried": ("open", "wavy")}
-EYE_PIXELS = {"open": [".2.", "111", "111", ".1."], "arc": [".1.", "1.1"], "line": ["111"],
-              "x": ["1.1", ".1.", "1.1"]}
-QUESTION_PIXELS = [".111.", "1...1", "....1", "...1.", "..1..", "..1..", ".....", "..1.."]
-MOUTH_PIXELS = {"smile": ["1.....1", ".1...1.", "..111.."], "flat": [".111."], "wavy": [".1.1.1.", "1.1.1.1"]}
-# Working robots "talk": a sine wave that travels along the mouth, so they stand out from the idle / done ones
-TALK_FRAMES = 4  # one pixel of travel per frame; the wave is 4 pixels long, so 4 frames loop it
 # Working robots blink at 0.075x the mouth wave's 2 Hz: every 6.7 s (3/40, so blink and wave line up every 20 s).
 # The threshold keeps each blink about 0.13 s long whatever the ratio.
 BLINK_RATIO, BLINK_SECONDS = 0.075, 0.13
 BLINK_THRESHOLD = math.cos(math.pi * BLINK_SECONDS * BLINK_RATIO * 2)
 
 
-def _sine_mouth(frame, width=7, rows=2):
-    """A low, short squiggle (two humps across the mouth): a full-width wave would read as smile / frown."""
-    grid = [["."] * width for _ in range(rows)]
-    for i in range(width):
-        y = 0.5 - 0.5 * math.sin(2 * math.pi * (i + frame) / 4.0 + 0.3)  # 0..1, top to bottom
-        grid[int(round(y))][i] = "1"
-    return ["".join(r) for r in grid]
-
-
-for _f in range(TALK_FRAMES):
-    MOUTH_PIXELS[f"sine{_f}"] = _sine_mouth(_f)
-    FACE_PARTS[f"talk{_f}"] = ("open", f"sine{_f}")
-    FACE_PARTS[f"talkblink{_f}"] = ("line", f"sine{_f}")
-
-
-def load_sprites(directory=None):
-    return sprites.load_sprites(sys.modules[__name__], directory)
-
-
-def _rgb(hex_color):
-    return sprites._rgb(sys.modules[__name__], hex_color)
-
-
-def robot_image(face, lights, spr=None):
-    return sprites.robot_image(sys.modules[__name__], face, lights, spr)
-
-
-def state_image(state, spr=None):
-    return sprites.state_image(sys.modules[__name__], state, spr)
-
-
-def light_cycle(state, t):
-    return sprites.light_cycle(sys.modules[__name__], state, t)
-
-
-_PNG_PHOTOS = {"on": IS_MAC}  # macOS: Pillow's ImageTk bridge often can't reach the app's Tk, so hand Tk a PNG instead
-
-
-def _to_photo(im):
-    return sprites._to_photo(sys.modules[__name__], im)
-
-
-def sprite_photo(key, image, w, h):
-    return sprites.sprite_photo(sys.modules[__name__], key, image, w, h)
-
-
 # macOS Tk paints no images at all on a transparent canvas (systemTransparent), whatever the image format, while
 # rectangles and text do render (found with tools/mac_image_probe.py on CI). So on macOS the pet window draws its pixel
 # art as rectangles: each image becomes merged runs of same-coloured pixels, computed once per image.
 RECT_SPRITES = IS_MAC
-_RUNS = {}
-
-
-def pixel_rects(key, image):
-    return sprites.pixel_rects(sys.modules[__name__], key, image)
 
 
 def log_error(msg):
     """Append a message (once per run) to ~/.aipet/error.log: a windowed app has no console to print to."""
     diagnostics.log_error(msg, HOME_DIR)
-
-
-MONO_FAMILY = UI_FONT
-
-
-def mono(size):
-    return sprites.mono(sys.modules[__name__], size)
-
-
-# ---- pixel-art speech bubbles and glyphs, drawn at sprite resolution so they match the robot
-BUBBLE_TAIL = 4  # rows the tail adds below the box
-_BUBBLE_INSET = (3, 1, 1)  # stair-stepped round corners: pixels cut from the first three rows (and last three)
-_IMG_CACHE = {}
-MARKS = {  # drawn at sprite resolution (no enlargement), about 45% of the answer bubble's height
-    "ok": ["..........##", ".........###", "........###.", ".##....###..", ".###..###...", "..######....", "...####.....",
-           "....##......", ".....#......"],
-    "no": ["##.....##", "###...###", ".###.###.", "..#####..", "...###...", "..#####..", ".###.###.", "###...###", "##.....##"],
-    "?": ["..####.", ".##..##", ".....##", "....##.", "...##..", "...##..", ".......", "...##..", "...##.."],
-}
-MARK_COLORS = {"ok": "#22a447", "no": "#e0301e", "?": "#111827"}
-
-
-def bubble_image(w, h, fill, outline, tail_cx):
-    return sprites.bubble_image(sys.modules[__name__], w, h, fill, outline, tail_cx)
-
-
-def mark_image(kind, k=1):
-    return sprites.mark_image(sys.modules[__name__], kind, k)
-
-
-def _solid_shadow(im):
-    return sprites._solid_shadow(sys.modules[__name__], im)
 
 
 class Pet(PetView):
@@ -836,11 +648,11 @@ class Pet(PetView):
 
     @staticmethod
     def _text_w(font, text):
-        return font_metrics._text_w(sys.modules[__name__], font, text)
+        return font_metrics._text_w(font, text)
 
     @staticmethod
     def _char_w(font):
-        return font_metrics._char_w(sys.modules[__name__], font)
+        return font_metrics._char_w(font)
 
 
 # --------------------------------------------------------------------------- diagnostics

@@ -6,6 +6,7 @@ No application entry point is imported by this component.
 import os
 import threading
 import time
+from . import theme
 
 
 def _context_menu_spec(app, services, pet):
@@ -124,7 +125,7 @@ def _mac_menu_spec(app, services, settings=False):
             item("Compact mode (one pet)", app.pet.toggle_compact, checked=bool(cfg.get("compact")),
                  help="One pet stands in for every session, showing the one that needs you most."),
             None,
-            item("Dark theme", app.toggle_theme, checked=services.core.T.get("name") == "dark",
+            item("Dark theme", app.toggle_theme, checked=theme.T.get("name") == "dark",
                  help="Dark name tags, bubbles and windows."),
             item("Window scale", choice=True,
                  help="Text and icons in this window. Also Ctrl + plus / minus / 0, or Ctrl + mouse wheel here.",

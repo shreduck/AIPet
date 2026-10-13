@@ -115,6 +115,7 @@ class QuestionOverlayGuiTests(unittest.TestCase):
 
     def test_full_card_codex_guidance_and_native_go_button(self):
         import aipet
+        import aipetlib.ui.sprites as aipet_sprites
         from unittest.mock import patch
         item = {"key": "isolated-fixture", "agent": "codex", "state": "needs_input",
                 "title": "Isolated question fixture", "request": self.question()}
@@ -123,7 +124,7 @@ class QuestionOverlayGuiTests(unittest.TestCase):
             go_to_prompt=lambda key: self.destinations.append(("session", key)))
         card = None
         try:
-            with patch.object(aipet, "load_sprites", return_value=None):
+            with patch.object(aipet_sprites, "load_sprites", return_value=None):
                 card = aipet.Detail(app, item["key"], item)
             self.root.update()
             self.assertEqual(card.note.cget("text"), "Codex is waiting for your answer in its own window: "

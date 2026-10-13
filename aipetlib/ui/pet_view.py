@@ -8,6 +8,8 @@ import random
 import time
 import tkinter as tk
 import aipet_usage as usage
+from . import sprites
+from . import theme
 
 
 class PetView:
@@ -92,7 +94,7 @@ class PetView:
         c, left = self.canvas, services.PET_W - 26
         # Align a short column with the lower body, ending above the name tag.
         top = 81 - min(6, len(rows)) * 9
-        font = services.mono(4.5)
+        font = sprites.mono(4.5)
         extra = 0
         # Start beside the robot, below its speech bubble. Never cover the name tag.
         for start in range(0, len(rows), 6):
@@ -104,7 +106,7 @@ class PetView:
                 y = top + i * 9
                 tag = f"usage:{ai}:{window}:{percent}"
                 self._usage_details[tag] = details[start + i]
-                c.create_rectangle(left, y, left + width, y + 8, fill=services.T["tag_bg"], outline=colour, width=1, tags=("usage", tag))
+                c.create_rectangle(left, y, left + width, y + 8, fill=theme.T["tag_bg"], outline=colour, width=1, tags=("usage", tag))
                 c.create_text(left + 3, y + 4, text=label, font=font, fill=colour, anchor="w", tags=("usage", tag))
             extra = max(extra, int(math.ceil(left + width + 2 - services.CANVAS_W)))
             left += width + 3
@@ -160,12 +162,12 @@ class PetView:
         tw_, th_ = services.PET_W - 6, services.TAG_H
         try:
             s_ = services.SCALE["v"]
-            im = services.bubble_image(tw_, th_, services.T["tag_bg"], services.T["tag_outline"], None)
-            self._put(("tag", tw_, th_, services.T["tag_bg"], services.T["tag_outline"]), im, int(round(tw_ * s_)), int(round(th_ * s_)),
+            im = sprites.bubble_image(tw_, th_, theme.T["tag_bg"], theme.T["tag_outline"], None)
+            self._put(("tag", tw_, th_, theme.T["tag_bg"], theme.T["tag_outline"]), im, int(round(tw_ * s_)), int(round(th_ * s_)),
                       3, services.PET_H - 2 - services.TAG_H, "nw")
         except Exception:  # no Pillow: a plain rectangle
-            c.create_rectangle(3, services.PET_H - 2 - services.TAG_H, services.PET_W - 3, services.PET_H - 2, fill=services.T["tag_bg"], outline=services.T["tag_outline"], width=1)
-        font, sub_font = services.mono(5.0), services.mono(4.0)  # console-style text, like the robot's screen
+            c.create_rectangle(3, services.PET_H - 2 - services.TAG_H, services.PET_W - 3, services.PET_H - 2, fill=theme.T["tag_bg"], outline=theme.T["tag_outline"], width=1)
+        font, sub_font = sprites.mono(5.0), sprites.mono(4.0)  # console-style text, like the robot's screen
         room, left = services.PET_W - 14, 7  # inside the tag's rounded border
         everyone = self.data.get("everyone") or []
         entries = [(m.get("raw_title") or m.get("title") or "session", m.get("conv") or "", m.get("state"))
@@ -174,12 +176,12 @@ class PetView:
         y_top0 = services.PET_H - 2 - services.TAG_H
         y1 = y_top0 + 6.4 if two else services.PET_H - 2 - services.TAG_H / 2 + 1.5  # name near the top; one line: a bit low (badges)
         y2 = y_top0 + 13.9  # clear of the tag's bottom border
-        sub_fg = "#d1d5db" if services.T.get("name") == "dark" else "#374151"
+        sub_fg = "#d1d5db" if theme.T.get("name") == "dark" else "#374151"
         if len(everyone) > 1:  # compact mode: every session scrolls past like a banner, its title right below it
             self._title_banner(entries, font, sub_font, left, room, y1, y2 if two else None, sub_fg)
             return
         name, title, _ = entries[0]  # one pet: never cut, a line too long for the tag scrolls round instead
-        self._marquee(name, font, y1, services.T["tag_fg"], left, room)
+        self._marquee(name, font, y1, theme.T["tag_fg"], left, room)
         if title:
             self._marquee(title, sub_font, y2, sub_fg, left, room)
 
@@ -200,7 +202,7 @@ class PetView:
             cx = left - offset + k * loop
             for ch in loop_text:
                 key = ("cw", font, ch)
-                cw = services._IMG_CACHE[key] if key in services._IMG_CACHE else services._IMG_CACHE.setdefault(key, self._text_w(font, ch))
+                cw = sprites._IMG_CACHE[key] if key in sprites._IMG_CACHE else sprites._IMG_CACHE.setdefault(key, self._text_w(font, ch))
                 if cx >= right:
                     break
                 if cx >= left and cx + cw <= right and not ch.isspace():
@@ -258,7 +260,7 @@ class PetView:
                         cx = x
                         for ch in text:
                             key = ("cw", f, ch)  # per-character widths, measured once
-                            cw = services._IMG_CACHE[key] if key in services._IMG_CACHE else services._IMG_CACHE.setdefault(key, self._text_w(f, ch))
+                            cw = sprites._IMG_CACHE[key] if key in sprites._IMG_CACHE else sprites._IMG_CACHE.setdefault(key, self._text_w(f, ch))
                             if cx >= left and cx + cw <= right and not ch.isspace():
                                 c.create_text(cx, y, text=ch, anchor="w", fill=fill, font=f)
                             cx += cw
@@ -302,7 +304,7 @@ class PetView:
                              + (self._text_w(arrow_font, arrow) if arrow else 0)))
         # expanded compact badges: each session's conversation title on a second, smaller line
         sub_font, sub_h = services.fnt(4.5 * 0.85), 7
-        sub_fg = "#d1d5db" if services.T.get("name") == "dark" else "#374151"  # almost black grey (light grey on dark tags)
+        sub_fg = "#d1d5db" if theme.T.get("name") == "dark" else "#374151"  # almost black grey (light grey on dark tags)
         titles = list(self.data.get("badge_titles") or []) if collapse else []
         titles += [""] * (len(texts) - len(titles))
 
@@ -350,19 +352,19 @@ class PetView:
                     placed.append((text, hot, bx, bottom - bh, w, bh, key, sub))  # a row's badges share one line
                 bottom -= row_h + gap
         for text, hot, bx, y, w, bh, key, sub in placed:
-            bg = services.BADGE_ATTENTION_BG if hot else services.T["tag_bg"]
+            bg = services.BADGE_ATTENTION_BG if hot else theme.T["tag_bg"]
             tags = ("badge", "badge:" + (key or ""))
             try:
-                im = services.bubble_image(w, bh, bg, services.T["tag_outline"], None)
-                self._put(("badge", w, bh, bg, services.T["tag_outline"]), im, int(round(w * s_)), int(round(bh * s_)), bx, y,
+                im = sprites.bubble_image(w, bh, bg, theme.T["tag_outline"], None)
+                self._put(("badge", w, bh, bg, theme.T["tag_outline"]), im, int(round(w * s_)), int(round(bh * s_)), bx, y,
                           "nw", tags=tags)
             except Exception:  # no Pillow
-                c.create_rectangle(bx, y, bx + w, y + bh, fill=bg, outline=services.T["tag_outline"], tags=tags)
+                c.create_rectangle(bx, y, bx + w, y + bh, fill=bg, outline=theme.T["tag_outline"], tags=tags)
             if sub:
                 c.create_text(bx + 3, y + h + sub_h / 2 - 1.5, text=sub, anchor="w",
                               fill="#374151" if hot else sub_fg, font=sub_font, tags=tags)
             label, arrow = split(text)
-            fg = "#111827" if hot else services.T["tag_fg"]
+            fg = "#111827" if hot else theme.T["tag_fg"]
             tx = bx + 2
             if label:
                 dot = services.COLORS["needs_input"] if text.startswith("+") else services.badge_dot(text)
@@ -376,7 +378,7 @@ class PetView:
         return min((p[2] for p in placed), default=None)
 
     def _text_w(self, font, text):
-        return font_metrics._text_w(self.services, font, text)
+        return font_metrics._text_w(font, text)
 
     def _mole_head(self, cx, bc, k, st, ph):
         services = self.services
@@ -389,15 +391,15 @@ class PetView:
             x = cx + side * ex
             if st in ("done", "idle"):
                 c.create_arc(x - 4 * k, ey - 3 * k, x + 4 * k, ey + 3 * k, start=180, extent=180, style="arc",
-                             width=2, outline=services.INK)
+                             width=2, outline=theme.INK)
             elif st == "error":
-                c.create_line(x - 3 * k, ey - 3 * k, x + 3 * k, ey + 3 * k, width=2, fill=services.INK)
-                c.create_line(x - 3 * k, ey + 3 * k, x + 3 * k, ey - 3 * k, width=2, fill=services.INK)
+                c.create_line(x - 3 * k, ey - 3 * k, x + 3 * k, ey + 3 * k, width=2, fill=theme.INK)
+                c.create_line(x - 3 * k, ey + 3 * k, x + 3 * k, ey - 3 * k, width=2, fill=theme.INK)
             elif st == "working" and (ph % 4) < 0.15:  # blink
-                c.create_line(x - 3 * k, ey, x + 3 * k, ey, width=2, fill=services.INK)
+                c.create_line(x - 3 * k, ey, x + 3 * k, ey, width=2, fill=theme.INK)
             else:
                 r = (4.6 if st == "needs_input" else 3.4) * k
-                c.create_oval(x - r, ey - r * 1.25, x + r, ey + r * 1.25, fill=services.INK, outline="")
+                c.create_oval(x - r, ey - r * 1.25, x + r, ey + r * 1.25, fill=theme.INK, outline="")
                 c.create_oval(x - r * 0.15, ey - r * 0.95, x + r * 0.45, ey - r * 0.25, fill="white", outline="")
         wig = math.sin(ph * 10) * 1.2 * k if st == "working" else 0  # nose wiggles while digging
         ny = bc + 5 * k
@@ -462,7 +464,7 @@ class PetView:
         self._draw_tag()
 
     def _char_w(self, font):
-        return font_metrics._char_w(self.services, font)
+        return font_metrics._char_w(font)
 
     def _terminal_rows(self, rows=3, cols=13):
         """Scrolling hacker text for the working bubble; each row advances at its own speed."""
@@ -484,14 +486,14 @@ class PetView:
         services = self.services
         c = self.canvas
         if not services.RECT_SPRITES:
-            c.create_image(x, y, image=services.sprite_photo(key, image, w, h), anchor=anchor, tags=tags)
+            c.create_image(x, y, image=sprites.sprite_photo(key, image, w, h), anchor=anchor, tags=tags)
             return
         s = services.SCALE["v"]
         bw, bh = w / s, h / s  # size in base coordinates
         left = x - (bw / 2 if anchor in ("center", "n", "s") else (bw if "e" in anchor else 0))
         top = y - (bh / 2 if anchor in ("center", "e", "w") else (bh if "s" in anchor else 0))
         kx, ky = bw / image.width, bh / image.height
-        for x0, y0, x1, y1, col in services.pixel_rects(key, image):
+        for x0, y0, x1, y1, col in sprites.pixel_rects(key, image):
             c.create_rectangle(left + x0 * kx, top + y0 * ky, left + x1 * kx, top + y1 * ky,
                                fill=col, outline="", width=0, tags=tags)
 
@@ -500,21 +502,21 @@ class PetView:
         services = self.services
         w, h = max(14, int(round(x2 - x1))), max(9, int(round(y2 - y1)))
         tcx = max(5, min(w - 6, int(round(tail_x - x1))))
-        im = services.bubble_image(w, h, fill, outline, tcx)
+        im = sprites.bubble_image(w, h, fill, outline, tcx)
         s = services.SCALE["v"]
         self._put(("bubble", w, h, fill, outline, tcx), im, int(round(w * s)), int(round(im.height * s)),
                   int(round(x1)), int(round(y1)), "nw", tags)
 
     def _mark(self, kind, cx, cy, k=1, tags=()):
         services = self.services
-        im = services.mark_image(kind, k)
+        im = sprites.mark_image(kind, k)
         s = services.SCALE["v"]
         self._put(("mark", kind, k), im, int(round(im.width * s)), int(round(im.height * s)),
                   int(round(cx)), int(round(cy)), "center", tags)
 
     def _draw_robot(self, t):
         services = self.services
-        spr = services.load_sprites()
+        spr = sprites.load_sprites()
         if not spr:
             return self._draw_mole(t)
         c = self.canvas
@@ -547,16 +549,16 @@ class PetView:
             hst, hacked = states[i]
             ph = t + i * 1.7
             cx, dy, squash = cx0 + dx, 0.0, 1.0
-            face = services.STATE_FACE.get(hst, "sleep")
+            face = sprites.STATE_FACE.get(hst, "sleep")
             if main and flash:  # just auto-approved something: a calm, content robot with green lights
                 hst, face = "auto", "joy"
                 dy = -abs(math.sin(ph * 2.5)) * 1.5
             elif hst == "working":
                 dy = -abs(math.sin(ph * (5 if main else 4.2))) * 3 * k
-                frame = int(ph * 8) % services.TALK_FRAMES  # the wave travels along the mouth (one loop = 0.5 s, 2 Hz)
+                frame = int(ph * 8) % sprites.TALK_FRAMES  # the wave travels along the mouth (one loop = 0.5 s, 2 Hz)
                 # Blink on a cosine at BLINK_RATIO x the mouth's frequency: a short blink near each peak. The two
                 # rhythms drift apart and line up again now and then.
-                blink = math.cos(2 * math.pi * services.BLINK_RATIO * (8 / services.TALK_FRAMES) * ph) > services.BLINK_THRESHOLD
+                blink = math.cos(2 * math.pi * services.BLINK_RATIO * (8 / sprites.TALK_FRAMES) * ph) > services.BLINK_THRESHOLD
                 face = f"talkblink{frame}" if blink else f"talk{frame}"
                 if main and done_flash:
                     face = "joy"
@@ -570,8 +572,8 @@ class PetView:
             w, h = int(round(rw0 * k * s)), int(round(rh0 * k * squash * s))
             sw = int(round(rw0 * k * 1.1 * s))
             self._put("shadow", shadow, sw, max(2, int(sw * 0.25)), cx, ground + 2, "center")
-            im = services.robot_image(face, services.light_cycle(hst, ph))
-            self._put(("robot", face, services.light_cycle(hst, ph)), im, w, h, cx, ground + dy + rise, "s", tags=("hit",))
+            im = sprites.robot_image(face, sprites.light_cycle(hst, ph))
+            self._put(("robot", face, sprites.light_cycle(hst, ph)), im, w, h, cx, ground + dy + rise, "s", tags=("hit",))
             if main:
                 top_main = ground + dy - rh0 * k * squash
 
@@ -590,7 +592,7 @@ class PetView:
                 self._completion_seal(cx0 - 27, top_main + 8)
             elif st == "working":  # hacker-screen bubble
                 self._bubble(bx1, by1, bx2, by2, tail, "#0b1220", "#34d399")
-                font = services.mono(5)
+                font = sprites.mono(5)
                 cw = self._char_w(font)  # real width of one character, in drawing units
                 rows = self._terminal_rows(cols=max(6, int((bx2 - bx1 - 12) / cw)))
                 for i, row in enumerate(rows):
@@ -658,29 +660,29 @@ class PetView:
         for side in (-1, 1):  # eyes
             ex = cx + side * 9
             if st in ("done", "idle"):
-                c.create_arc(ex - 5, ey - 3, ex + 5, ey + 4, start=180, extent=180, style="arc", width=2, outline=services.INK)
+                c.create_arc(ex - 5, ey - 3, ex + 5, ey + 4, start=180, extent=180, style="arc", width=2, outline=theme.INK)
             elif st == "error":
-                c.create_line(ex - 4, ey - 4, ex + 4, ey + 4, width=2, fill=services.INK)
-                c.create_line(ex - 4, ey + 4, ex + 4, ey - 4, width=2, fill=services.INK)
+                c.create_line(ex - 4, ey - 4, ex + 4, ey + 4, width=2, fill=theme.INK)
+                c.create_line(ex - 4, ey + 4, ex + 4, ey - 4, width=2, fill=theme.INK)
             elif st == "working" and (t % 4) < 0.15:  # blink
-                c.create_line(ex - 4, ey, ex + 4, ey, width=2, fill=services.INK)
+                c.create_line(ex - 4, ey, ex + 4, ey, width=2, fill=theme.INK)
             else:
                 r = 6 if st == "needs_input" else 5
                 px = 2 * math.sin(t * 1.7) if st == "working" else 0
-                c.create_oval(ex - r, ey - r, ex + r, ey + r, fill="white", outline=services.INK)
-                c.create_oval(ex + px - 2.5, ey - 2.5, ex + px + 2.5, ey + 2.5, fill=services.INK, outline="")
+                c.create_oval(ex - r, ey - r, ex + r, ey + r, fill="white", outline=theme.INK)
+                c.create_oval(ex + px - 2.5, ey - 2.5, ex + px + 2.5, ey + 2.5, fill=theme.INK, outline="")
 
         my = by + 9  # mouth
         if st == "needs_input":
-            c.create_oval(cx - 3, my - 3, cx + 3, my + 3, fill=services.INK, outline="")
+            c.create_oval(cx - 3, my - 3, cx + 3, my + 3, fill=theme.INK, outline="")
         elif st == "done":
-            c.create_arc(cx - 6, my - 6, cx + 6, my + 3, start=200, extent=140, style="arc", width=2, outline=services.INK)
+            c.create_arc(cx - 6, my - 6, cx + 6, my + 3, start=200, extent=140, style="arc", width=2, outline=theme.INK)
             for side in (-1, 1):
                 c.create_oval(cx + side * 17 - 4, my - 4, cx + side * 17 + 4, my + 1, fill="#f9a8d4", outline="")
         elif st == "error":
-            c.create_line(cx - 6, my, cx - 2, my - 2, cx + 2, my, cx + 6, my - 2, width=2, fill=services.INK)
+            c.create_line(cx - 6, my, cx - 2, my - 2, cx + 2, my, cx + 6, my - 2, width=2, fill=theme.INK)
         else:
-            c.create_line(cx - 4, my, cx + 4, my, width=2, fill=services.INK)
+            c.create_line(cx - 4, my, cx + 4, my, width=2, fill=theme.INK)
 
         if emerging:  # dirt mound hides the part of the body still underground
             mw = 34 * (1 - 0.5 * p)
