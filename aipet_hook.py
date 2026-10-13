@@ -587,6 +587,12 @@ def write_stdout(text):
             pass
 
 
+def answer_texts(answers):
+    """{question: text} as Claude Code's AskUserQuestion takes them: a multi-select question's labels (the pet sends a
+    list) become one comma-separated text, the way Claude Code's own dialog answers it."""
+    return {q: ", ".join(str(v) for v in a) if isinstance(a, (list, tuple)) else str(a) for q, a in answers.items()}
+
+
 def decision_output(behavior, updated_input=None, updated_permissions=None):
     decision = {"behavior": behavior}
     if behavior == "deny":
@@ -885,9 +891,9 @@ def answer_flow(base, path, aid, request_id=None, tool_input=None):
         if decision == "allow" and req.get("kind") == "question":
             if not isinstance(answers, dict) or not answers:
                 return  # a question can't be "allowed" without answers: leave it to Claude Code's own dialog
-            # the questions exactly as Claude Code sent them, plus {question text: label, or [labels] if multi-select}
+            # the questions exactly as Claude Code sent them, plus {question text: answer text}
             updated = dict(tool_input if isinstance(tool_input, dict) else {"questions": req.get("questions")},
-                           answers=answers)
+                           answers=answer_texts(answers))
         write_stdout(decision_output(decision, updated, permissions))
 
 def request_from_transcript(path, max_bytes=300000):

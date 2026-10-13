@@ -499,7 +499,7 @@ class PermissionCard:
     def question_answers(self):
         """{question text: label} (single choice) or {question text: [labels]} (multi-select); typed answers count
         as a label, but only while its own radio button (check box) is selected. None until every question has an
-        answer."""
+        answer. (The hook sends a multi-select answer to Claude Code as one comma-separated text.)"""
         answers = {}
         for q, multi, choice, picks, own, own_on in self._qvars:
             typed = own.get().strip()

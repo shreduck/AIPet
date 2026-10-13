@@ -1,6 +1,7 @@
 """Claude's AskUserQuestion through the PermissionRequest hook (format confirmed against a real Cowork session):
 input {"questions": [{"question", "header", "multiSelect", "options": [{"label", "description"}]}]}, answered with
-allow + updatedInput = the same input plus {"answers": {question: label, or [labels] when multi-select}}."""
+allow + updatedInput = the same input plus {"answers": {question: text}}; a multi-select question's labels are
+joined into one text (", "), as Claude Code's own dialog answers it."""
 import json
 import os
 import tempfile
@@ -63,8 +64,13 @@ class QuestionTests(unittest.TestCase):
             hook.answer_flow(self.tmp.name, self.path, "", "q1", QUESTIONS)
         decision = json.loads(out.call_args.args[0])["hookSpecificOutput"]["decision"]
         self.assertEqual(decision["behavior"], "allow")
-        self.assertEqual(decision["updatedInput"], dict(QUESTIONS, answers=answers))
+        self.assertEqual(decision["updatedInput"],
+                         dict(QUESTIONS, answers={"Which fruit?": "Apple", "Which lights?": "Red, something else"}))
         self.assertEqual(self.record()["state"], "working")
+
+    def test_answers_are_texts_even_for_multi_select(self):
+        self.assertEqual(hook.answer_texts({"a": "One", "b": ["Red", "Blue"], "c": ["Only"], "d": 3}),
+                         {"a": "One", "b": "Red, Blue", "c": "Only", "d": "3"})
 
     def test_allow_without_answers_leaves_it_to_claude_code(self):
         hook._update_session(self.path, self.target, "PermissionRequest", self.data, False)
