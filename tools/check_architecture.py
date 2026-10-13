@@ -37,7 +37,7 @@ HOOK_SOURCES = {"aipet_hook", "aipet_codex", "aipet_usage", "aipet_claude_usage"
 HOOK_OPTIONAL = {"certifi"}  # imported inside try/except by aipet_usage; never required
 # Modules with explicit interfaces (restructure.md step 3 onwards): no `services` parameter or name
 SERVICE_FREE = ["aipetlib.agents", "aipetlib.runtime", "aipetlib.text", "aipetlib.ui.theme", "aipetlib.ui.sprites",
-                "aipetlib.ui.font_metrics"]
+                "aipetlib.ui.font_metrics", "aipetlib.geometry"]
 
 
 def module_files():

@@ -5,6 +5,7 @@ No application entry point is imported by this component.
 """
 import tkinter as tk
 from . import theme
+from .. import geometry
 
 
 def set_size(app, services, size):
@@ -31,11 +32,11 @@ def _place_above_pet(app, services, w):
     ww, wh = w.winfo_reqwidth(), w.winfo_reqheight()
     ox, oy, ow, oh = app.root.winfo_x(), app.root.winfo_y(), app.root.winfo_width(), app.root.winfo_height()
     ref = (ox + ow // 2, oy + oh // 2)  # the pet's monitor
-    area = services.work_area(*ref, w)
+    area = geometry.work_area(*ref, w)
     x, y = ox + ow // 2 - ww // 2, oy - wh - 10
     if area and y < area[1]:
         y = oy + oh + 10  # no room above: just below
-    w.geometry(services.geo(*services.fit_on_screen(x, y, ww, wh, ref, w, margin=10)))
+    w.geometry(geometry.geo(*geometry.fit_on_screen(x, y, ww, wh, ref, w, margin=10)))
 
 
 def open_size_slider(app, services):

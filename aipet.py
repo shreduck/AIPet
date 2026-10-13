@@ -36,7 +36,6 @@ import urllib.error
 import urllib.request
 import tkinter as tk
 import aipet_usage as usage
-import aipetlib.ui.theme as theme
 from aipetlib.ui.permission_card import PermissionCard
 from aipetlib.ui.pet_view import PetView
 from aipetlib.ui import font_metrics
@@ -134,9 +133,6 @@ MOUND, MOUND_DARK = "#a16207", "#713f12"
 EMERGE_SECONDS, EMERGE_DEPTH, EMERGE_STAGGER = 0.7, 62, 0.25
 DONE_FLASH_SECONDS = 1.6  # a working pet shows the done check this long when a subagent or another session finishes
 BUBBLE_W = 270
-# Dialogs placed on the monitor of the window that opened them; looked up at call time, so a patched work_area or
-# geo here still applies.
-theme.set_screen_helpers(lambda x, y, widget: work_area(x, y, widget), lambda x, y: geo(x, y))
 
 
 def fill_menu(menu, entries):
@@ -168,10 +164,10 @@ def popup_menu(menu, x, y):
     menu.update_idletasks()
     ref = (x, y)
     height = menu.winfo_reqheight()
-    bounds = work_area(x, y, menu)
+    bounds = geometry.work_area(x, y, menu)
     if bounds and y + height + 8 > bounds[3]:
         y -= height + 8
-    x, y = fit_on_screen(x, y, menu.winfo_reqwidth(), height, ref, menu, margin=8)
+    x, y = geometry.fit_on_screen(x, y, menu.winfo_reqwidth(), height, ref, menu, margin=8)
     menu.tk_popup(x, y)
 
 
@@ -743,23 +739,7 @@ def diagnostics_report(app=None):
 
 
 # --------------------------------------------------------------------------- multi-monitor placement
-def work_area(x, y, widget):
-    return geometry.work_area(sys.modules[__name__], x, y, widget)
-
-
-_MAC_SCREENS = {"t": 0.0, "v": []}
-
-
-def mac_screen_at(x, y):
-    return geometry.mac_screen_at(sys.modules[__name__], x, y)
-
-
-def fit_on_screen(x, y, w, h, ref, widget, margin=0):
-    return geometry.fit_on_screen(sys.modules[__name__], x, y, w, h, ref, widget, margin)
-
-
-def geo(x, y):
-    return geometry.geo(sys.modules[__name__], x, y)
+from aipetlib.geometry import _MAC_SCREENS, fit_on_screen, geo, mac_screen_at, work_area  # noqa: E402,F401
 
 
 # --------------------------------------------------------------------------- VS Code: which open window holds a folder
@@ -1519,8 +1499,8 @@ class PetApp:
                 ref = (r.winfo_x() + cw // 2, r.winfo_y() + ch // 2) if cw > 1 and ch > 1 else (ax - 1, ay - 1)
             except tk.TclError:
                 ref = (ax - 1, ay - 1)
-        x, y = fit_on_screen(ax - w, ay - h, w, h, ref, r)
-        r.geometry(geo(x, y))
+        x, y = geometry.fit_on_screen(ax - w, ay - h, w, h, ref, r)
+        r.geometry(geometry.geo(x, y))
         self.anchor = [x + w, y + h]
 
     def default_anchor(self):
@@ -1528,7 +1508,7 @@ class PetApp:
         taskbar; on macOS just above the Dock (the visible area of the main screen)."""
         r = self.root
         if IS_MAC:
-            area = mac_screen_at(1, 1)  # the main screen holds Tk's origin
+            area = geometry.mac_screen_at(1, 1)  # the main screen holds Tk's origin
             if area:
                 return [area[2] - 24, area[3] - 8]
         return [r.winfo_screenwidth() - 24, r.winfo_screenheight() - 60]
@@ -1545,8 +1525,8 @@ class PetApp:
                 return
             w += delta
             ref = (r.winfo_x() + r.winfo_width() // 2, r.winfo_y() + h // 2)
-            x, y = fit_on_screen(self.anchor[0] - w, self.anchor[1] - h, w, h, ref, r)
-            r.geometry(geo(x, y))
+            x, y = geometry.fit_on_screen(self.anchor[0] - w, self.anchor[1] - h, w, h, ref, r)
+            r.geometry(geometry.geo(x, y))
             self.anchor = [x + w, y + h]
         except tk.TclError:
             r.after_idle(self.reposition)

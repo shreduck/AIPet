@@ -8,6 +8,7 @@ import tkinter as tk
 import aipet_usage as usage
 from . import sprites
 from . import theme
+from .. import geometry
 
 
 def tooltip_text_scale(app, services):
@@ -124,7 +125,7 @@ def _build_tooltip(app, services, pet, text, usage_detail):
     # and badges. Centre on the pet itself, excluding the usage badge gutter.
     x = pet.canvas.winfo_rootx() + services.px(services.BADGE_GUTTER + getattr(pet, "gutter", 0) + services.PET_W / 2) - tip.winfo_reqwidth() // 2
     y = pet.canvas.winfo_rooty() - tip.winfo_reqheight() - 6
-    tip.geometry(services.geo(*services.fit_on_screen(x, y, tip.winfo_reqwidth(), tip.winfo_reqheight(),
+    tip.geometry(geometry.geo(*geometry.fit_on_screen(x, y, tip.winfo_reqwidth(), tip.winfo_reqheight(),
                                     (pet.canvas.winfo_rootx() + 10, pet.canvas.winfo_rooty() + 10), tip)))
     tip.deiconify()
     if services.IS_MAC:

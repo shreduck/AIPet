@@ -1,12 +1,14 @@
 """Shared desktop themes, widget styling and modal dialogs.
 
 This module owns the active theme (T, mutated in place by set_theme so every importer sees a switch), the theme
-palettes, the console UI font and the list of live themed windows. It imports no application entry point; the one
-thing it borrows from the app is multi-monitor placement for dialogs, registered with set_screen_helpers().
+palettes, the console UI font and the list of live themed windows. It imports no application entry point; dialogs
+are placed on their monitor with aipetlib.geometry.
 """
 import os
 import sys
 import tkinter as tk
+
+from .. import geometry
 
 IS_MAC = sys.platform == "darwin"
 # Every AIPet window uses a console font, like the pet's own name tags and tooltips
@@ -52,23 +54,6 @@ THEMED = []
 _DEFAULT_FG = {"", "black", "#000000", "systembuttontext", "systemwindowtext", "systemmenutext", "#111827"}
 MUTED_FG = {"#6b7280", "grey", "gray"}
 DIALOG_ACCENTS = {"info": "#5b8def", "question": "#5b8def", "warning": "#f59e0b", "error": "#ef4444"}
-
-# Multi-monitor placement for dialogs, supplied by the app (aipet registers its work_area / geo).
-_SCREEN = {"work_area": None, "geo": None}
-
-
-def set_screen_helpers(work_area, geo):
-    """Register the app's multi-monitor helpers: work_area(x, y, widget) -> (l, t, r, b) or None, and
-    geo(x, y) -> a Tk geometry offset."""
-    _SCREEN.update(work_area=work_area, geo=geo)
-
-
-def _work_area(x, y, widget):
-    return _SCREEN["work_area"](x, y, widget)
-
-
-def _geo(x, y):
-    return _SCREEN["geo"](x, y) if _SCREEN["geo"] else f"+{int(x)}+{int(y)}"
 
 
 def set_theme(name):
@@ -358,10 +343,10 @@ def themed_dialog(root, title, text, buttons=(("OK", True, "primary"),), kind="i
     ww, wh = w.winfo_reqwidth(), w.winfo_reqheight()
     try:
         ref = (root.winfo_x() + root.winfo_width() // 2, root.winfo_y() + root.winfo_height() // 2)
-        left, top_, right, bottom = _work_area(*ref, w) or (0, 0, w.winfo_screenwidth(), w.winfo_screenheight())
+        left, top_, right, bottom = geometry.work_area(*ref, w) or (0, 0, w.winfo_screenwidth(), w.winfo_screenheight())
     except Exception:
         left, top_, right, bottom = 0, 0, w.winfo_screenwidth(), w.winfo_screenheight()
-    w.geometry(_geo(left + (right - left - ww) // 2, max(top_ + 20, top_ + (bottom - top_ - wh) // 3)))
+    w.geometry(geometry.geo(left + (right - left - ww) // 2, max(top_ + 20, top_ + (bottom - top_ - wh) // 3)))
     w.deiconify()
     w.lift()
     w.focus_force()

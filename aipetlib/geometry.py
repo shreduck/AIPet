@@ -1,12 +1,18 @@
 """Monitor geometry and overlay positioning.
 
-Services are supplied by the compatibility entry point; this module does not import aipet.
+Owns the macOS screen cache. Imports no Tk: callers pass the widget whose screen they ask about.
 """
 import os
+import sys
 import time
 
+from .runtime import diagnostics
 
-def work_area(services, x, y, widget):
+IS_MAC = sys.platform == "darwin"
+_MAC_SCREENS = {"t": 0.0, "v": []}  # macOS screen rectangles, re-read at most every 3 s
+
+
+def work_area(x, y, widget):
     """(left, top, right, bottom) of the monitor nearest to screen point (x, y) (the whole monitor, taskbar included,
     so a pet parked over the taskbar stays there).
     Windows asks the OS (monitors left of / above the main one have negative coordinates). macOS returns None: Tk
@@ -32,25 +38,25 @@ def work_area(services, x, y, widget):
                 return r.left, r.top, r.right, r.bottom
         except Exception:
             pass
-    if services.IS_MAC:
-        return services.mac_screen_at(x, y)
+    if IS_MAC:
+        return mac_screen_at(x, y)
     return 0, 0, widget.winfo_screenwidth(), widget.winfo_screenheight()
 
 
-def mac_screen_at(services, x, y):
+def mac_screen_at(x, y):
     """macOS: (left, top, right, bottom) in Tk coordinates of the visible part of the screen holding (x, y) (without
     the menu bar and the Dock, which covers windows), else the nearest one; None if the screens can't be read
     (callers then don't clamp). Read from NSScreen (cached for 3 s)."""
     now = time.time()
-    if now - services._MAC_SCREENS["t"] > 3:
+    if now - _MAC_SCREENS["t"] > 3:
         try:
             import mac_statusbar
-            services._MAC_SCREENS["v"] = mac_statusbar.screen_rects()
+            _MAC_SCREENS["v"] = mac_statusbar.screen_rects()
         except Exception as e:
-            services._MAC_SCREENS["v"] = []
-            services.log_error(f"mac screens: {e!r}")
-        services._MAC_SCREENS["t"] = now
-    rects = services._MAC_SCREENS["v"]
+            _MAC_SCREENS["v"] = []
+            diagnostics.log_error(f"mac screens: {e!r}")
+        _MAC_SCREENS["t"] = now
+    rects = _MAC_SCREENS["v"]
     if not rects:
         return None
 
@@ -61,15 +67,15 @@ def mac_screen_at(services, x, y):
     return min(rects, key=dist)
 
 
-def fit_on_screen(services, x, y, w, h, ref, widget, margin=0):
+def fit_on_screen(x, y, w, h, ref, widget, margin=0):
     """Clamp a w x h window at (x, y) into the monitor holding screen point ref (on macOS: unchanged)."""
-    r = services.work_area(ref[0], ref[1], widget)
+    r = work_area(ref[0], ref[1], widget)
     if not r:
         return int(x), int(y)
     left, top, right, bottom = r
     return (int(max(left, min(x, right - w - margin))), int(max(top, min(y, bottom - h - margin))))
 
 
-def geo(services, x, y):
+def geo(x, y):
     """Tk geometry offset that also works for negative coordinates (monitors left of / above the main one)."""
     return f"+{int(x)}+{int(y)}"

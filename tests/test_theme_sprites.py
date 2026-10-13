@@ -36,19 +36,13 @@ class ThemeSpritesOwnershipTests(unittest.TestCase):
         finally:
             self.theme.set_theme(before.get("name", "light"))
 
-    def test_dialog_placement_comes_from_the_registered_helpers(self):
-        calls = []
-        saved = dict(self.theme._SCREEN)
-        try:
-            self.theme.set_screen_helpers(lambda x, y, w: calls.append((x, y)) or (0, 0, 800, 600),
-                                          lambda x, y: f"+{x}+{y}")
-            self.assertEqual(self.theme._work_area(5, 6, None), (0, 0, 800, 600))
-            self.assertEqual(self.theme._geo(-3, 4), "+-3+4")
-            self.assertEqual(calls, [(5, 6)])
-            self.theme._SCREEN.update(geo=None)
-            self.assertEqual(self.theme._geo(-3.6, 4.2), "+-3+4")  # Tk offset without the app's helper
-        finally:
-            self.theme._SCREEN.update(saved)
+    def test_dialogs_and_the_app_share_geometry(self):
+        from aipetlib import geometry
+        self.assertIs(self.theme.geometry, geometry)
+        for name in ("work_area", "mac_screen_at", "fit_on_screen", "geo", "_MAC_SCREENS"):
+            with self.subTest(name=name):
+                self.assertIs(getattr(self.aipet, name), getattr(geometry, name))
+        self.assertEqual(geometry.geo(-3.6, 4.2), "+-3+4")
 
     def test_sprites_resolve_the_bundled_folder(self):
         import os

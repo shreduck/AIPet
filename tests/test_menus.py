@@ -160,7 +160,7 @@ class MenuTests(unittest.TestCase):
             raise RuntimeError('menu test failure')
         app.menu.tk_popup.side_effect = popup
         pet = SimpleNamespace(_on_badge='old badge', _on_bubble=True)
-        with patch.object(aipet, 'fill_menu'), patch.object(aipet, 'work_area', return_value=None), \
+        with patch.object(aipet, 'fill_menu'), patch.object(aipet.geometry, 'work_area', return_value=None), \
                 patch.object(aipet, 'NATIVE_WIN_MENU', False):
             with self.assertRaisesRegex(RuntimeError, 'menu test failure'):
                 app.on_menu(SimpleNamespace(x_root=100, y_root=100), pet)
@@ -179,7 +179,7 @@ class MenuTests(unittest.TestCase):
             ((0, 25, 1920, 1080), (100, 100), (100, 100)),
         ]:
             with self.subTest(bounds=bounds, click=click):
-                with patch.object(aipet, 'work_area', return_value=bounds):
+                with patch.object(aipet.geometry, 'work_area', return_value=bounds):
                     aipet.popup_menu(menu, *click)
                 menu.tk_popup.assert_called_with(*expected)
 

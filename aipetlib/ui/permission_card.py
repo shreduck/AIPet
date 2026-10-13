@@ -7,6 +7,7 @@ import time
 import tkinter as tk
 from . import sprites
 from . import theme
+from .. import geometry
 
 
 class PermissionCard:
@@ -187,10 +188,10 @@ class PermissionCard:
         n = max(0, n - (1 if self.key in self.app.details else 0))
         root = self.app.root  # centre on the monitor the pets are on
         ref = (root.winfo_x() + root.winfo_width() // 2, root.winfo_y() + root.winfo_height() // 2)
-        left, top, right, bottom = services.work_area(*ref, w) or (0, 0, w.winfo_screenwidth(), w.winfo_screenheight())
+        left, top, right, bottom = geometry.work_area(*ref, w) or (0, 0, w.winfo_screenwidth(), w.winfo_screenheight())
         x = left + (right - left - size[0]) // 2 + 28 * n
         y = max(top + 20, top + (bottom - top - size[1]) // 2 - 30 + 28 * n)
-        w.geometry(services.geo(x, y))
+        w.geometry(geometry.geo(x, y))
 
     def _fit_code(self):
         """Size the command box to its real wrapped line count (long paths wrap mid-word, so estimates clip)."""
