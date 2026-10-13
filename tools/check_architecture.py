@@ -38,7 +38,7 @@ HOOK_OPTIONAL = {"certifi"}  # imported inside try/except by aipet_usage; never 
 # Modules with explicit interfaces (restructure.md step 3 onwards): no `services` parameter or name
 SERVICE_FREE = ["aipetlib.agents", "aipetlib.runtime", "aipetlib.text", "aipetlib.ui.theme", "aipetlib.ui.sprites",
                 "aipetlib.ui.font_metrics", "aipetlib.geometry", "aipetlib.windows",
-                "aipetlib.vscode", "aipetlib.click_through"]
+                "aipetlib.vscode", "aipetlib.click_through", "aipetlib.permissions"]
 
 
 def module_files():

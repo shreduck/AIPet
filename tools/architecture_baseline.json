@@ -1,6 +1,6 @@
 {
   "module_services": {
-    "aipet.py": 50,
+    "aipet.py": 33,
     "aipet_agents_window.py": 98,
     "aipet_app.py": 3,
     "aipet_hook.py": 1
@@ -12,7 +12,6 @@
   },
   "services_refs": {
     "aipetlib/hook_events.py": 41,
-    "aipetlib/permissions.py": 27,
     "aipetlib/sessions.py": 35,
     "aipetlib/ui/agent_controls.py": 50,
     "aipetlib/ui/agent_graph.py": 24,
@@ -21,7 +20,7 @@
     "aipetlib/ui/agent_shell.py": 7,
     "aipetlib/ui/app_menus.py": 39,
     "aipetlib/ui/appearance_controls.py": 38,
-    "aipetlib/ui/permission_card.py": 38,
+    "aipetlib/ui/permission_card.py": 34,
     "aipetlib/ui/pet_view.py": 104,
     "aipetlib/ui/tooltips.py": 19
   }

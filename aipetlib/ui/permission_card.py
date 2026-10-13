@@ -301,9 +301,9 @@ class PermissionCard:
             self.ask.config(text=item.get("message") or "Waiting for your input")
             self.ask.pack(fill="x")
         self.wait.config(text=f"waiting {services.ago(item['changed'])}" if item.get("changed") else "")
-        can_answer = self.app.answers_enabled(item) and services.hook_waiting(item) and not self.sent
+        can_answer = self.app.answers_enabled(item) and permissions.hook_waiting(item) and not self.sent
         who = "Codex" if item.get("agent") == "codex" else "Claude Code"
-        stop = None if can_answer or self.sent or not req else permissions.hook_stop(item, permissions.answers_dir(services))
+        stop = None if can_answer or self.sent or not req else permissions.hook_stop(item, permissions.answers_dir())
         if self.sent:
             note = f"Sent: {self.sent}. {who} will carry on in a moment."
         elif can_answer and item.get("agent") == "codex":
@@ -361,7 +361,7 @@ class PermissionCard:
         else:
             self.clearlink.pack_forget()
         if can_answer and not question:
-            grant = services.timed_grants().get(str(item.get("session_id")))
+            grant = permissions.timed_grants().get(str(item.get("session_id")))
             self.timedlink.config(text=(f"Auto approving this session \u00b7 {services.fmt_left(grant['until'] - time.time())} left"
                                         if grant else
                                         f"Auto approve this session for {self.app.timed_minutes()} min\u2026"))
@@ -380,7 +380,7 @@ class PermissionCard:
         """Build the question blocks once per prompt (the card refreshes every poll: keep what was picked)."""
         services = self.services
         self.qframe.pack(fill="x")
-        readonly = not services.hook_waiting({"request": req}) or not self.app.answers_enabled(self._item or {})
+        readonly = not permissions.hook_waiting({"request": req}) or not self.app.answers_enabled(self._item or {})
         if self._qid == (req.get("id"), readonly):
             return
         self._qid, self._qvars = (req.get("id"), readonly), []
@@ -561,7 +561,7 @@ class PermissionCard:
         """Start the timed auto approve for this session (after its confirmation), and allow the prompt on screen."""
         services = self.services
         item = next((i for i in self.app._last_items if i["key"] == self.key), {})
-        if services.timed_grants().get(str(item.get("session_id"))):
+        if permissions.timed_grants().get(str(item.get("session_id"))):
             self.answer("allow")
             return
         if self.app.start_timed_approve(item):

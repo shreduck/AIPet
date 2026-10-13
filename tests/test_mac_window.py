@@ -431,7 +431,7 @@ class MacWindowTests(unittest.TestCase):
                               answers_enabled=lambda _: True, send_answer=MagicMock(return_value=False))
         detail = None
         try:
-            with patch.object(aipet_sprites, "load_sprites", return_value=None), patch.object(aipet, "hook_waiting", return_value=True):
+            with patch.object(aipet_sprites, "load_sprites", return_value=None), patch.object(aipet.permissions, "hook_waiting", return_value=True):
                 detail = aipet.Detail(app, item["key"], item)
                 root.update()
                 window = mac.window_titled(detail.win.title())

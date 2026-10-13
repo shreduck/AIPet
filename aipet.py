@@ -44,6 +44,12 @@ from aipetlib.click_through import ClickThroughController
 import aipetlib.windows as windows
 import aipetlib.geometry as geometry
 import aipetlib.permissions as permissions
+from aipetlib.permissions import (  # noqa: E402,F401
+    DEFAULT_BLACKLIST, PROMPT_CONFIRM_SECONDS, TIMED_DEFAULT, TIMED_MAX, TIMED_MIN, _search, _write_auto_approve,
+    answer_name, answers_dir, answers_enabled, auto_approve_key_for, auto_approve_rules, auto_approve_targets,
+    bad_patterns, default_auto_rules, hook_waiting, save_auto_approve, set_timed_grant, stop_timed_grant,
+    timed_grants, unconfirmed_prompts, write_answer_wait,
+)
 import aipetlib.sessions as sessions
 import aipetlib.agents.context as agent_context
 from aipetlib.records import STATE_ORDER, first
@@ -322,75 +328,10 @@ def chime_path(kind):
     return path
 
 
-PROMPT_CONFIRM_SECONDS = 12  # Claude Code's permission_prompt Notification comes ~6 s after the prompt appears
-
-
-def unconfirmed_prompts(rec, now=None):
-    return permissions.unconfirmed_prompts(sys.modules[__name__], rec, now)
-
-
-def answer_name(item):
-    return permissions.answer_name(sys.modules[__name__], item)
-
-
-def hook_waiting(item):
-    return permissions.hook_waiting(sys.modules[__name__], item)
-
-
-def answers_dir():
-    return permissions.answers_dir(sys.modules[__name__])
-
-
-def write_answer_wait(sec):
-    return permissions.write_answer_wait(sys.modules[__name__], sec)
-
-
-DEFAULT_BLACKLIST = [".*"]  # by default every request still needs you
 AUTO_FLASH_SECONDS = 10  # how long a pet celebrates a whitelist auto-approval
 
 
-def auto_approve_key_for(item):
-    return permissions.auto_approve_key_for(sys.modules[__name__], item)
-
-
-def _search(pattern, text):
-    return permissions._search(sys.modules[__name__], pattern, text)
-
-
-def default_auto_rules():
-    return permissions.default_auto_rules(sys.modules[__name__])
-
-
-def auto_approve_rules():
-    return permissions.auto_approve_rules(sys.modules[__name__])
-
-
-def auto_approve_targets():
-    return permissions.auto_approve_targets(sys.modules[__name__])
-
-
-def save_auto_approve(key, rules):
-    return permissions.save_auto_approve(sys.modules[__name__], key, rules)
-
-
-def _write_auto_approve(targets=None, timed=None):
-    return permissions._write_auto_approve(sys.modules[__name__], targets, timed)
-
-
 # ---- timed auto approve: one session approves every permission prompt by itself for N minutes
-TIMED_MIN, TIMED_MAX, TIMED_DEFAULT = 1, 120, 10  # minutes
-
-
-def timed_grants(now=None):
-    return permissions.timed_grants(sys.modules[__name__], now)
-
-
-def set_timed_grant(session_id, minutes, title=""):
-    return permissions.set_timed_grant(sys.modules[__name__], session_id, minutes, title)
-
-
-def stop_timed_grant(session_id):
-    return permissions.stop_timed_grant(sys.modules[__name__], session_id)
 
 
 # ---- leftovers: files AIPet makes that nothing will ever need again (swept a minute after start, then hourly)
@@ -442,14 +383,6 @@ def sweep_leftovers(home=None, now=None):
     except (OSError, ValueError, AttributeError):
         pass
     return removed
-
-
-def bad_patterns(lines):
-    return permissions.bad_patterns(sys.modules[__name__], lines)
-
-
-def answers_enabled():
-    return permissions.answers_enabled(sys.modules[__name__])
 
 
 def px(n):
