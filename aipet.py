@@ -51,6 +51,11 @@ from aipetlib.permissions import (  # noqa: E402,F401
     timed_grants, unconfirmed_prompts, write_answer_wait,
 )
 import aipetlib.sessions as sessions
+from aipetlib.sessions import (  # noqa: E402,F401
+    _active_agents, COWORK_QUIET_SECONDS, INTERRUPT_MARKERS, _PID_CACHE, _TRANSCRIPT_TAILS, _phrase, _scan_tail,
+    _transcript_message, disambiguate_titles, last_said, pid_alive, place_name, read_claude_code_sessions,
+    session_badge, session_title, transcript_file, transcript_tail, turn_interrupted, visible_hook_session,
+)
 import aipetlib.agents.context as agent_context
 from aipetlib.records import STATE_ORDER, first
 from aipetlib.ui.theme import (
@@ -89,17 +94,6 @@ LABELS = {"working": "working…", "needs_input": "needs you!", "done": "done", 
 BADGE_DOTS = {"Claude": "#d97757", "Codex": "#0f8a6a", "Workbench": "#0f766e"}  # badge dot colour by its first word
 BADGE_DOT_COWORK = "#c2410c"
 BADGE_ATTENTION_BG = "#fde4e4"  # a very faint red: this session needs you
-
-
-def session_badge(agent="Claude", cowork=False, wsl=False, vscode=False, entry=""):
-    """One badge per session with all its tags: 'Claude CLI', 'Claude VS', 'Claude WSL VS', 'Codex WSL',
-    'Claude Cowork'..."""
-    if cowork:
-        return "Claude Cowork"
-    parts = [agent] + (["WSL"] if wsl else []) + (["VS"] if vscode else [])
-    if len(parts) == 1:
-        parts.append("App" if "desktop" in (entry or "").lower() else "CLI")
-    return " ".join(parts)
 
 
 def merge_badges(labels):
@@ -404,70 +398,6 @@ HEAD_LAYOUTS = {
     4: [(-31, 0.62), (31, 0.62), (-11, 0.78), (11, 0.92)],
 }
 
-
-def place_name(rec):
-    return sessions.place_name(sys.modules[__name__], rec)
-
-
-_PID_CACHE = {}
-
-
-COWORK_QUIET_SECONDS = 8  # a working Cowork session this quiet gets its process checked (see collect)
-INTERRUPT_MARKERS = ("[Request interrupted by user",)  # Claude Code's transcript line for a stopped turn
-_TRANSCRIPT_TAILS = {}  # path -> ((mtime, size), interrupted): read each transcript only when it changes
-
-
-def transcript_file(rec):
-    return sessions.transcript_file(sys.modules[__name__], rec)
-
-
-def visible_hook_session(rec):
-    return sessions.visible_hook_session(sys.modules[__name__], rec)
-
-
-def turn_interrupted(rec):
-    return sessions.turn_interrupted(sys.modules[__name__], rec)
-
-
-def last_said(rec):
-    return sessions.last_said(sys.modules[__name__], rec)
-
-
-def _phrase(text, limit=140):
-    return sessions._phrase(sys.modules[__name__], text, limit)
-
-
-def _transcript_message(entry):
-    return sessions._transcript_message(sys.modules[__name__], entry)
-
-
-def transcript_tail(rec, max_bytes=(65536, 1048576)):
-    return sessions.transcript_tail(sys.modules[__name__], rec, max_bytes)
-
-
-def _scan_tail(lines, result):
-    return sessions._scan_tail(sys.modules[__name__], lines, result)
-
-
-def pid_alive(pid, max_age=5.0):
-    return sessions.pid_alive(sys.modules[__name__], pid, max_age)
-
-
-def session_title(rec, mode="name"):
-    return sessions.session_title(sys.modules[__name__], rec, mode)
-
-
-def disambiguate_titles(items):
-    return sessions.disambiguate_titles(sys.modules[__name__], items)
-
-
-# --------------------------------------------------------------------------- Claude Code source
-def _active_agents(rec, now=None):
-    return sessions._active_agents(sys.modules[__name__], rec, now)
-
-
-def read_claude_code_sessions(cfg):
-    return sessions.read_claude_code_sessions(sys.modules[__name__], cfg)
 
 
 # --------------------------------------------------------------------------- Workbench source

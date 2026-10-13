@@ -1,6 +1,7 @@
 """Session discovery, transcript interpretation and health checks.
 
-Services are supplied by the compatibility entry point; this module does not import aipet.
+Reads the session folders through runtime.paths at call time and keeps its own caches. Imports no Tk and no
+application entry point.
 """
 import glob
 import json
@@ -9,22 +10,40 @@ import sys
 import time
 import aipet_usage as usage
 from .text import phrase
+from . import permissions
+from .runtime import paths, preferences
+
+_PID_CACHE = {}
+COWORK_QUIET_SECONDS = 8  # a working Cowork session this quiet gets its process checked (see collect)
+INTERRUPT_MARKERS = ("[Request interrupted by user",)  # Claude Code's transcript line for a stopped turn
+_TRANSCRIPT_TAILS = {}  # path -> ((mtime, size), interrupted): read each transcript only when it changes
 
 
-def place_name(services, rec):
+def session_badge(agent="Claude", cowork=False, wsl=False, vscode=False, entry=""):
+    """One badge per session with all its tags: 'Claude CLI', 'Claude VS', 'Claude WSL VS', 'Codex WSL',
+    'Claude Cowork'..."""
+    if cowork:
+        return "Claude Cowork"
+    parts = [agent] + (["WSL"] if wsl else []) + (["VS"] if vscode else [])
+    if len(parts) == 1:
+        parts.append("App" if "desktop" in (entry or "").lower() else "CLI")
+    return " ".join(parts)
+
+
+def place_name(rec):
     """The name tag's top line: the session's folder. A session with no folder to name it after (Cowork without a
     connected folder, a session in the home folder) used to be titled by its first prompt; the conversation title now
     sits right below the name, so show where it runs instead - its badge tags: "Cowork", "WSL", "WSL VS Code", "CLI"."""
     title = rec.get("title") or "session"
     if not (rec.get("topic") and title == rec.get("topic")) and title not in ("~", "Cowork"):
         return title
-    badge = services.session_badge("Codex" if rec.get("agent") == "codex" else "Claude", rec.get("app") == "cowork",
+    badge = session_badge("Codex" if rec.get("agent") == "codex" else "Claude", rec.get("app") == "cowork",
                           rec.get("env") == "wsl", rec.get("ide") == "vscode", rec.get("entry", ""))
     tags = [{"VS": "VS Code"}.get(t, t) for t in badge.split(" ")[1:]]
     return " ".join(tags) or title
 
 
-def transcript_file(services, rec):
+def transcript_file(rec):
     return transcript_path(rec)
 
 
@@ -39,12 +58,12 @@ def transcript_path(rec):
     return path
 
 
-def visible_hook_session(services, rec):
+def visible_hook_session(rec):
     """Use the same conversation identity for desktop pets and agent graph groups."""
     if rec.get("agent") != "codex":
         return True
     from aipet_codex import session_meta, internal_thread
-    path = services.transcript_file(rec)
+    path = transcript_file(rec)
     meta = session_meta(path or str(rec.get("transcript_path") or ""))
     if internal_thread(meta) or meta.get("parent_thread_id"):
         return False
@@ -53,25 +72,25 @@ def visible_hook_session(services, rec):
     return bool(path or rec.get("env") == "wsl" or rec.get("state") in ("needs_input", "error"))
 
 
-def turn_interrupted(services, rec):
+def turn_interrupted(rec):
     """True when the newest message in the session's transcript is Claude Code's "[Request interrupted by user]":
     the turn was stopped and nothing has happened since."""
     if time.time() - rec.get("updated", 0) < 1.5:
         return False
-    return services.transcript_tail(rec)["interrupted"]
+    return transcript_tail(rec)["interrupted"]
 
 
-def last_said(services, rec):
+def last_said(rec):
     """("ai" | "you", text): the newest thing said in the session, the agent's latest reply phrase or your latest
     prompt, whichever came last; None when the transcript can't be read."""
-    return services.transcript_tail(rec)["said"]
+    return transcript_tail(rec)["said"]
 
 
-def _phrase(services, text, limit=140):
+def _phrase(text, limit=140):
     return phrase(text, limit)
 
 
-def _transcript_message(services, entry):
+def _transcript_message(entry):
     """(role, [texts], has_tool_result) for a chat message line of a Claude Code transcript or a Codex rollout,
     else None (bookkeeping lines: attachments, modes, summaries, tool calls...)."""
     if not isinstance(entry, dict):
@@ -90,11 +109,11 @@ def _transcript_message(services, entry):
     return None
 
 
-def transcript_tail(services, rec, max_bytes=(65536, 1048576)):
+def transcript_tail(rec, max_bytes=(65536, 1048576)):
     """What the end of the session's transcript says: {"interrupted": the newest message is Claude Code's stop
     marker, "said": the newest reply phrase or typed prompt}. Only the tail is read, and only when the file changed."""
     empty = {"interrupted": False, "said": None}
-    path = services.transcript_file(rec)
+    path = transcript_file(rec)
     if not path:
         return empty
     try:
@@ -102,7 +121,7 @@ def transcript_tail(services, rec, max_bytes=(65536, 1048576)):
     except OSError:
         return empty
     stamp = (st.st_mtime_ns, st.st_size)
-    cached = services._TRANSCRIPT_TAILS.get(path)
+    cached = _TRANSCRIPT_TAILS.get(path)
     if cached and cached[0] == stamp:
         return cached[1]
     result = {"interrupted": False, "said": None}
@@ -112,24 +131,24 @@ def transcript_tail(services, rec, max_bytes=(65536, 1048576)):
             with open(path, "rb") as f:
                 f.seek(max(0, st.st_size - window))
                 lines = f.read().decode("utf-8", "replace").splitlines()
-            services._scan_tail(lines, result)
+            _scan_tail(lines, result)
             if result["said"] or window >= st.st_size:
                 break
     except OSError:
         return empty
-    if len(services._TRANSCRIPT_TAILS) > 64:
-        services._TRANSCRIPT_TAILS.clear()
-    services._TRANSCRIPT_TAILS[path] = (stamp, result)
+    if len(_TRANSCRIPT_TAILS) > 64:
+        _TRANSCRIPT_TAILS.clear()
+    _TRANSCRIPT_TAILS[path] = (stamp, result)
     return result
 
 
-def _scan_tail(services, lines, result):
+def _scan_tail(lines, result):
     """Fill result from transcript lines, newest first: is the newest message the stop marker, and what was
     said last (the newest reply text or typed prompt)."""
     newest = True
     for line in reversed(lines):
         try:
-            found = services._transcript_message(json.loads(line))
+            found = _transcript_message(json.loads(line))
         except ValueError:
             continue
         if not found:
@@ -137,25 +156,25 @@ def _scan_tail(services, lines, result):
         role, texts, tool_result = found
         if newest:
             result["interrupted"] = role == "user" and any(
-                str(t).strip().startswith(services.INTERRUPT_MARKERS) for t in texts)
+                str(t).strip().startswith(INTERRUPT_MARKERS) for t in texts)
             newest = False
         # skip tool output, injected context (<...>), stop markers and image placeholders ([Image: ...])
         text = next((t for t in reversed(texts) if str(t).strip()
                      and not str(t).lstrip().startswith(("<", "[Request interrupted", "[Image"))), "")
         if tool_result or not text:
             continue  # nothing said in this one: keep looking
-        result["said"] = ("ai" if role == "assistant" else "you", services._phrase(text))
+        result["said"] = ("ai" if role == "assistant" else "you", _phrase(text))
         break
 
 
-def pid_alive(services, pid, max_age=5.0):
+def pid_alive(pid, max_age=5.0):
     """Is the process running (cached for a few seconds)? None when it can't be told. Only for processes on this
     machine (not WSL ones)."""
     try:
         pid = int(pid)
     except (TypeError, ValueError):
         return None
-    hit = services._PID_CACHE.get(pid)
+    hit = _PID_CACHE.get(pid)
     if hit and time.time() - hit[0] < max_age:
         return hit[1]
     alive = None
@@ -184,13 +203,13 @@ def pid_alive(services, pid, max_age=5.0):
         alive = False
     except Exception:
         alive = None
-    services._PID_CACHE[pid] = (time.time(), alive)
-    if len(services._PID_CACHE) > 200:
-        services._PID_CACHE.clear()
+    _PID_CACHE[pid] = (time.time(), alive)
+    if len(_PID_CACHE) > 200:
+        _PID_CACHE.clear()
     return alive
 
 
-def session_title(services, rec, mode="name"):
+def session_title(rec, mode="name"):
     """The extra title of a session: "name" = the harness's session name (Claude Code's /rename or its own name for
     the session, Codex's thread name), else the latest prompt; "prompt" = the latest prompt, else the name."""
     prompt = next((p for p in (rec.get("last_prompt"), rec.get("first_prompt"))  # first_prompt: older hooks
@@ -199,7 +218,7 @@ def session_title(services, rec, mode="name"):
     return (prompt or name) if mode == "prompt" else (name or prompt)
 
 
-def disambiguate_titles(services, items):
+def disambiguate_titles(items):
     """Sessions named after the same folder ("esign-online", "esign-online") get their conversation's title added
     ("esign-online · Fix login bug"), or a short session id when there is none yet."""
     counts = {}
@@ -214,7 +233,7 @@ def disambiguate_titles(services, items):
             i["dup_title"] = True
 
 
-def _active_agents(services, rec, now=None):
+def _active_agents(rec, now=None):
     """How many subagents are running: started (or seen) and not yet stopped, within 15 min (while the session is busy)."""
     if rec.get("state") not in ("working", "needs_input"):
         return 0
@@ -222,27 +241,27 @@ def _active_agents(services, rec, now=None):
     return sum(1 for ts in (rec.get("agents") or {}).values() if now - ts < 900)
 
 
-def read_claude_code_sessions(services, cfg):
+def read_claude_code_sessions(cfg):
     items = []
     if not cfg["claude_code"]["enabled"]:
         return items
     cutoff = time.time() - cfg["stale_hours"] * 3600
-    dirs = [services.SESSIONS_DIR] + ([services.LEGACY_SESSIONS_DIR] if os.path.isdir(services.LEGACY_SESSIONS_DIR) else [])  # LEGACY
+    dirs = [paths.SESSIONS_DIR] + ([paths.LEGACY_SESSIONS_DIR] if os.path.isdir(paths.LEGACY_SESSIONS_DIR) else [])  # LEGACY
     dirs += list(cfg["claude_code"].get("extra_session_dirs") or [])
-    paths = []
+    files = []
     for d in dirs:
         try:
-            paths += glob.glob(os.path.join(d, "*.json"))
+            files += glob.glob(os.path.join(d, "*.json"))
         except OSError:
             continue  # e.g. WSL distro not running
     newest = {}  # session id -> (path, record): the same session can have a file in two folders (old and new hooks)
-    for path in paths:
+    for path in files:
         try:
             with open(path, encoding="utf-8") as f:
                 rec = json.load(f)
         except Exception:
             continue  # mid-write or corrupt; next poll will catch it
-        if rec.get("updated", 0) < cutoff and not (services.DONE_TIMEOUT["v"] == 0 and rec.get("state") in ("done", "idle")):
+        if rec.get("updated", 0) < cutoff and not (preferences.DONE_TIMEOUT["v"] == 0 and rec.get("state") in ("done", "idle")):
             try:
                 os.remove(path)
                 usage.remove_for(path)
@@ -262,33 +281,33 @@ def read_claude_code_sessions(services, cfg):
             except OSError:
                 pass
     for path, rec in sorted(newest.values(), key=lambda pr: pr[0]):
-        if not services.visible_hook_session(rec):
+        if not visible_hook_session(rec):
             continue
         sid = str(rec.get("id"))
         local = rec.get("env") == ("windows" if os.name == "nt" else sys.platform)
-        quiet = time.time() - rec.get("updated", 0) > max(60, services.HEALTH["v"])  # an active session isn't judged by its pid
-        if rec.get("app") == "cowork" and time.time() - rec.get("updated", 0) > services.COWORK_QUIET_SECONDS:
+        quiet = time.time() - rec.get("updated", 0) > max(60, preferences.HEALTH["v"])  # an active session isn't judged by its pid
+        if rec.get("app") == "cowork" and time.time() - rec.get("updated", 0) > COWORK_QUIET_SECONDS:
             quiet = True  # Cowork runs one Claude Code process per turn: stopping the turn ends it, so its pid tells
-        if (local and services.HEALTH["v"] > 0 and quiet and rec.get("state") in ("working", "needs_input") and rec.get("pid")
-                and services.pid_alive(rec["pid"], services.HEALTH["v"]) is False):
+        if (local and preferences.HEALTH["v"] > 0 and quiet and rec.get("state") in ("working", "needs_input") and rec.get("pid")
+                and pid_alive(rec["pid"], preferences.HEALTH["v"]) is False):
             # its Claude Code / Codex process is gone without a Stop or SessionEnd (the app was closed, or Cowork moved
             # the conversation to a new session): show it as done, so the done timeout clears it
             rec = dict(rec, state="done", message="", request={}, changed=rec.get("updated", 0))
         if rec.get("agent") == "codex":
             from .codex_questions import question_snapshot, reconcile_questions
-            rec = reconcile_questions(rec, question_snapshot(services.transcript_file(rec)))
-        if rec.get("state") == "working" and services.turn_interrupted(rec):
+            rec = reconcile_questions(rec, question_snapshot(transcript_file(rec)))
+        if rec.get("state") == "working" and turn_interrupted(rec):
             # You stopped the turn (Esc / the stop button). Claude Code sends no hook event for that, only a line in
             # its transcript, so the session would look busy until your next message.
             rec = dict(rec, state="idle", message="Stopped", changed=rec.get("updated", 0))
-        if services.unconfirmed_prompts(rec):
+        if permissions.unconfirmed_prompts(rec):
             # Claude Code announces every prompt it really shows (a Notification ~6 s in). These never were: settled
             # without the user (auto mode, a rule...), so the session is working, not waiting for you.
             rec = dict(rec, state="working", message="", request={}, requests=[])
         env, ide = rec.get("env", ""), rec.get("ide", "")
         cowork = rec.get("app") == "cowork"
         codex = rec.get("agent") == "codex"
-        badges = [services.session_badge("Codex" if codex else "Claude", cowork, env == "wsl", ide == "vscode",
+        badges = [session_badge("Codex" if codex else "Claude", cowork, env == "wsl", ide == "vscode",
                                 rec.get("entry", ""))]
         where = ["Claude app · Cowork" if cowork else ("Codex" if codex else "Claude Code")]
         if env == "wsl":
@@ -307,16 +326,16 @@ def read_claude_code_sessions(services, cfg):
             "agent": rec.get("agent", "claude"),
             "entry": rec.get("entry", ""),
             "cwd": rec.get("cwd", ""),
-            "title": services.place_name(rec),
+            "title": place_name(rec),
             "state": rec.get("state", "idle"),
             "message": rec.get("message", ""),
             "detail": rec.get("cwd", ""),
             "changed": rec.get("changed", rec.get("updated", 0)),
             "path": path,
-            "legacy": os.path.dirname(path) == services.LEGACY_SESSIONS_DIR,  # LEGACY: written by a hook on the old name
+            "legacy": os.path.dirname(path) == paths.LEGACY_SESSIONS_DIR,  # LEGACY: written by a hook on the old name
             "app": rec.get("app", ""),
             "hwnd": rec.get("hwnd"),
-            "subagents": services._active_agents(rec),
+            "subagents": _active_agents(rec),
             "transcript_path": rec.get("transcript_path", ""),
             "agent_ids": {a: (rec.get("agent_types") or {}).get(a) or "" for a, ts in (rec.get("agents") or {}).items()
                           if time.time() - ts < 900} if rec.get("state") in ("working", "needs_input") else {},
@@ -332,7 +351,7 @@ def read_claude_code_sessions(services, cfg):
             "auto_t": rec.get("auto_t", 0),
             "auto_kind": rec.get("auto_kind", ""),
             "auto_what": rec.get("auto_what", ""),
-            "conv": services.session_title(rec, cfg.get("session_titles", "name")),
+            "conv": session_title(rec, cfg.get("session_titles", "name")),
             "usage": [r for r in usage.load(path) if cfg.get("claude_oauth_usage", False) or not r.get("provider", "").startswith("Claude Code account")],
             "updated": rec.get("updated", 0),
         })
