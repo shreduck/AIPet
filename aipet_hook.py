@@ -1085,7 +1085,8 @@ def codex_session_transcript(session_id, transcript, previous=""):
 
 
 def _update_session(path, target, event, data, wsl, auto=None):
-    return hook_events._update_session(sys.modules[__name__], path, target, event, data, wsl, auto)
+    api = hook_events.HookAPI(**{name: globals()[name] for name in hook_events.HOOK_API})
+    return hook_events._update_session(api, path, target, event, data, wsl, auto)
 
 
 # TEMP (Codex testing): log EVERYTHING a Codex hook receives to <pet dir>/codex-raw.log - the full payload (prompts,

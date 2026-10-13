@@ -1,9 +1,5 @@
 {
-  "module_services": {
-    "aipet_hook.py": 1
-  },
+  "module_services": {},
   "services_core": {},
-  "services_refs": {
-    "aipetlib/hook_events.py": 41
-  }
+  "services_refs": {}
 }
