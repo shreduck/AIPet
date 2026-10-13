@@ -31,35 +31,35 @@ class MacWindowTests(unittest.TestCase):
             window.opts["log_tail"] = False
             with patch.object(agent_log_filters, "filtered_log_rows", return_value=rows):
                 root.update()
-                window._draw_log()
-                window._entry_click(0)
+                window.logs.draw()
+                window.logs.entry_click(0)
                 for width in (640, 1000):
                     window.win.geometry(f"{width}x800")
-                    window.log.configure(height=16)
-                    window.log.yview_moveto(0)
+                    window.logs.text.configure(height=16)
+                    window.logs.text.yview_moveto(0)
                     root.update()
-                    expanded = window.log.get("entry0.first", "entry0.last")
+                    expanded = window.logs.text.get("entry0.first", "entry0.last")
                     self.assertIn("exec_command · Input  ‹\ncommand:\n", expanded)
                     self.assertIn("  echo first\n  echo second", expanded)
                     self.assertNotIn("\\n", expanded)
-                    self.assertEqual(window._entries[0][1], text)  # original copy / popup content is preserved
-                    edges = window._log_borders["entry0"]
+                    self.assertEqual(window.logs.entries[0][1], text)  # original copy / popup content is preserved
+                    edges = window.logs.borders["entry0"]
                     self.assertTrue(all(edge.winfo_ismapped() for edge in edges))
-                    self.assertEqual(edges[2].winfo_width(), window.log.winfo_width())
+                    self.assertEqual(edges[2].winfo_width(), window.logs.text.winfo_width())
                     for edge in edges:
-                        self.assertLessEqual(edge.winfo_x() + edge.winfo_width(), window.log.winfo_width())
-                        self.assertLessEqual(edge.winfo_y() + edge.winfo_height(), window.log.winfo_height())
+                        self.assertLessEqual(edge.winfo_x() + edge.winfo_width(), window.logs.text.winfo_width())
+                        self.assertLessEqual(edge.winfo_y() + edge.winfo_height(), window.logs.text.winfo_height())
                     self.assertTrue(all(edge.cget("bg") == "#244c80" for edge in edges))
-                    window.log.tag_add("sel", "entry0.first", "entry0.last")
-                    self.assertEqual(window.log.get("sel.first", "sel.last"), expanded)
-                    window.log.tag_remove("sel", "1.0", "end")
-                    window.log.yview_moveto(1)
+                    window.logs.text.tag_add("sel", "entry0.first", "entry0.last")
+                    self.assertEqual(window.logs.text.get("sel.first", "sel.last"), expanded)
+                    window.logs.text.tag_remove("sel", "1.0", "end")
+                    window.logs.text.yview_moveto(1)
                     root.update()
                     self.assertFalse(any(edge.winfo_ismapped() for edge in edges))
-                window.log.yview_moveto(0)
-                window._entry_click(0)
+                window.logs.text.yview_moveto(0)
+                window.logs.entry_click(0)
                 root.update()
-                self.assertFalse(window._log_borders)
+                self.assertFalse(window.logs.borders)
         finally:
             if window:
                 window.close()
@@ -90,24 +90,24 @@ class MacWindowTests(unittest.TestCase):
                     for width in (640, 1100):
                         window.win.geometry(f"{width}x800")
                         root.update()
-                        window._draw_log()
+                        window.logs.draw()
                         root.update()
                         for i, original in enumerate(texts):
                             tag = f"entry{i}"
-                            self.assertEqual(window.log.count(f"{tag}.first", f"{tag}.last", "displaylines"), (1,))
-                            if window._entries[i][3]:
-                                window.log.see(f"{tag}.last-2c")
+                            self.assertEqual(window.logs.text.count(f"{tag}.first", f"{tag}.last", "displaylines"), (1,))
+                            if window.logs.entries[i][3]:
+                                window.logs.text.see(f"{tag}.last-2c")
                                 root.update()
-                                marker = window.log.bbox(f"{tag}.last-2c")
+                                marker = window.logs.text.bbox(f"{tag}.last-2c")
                                 self.assertIsNotNone(marker)
-                                self.assertLessEqual(marker[0] + marker[2], window.log.winfo_width())
-                                window._entry_click(i)
+                                self.assertLessEqual(marker[0] + marker[2], window.logs.text.winfo_width())
+                                window.logs.entry_click(i)
                                 root.update()
-                                self.assertIn(original, window.log.get(f"{tag}.first", f"{tag}.last"))
-                                self.assertGreater(window.log.count(f"{tag}.first", f"{tag}.last", "displaylines")[0], 1)
-                                window._entry_click(i)
+                                self.assertIn(original, window.logs.text.get(f"{tag}.first", f"{tag}.last"))
+                                self.assertGreater(window.logs.text.count(f"{tag}.first", f"{tag}.last", "displaylines")[0], 1)
+                                window.logs.entry_click(i)
                                 root.update()
-                                self.assertEqual(window.log.count(f"{tag}.first", f"{tag}.last", "displaylines"), (1,))
+                                self.assertEqual(window.logs.text.count(f"{tag}.first", f"{tag}.last", "displaylines"), (1,))
         finally:
             if window:
                 window.close()
@@ -178,11 +178,11 @@ class MacWindowTests(unittest.TestCase):
                 window = AgentNetworkWindow(root, pet)
                 for side in ("bottom", "right", "top", "left"):
                     window.opts.update(log_side=side, log_cols=20)
-                    window._arrange()
+                    window.logs.arrange()
                     root.update()
-                    bar = window.filterbar
+                    bar = window.logs.filterbar
                     boxes = [(b.winfo_x(), b.winfo_y(), b.winfo_width(), b.winfo_height())
-                             for b in window._filter_buttons]
+                             for b in window.logs.filter_buttons]
                     self.assertEqual(len({b[3] for b in boxes}), 1)
                     for x, y, width, height in boxes:
                         self.assertGreaterEqual(x, 0)
@@ -191,16 +191,16 @@ class MacWindowTests(unittest.TestCase):
                     for first, second in zip(boxes, boxes[1:]):
                         self.assertTrue(second[1] >= first[1] + first[3] or
                                         (second[1] == first[1] and second[0] >= first[0] + first[2]))
-                    self.assertGreaterEqual(bar.winfo_y(), window.tabs.winfo_y() + window.tabs.winfo_height())
-                    self.assertGreaterEqual(window.log.winfo_y(), bar.winfo_y() + bar.winfo_height())
+                    self.assertGreaterEqual(bar.winfo_y(), window.logs.tabs.winfo_y() + window.logs.tabs.winfo_height())
+                    self.assertGreaterEqual(window.logs.text.winfo_y(), bar.winfo_y() + bar.winfo_height())
                     if side in ("left", "right"):
                         self.assertGreater(len({b[1] for b in boxes}), 1)
-                window.show_tools_btn.event_generate("<Button-1>")
+                window.logs.show_tools_btn.event_generate("<Button-1>")
                 root.update()
-                self.assertFalse(window._log_filters["show_tools"])
-                window.clear_filters_btn.event_generate("<Button-1>")
+                self.assertFalse(window.logs.filters["show_tools"])
+                window.logs.clear_filters_btn.event_generate("<Button-1>")
                 root.update()
-                self.assertTrue(window._log_filters["show_tools"])
+                self.assertTrue(window.logs.filters["show_tools"])
                 window.close()
                 window = None
         finally:

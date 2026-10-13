@@ -101,47 +101,7 @@ def _build(window):
     window.statc = tk.Canvas(window.canvas, bd=0, highlightthickness=1)
     window.statc.place(relx=1.0, rely=1.0, x=-window.px(6), y=-window.px(6), anchor="se")
     window.tip = tk.Label(w, font=window.f_small, justify="left", anchor="w", padx=window.px(6), pady=window.px(3))
-    # the split between graph and logs: drag it (the logs get up to 80% of the window)
-    window.sep = tk.Frame(window.body, height=max(3, window.px(3)), width=max(3, window.px(3)))
-    window.sep.bind("<Button-1>", window._split_start)
-    window.sep.bind("<B1-Motion>", window._split_move)
-    window.sep.bind("<ButtonRelease-1>", lambda e: window._save("log_lines", delay=300))
-    window.logbox = tk.Frame(window.body)
-    window.tabs = tk.Frame(window.logbox)
-    window.tabs.pack(fill="x", padx=window.px(6))
-    window.filterbar = tk.Frame(window.logbox)
-    window.filterbar.pack(fill="x", padx=window.px(6), pady=(0, window.px(3)))
-    def filter_button(text, action):
-        button = tk.Label(window.filterbar, text=text, font=window.f_small, cursor="hand2",
-                          padx=window.px(3), pady=window.px(1), takefocus=1, highlightthickness=1)
-        def activate(event):
-            action()
-            return "break"
-        for event in ("<Button-1>", "<space>", "<Return>"):
-            button.bind(event, activate)
-        return button
-    window.show_tools_btn = filter_button("[x] show tools", lambda: window.set_log_filter(
-        "show_tools", not window._log_filters["show_tools"]))
-    window.primary_btn = filter_button("[ ] primary", lambda: window.set_log_filter(
-        "primary", not window._log_filters["primary"]))
-    window.tool_filter_btn = filter_button("[tools ▾]", lambda: window.open_tool_filters(False))
-    window.mcp_filter_btn = filter_button("[MCP ▾]", lambda: window.open_tool_filters(True))
-    window.clear_filters_btn = filter_button("[clear filters]", window.clear_log_filters)
-    window._filter_buttons = (window.show_tools_btn, window.primary_btn, window.tool_filter_btn,
-                            window.mcp_filter_btn, window.clear_filters_btn)
-    window.filterbar.bind("<Configure>", window._layout_log_filters)
-    window.log = tk.Text(window.logbox, height=6, width=40, wrap="word", bd=0, highlightthickness=0,
-                       font=window.f_main, padx=window.px(8), pady=window.px(4), cursor="xterm", takefocus=0,
-                       exportselection=True)
-    window._log_borders = {}
-    window.log.configure(yscrollcommand=window._position_log_borders)
-    window.log.pack(fill="both", expand=True)
-    window._arrange()
-    window.log.bind("<Control-c>", lambda e: window._copy(window.log))
-    window.log.bind("<Control-a>", lambda e: (window.log.tag_add("sel", "1.0", "end"), "break")[1])
-    window.log.bind("<Button-1>", lambda e: window.log.focus_set(), add="+")  # so Ctrl+C reaches it
-    window.log.bind("<Configure>", lambda e: window._draw_log(keep=window.log.yview()[0])
-                  if window.theme is not None else None)
+    window.logs.build()
     window.win.bind("<Configure>", window._on_window_resize, add="+")
     for seq in ("<FocusIn>", "<Map>", "<Unmap>"):  # brought to the front, minimised or restored
         window.win.bind(seq, window._window_event, add="+")

@@ -334,25 +334,27 @@ class WindowLogicTests(unittest.TestCase):
                                 {"id": "helper", "name": "helper", "lines": [(2, "say", "helper reply")]},
                                 {"id": "tool", "name": "Bash", "parent": "helper", "tool": True,
                                  "lines": [(3, "input", "echo test")]}]}
-        for method in ("_draw_graph", "_draw_tabs", "_update_log_filters", "_draw_log"):
-            setattr(view, method, MagicMock())
+        view.logs = win.agent_logs.LogPanel(view)
+        view._draw_graph = MagicMock()
+        for method in ("draw_tabs", "update_filters", "draw"):
+            setattr(view.logs, method, MagicMock())
         restricted = dict(show_tools=False, primary=True, tools=set(), mcp=set(), only_tool="Read")
         for i, expected in ((0, ["main reply"]), (1, ["helper reply", "echo test"])):
-            view._log_filters = dict(restricted)
+            view.logs.filters = dict(restricted)
             view._click_node(None, "session", i)
-            self.assertEqual(view._log_filters, agent_log_filters.default_log_filters())
-            self.assertEqual([r[3] for r in agent_log_filters.filtered_log_rows(view.net, view.sel, view._log_filters)], expected)
-        view._log_filters = dict(restricted)
+            self.assertEqual(view.logs.filters, agent_log_filters.default_log_filters())
+            self.assertEqual([r[3] for r in agent_log_filters.filtered_log_rows(view.net, view.sel, view.logs.filters)], expected)
+        view.logs.filters = dict(restricted)
         view._click_node(None, "session", 2)
         self.assertEqual(view.sel, 1)
-        self.assertEqual([r[3] for r in agent_log_filters.filtered_log_rows(view.net, view.sel, view._log_filters)], ["echo test"])
+        self.assertEqual([r[3] for r in agent_log_filters.filtered_log_rows(view.net, view.sel, view.logs.filters)], ["echo test"])
         view._title_click("session")
         self.assertEqual(view.sel, -1)
-        self.assertEqual(view._log_filters, agent_log_filters.default_log_filters())
-        view._log_filters = dict(restricted)
+        self.assertEqual(view.logs.filters, agent_log_filters.default_log_filters())
+        view.logs.filters = dict(restricted)
         view._panned = True
         view._click_node(None, "session", 0)
-        self.assertEqual(view._log_filters, restricted)  # dragging the graph must not clear filters
+        self.assertEqual(view.logs.filters, restricted)  # dragging the graph must not clear filters
 
     def test_node_spacing_does_not_expand_to_fill_tall_windows(self):
         import aipet_agents_window as win

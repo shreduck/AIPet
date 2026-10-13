@@ -307,7 +307,7 @@ def _draw_block(window, b, key, net, ox, oy, W, H, reserve, fade=0.0, title=None
         border = P[status_col] if a["state"] != "idle" else P["line"]
         if a["main"] and a["state"] == "waiting":
             border = P["amb"]
-        focused = a.get("tool") and a["name"] == window._log_filters.get("only_tool") and \
+        focused = a.get("tool") and a["name"] == window.logs.filters.get("only_tool") and \
             0 <= window.sel < len(ags) and a["parent"] == ags[window.sel]["id"]
         picked = current and (i == window.sel or focused)
         fill = P["sel"] if picked else P["node"]
@@ -396,7 +396,7 @@ def _pick_session(window, key):
         return
     window.key, window.sel = key, -1
     window.open_overlay(False)
-    window._log_sig = window._graph_sig = window._prompt_sig = window._tabs_sig = None
+    window.logs.sig = window._graph_sig = window._prompt_sig = window.logs.tabs_sig = None
     window._refresh()
 
 

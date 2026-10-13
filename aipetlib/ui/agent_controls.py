@@ -24,14 +24,14 @@ def tool(window, name, d=1):
     if name in toggles:
         o[toggles[name]] = not o[toggles[name]]
         if name == "tail":
-            window._update_tailbtn()
+            window.logs.update_tailbtn()
             if o["log_tail"]:
-                window.log.see("end")
+                window.logs.text.see("end")
     elif name == "alpha":
         o["alpha"] = common._snap(o["alpha"] + d * common.ALPHA_STEP, common.ALPHA_MIN, 100, common.ALPHA_STEP)
     elif name == "logs":
         o["log_side"] = common.LOG_SIDES[(common.LOG_SIDES.index(o.get("log_side", "bottom")) + d) % len(common.LOG_SIDES)]
-        window._arrange()
+        window.logs.arrange()
         window._center_next = True
     elif name == "nodes":
         o["node_alpha"] = common._snap(o["node_alpha"] + d * common.OPACITY_STEP, common.ALPHA_MIN, 100, common.OPACITY_STEP)
@@ -81,7 +81,7 @@ def set_options(window, opts):
     if any(window.opts.get(k) != old.get(k) for k in ("scale", "text_scale")):
         window._apply_scale()
     if any(window.opts.get(k) != old.get(k) for k in ("log_side", "log_lines", "log_cols")):
-        window._arrange()
+        window.logs.arrange()
     if window.opts.get("tools") != old.get("tools"):
         window._refresh()
     window._apply_options()
@@ -94,7 +94,7 @@ def reset_appearance(window, opts, cascade=0):
     """Default look again, centred on the main screen (the AIPet menu's Reset agent network appearance)."""
     window.toggle_menu(False)
     window.opts = dict(opts)
-    window._arrange()
+    window.logs.arrange()
     window._apply_scale(grow=False)
     window._apply_options()
     window.cascade, window.at = cascade, None
@@ -137,7 +137,7 @@ def _apply_scale(window, grow=True):
     window.f_bold.configure(size=max(5, int(round(8 * fs))))
     window.f_small.configure(size=max(5, int(round(7 * fs))))
     window._robots.clear()
-    window._graph_sig = window._tabs_sig = window._prompt_sig = window._log_sig = None
+    window._graph_sig = window.logs.tabs_sig = window._prompt_sig = window.logs.sig = None
     window._update_minsize()
     if grow:
         try:
@@ -297,9 +297,9 @@ def _apply_options(window, changed=None):
         for h in window.handles.values():
             h.place_forget()
     window._update_minsize()
-    window._graph_sig = window._tabs_sig = None
+    window._graph_sig = window.logs.tabs_sig = None
     window._draw_graph(force=True)
-    window._draw_tabs()
+    window.logs.draw_tabs()
     window._update_auto_fit()
 
 
@@ -490,7 +490,7 @@ def _apply_theme(window):
         return
     window.theme = name
     P = window.P
-    for wdg in (window.win, window.body, window.tabs, window.filterbar):
+    for wdg in (window.win, window.body, window.logs.tabs, window.logs.filterbar):
         wdg.configure(bg=P["bg"])
     for wdg in (window.head, window.title, window.prev_btn, window.next_btn, window.count, window.foot, window.footbar,
                 window.grip, window.close_btn, window.prompt_mark):
@@ -501,14 +501,14 @@ def _apply_theme(window):
     for wdg in (window.count, window.foot, window.grip):
         wdg.configure(fg=P["mu"])
     window.canvas.configure(bg=P["bg"])
-    window.sep.configure(bg=P["line"])
-    window.log.configure(bg=P["bg"], fg=P["tx"], insertbackground=P["bg"], selectbackground=common.mix(P["blue"], P["bg"], 0.65),
+    window.logs.sep.configure(bg=P["line"])
+    window.logs.text.configure(bg=P["bg"], fg=P["tx"], insertbackground=P["bg"], selectbackground=common.mix(P["blue"], P["bg"], 0.65),
                        selectforeground=P["hi"], inactiveselectbackground=common.mix(P["blue"], P["bg"], 0.75))
     window.chip.configure(bg=P["redbg"], fg=P["red"], highlightbackground=P["red"])
     window.zoombar.configure(bg=P["bar"], highlightbackground=P["line"])
     for lab in window.zoom_btns:
         lab.configure(bg=P["bar"], fg=P["mu"] if lab is window.zoom_label else P["tx"])
-    window._update_log_filters()
+    window.logs.update_filters()
     window._statc_sig = None
     window.overlay.configure(bg=P["node"], highlightbackground=P["red"], highlightthickness=1, bd=0)
     try:
@@ -516,7 +516,7 @@ def _apply_theme(window):
     except Exception:
         pass
     window._robots.clear()
-    window._log_sig = window._graph_sig = window._prompt_sig = None
+    window.logs.sig = window._graph_sig = window._prompt_sig = None
     if window._applied.get("clear"):
         window._applied["clear"] = None  # the see-through key colour follows the theme
     window._apply_options()

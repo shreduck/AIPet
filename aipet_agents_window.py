@@ -54,7 +54,8 @@ class AgentNetworkWindow:
         self._after = self._anim = self._save_job = None
         self._gestures = self._gesture_start_job = None
         self._robots = {}
-        self._log_sig = self._graph_sig = self._prompt_sig = self._tabs_sig = None
+        self.logs = agent_logs.LogPanel(self)  # the logs: tabs, filters, entries (owns its widgets and state)
+        self._graph_sig = self._prompt_sig = None
         self.edges, self._dots = [], []
         self.t0 = time.time()
         self.theme = None
@@ -63,8 +64,6 @@ class AgentNetworkWindow:
         self.blocks = []  # (key, item, net) of every session the graph shows (several when compact and not tabbed)
         self._content, self._center_next, self._panned = None, True, False
         self._bands, self._leaving, self._titles, self._animating = {}, {}, [], False
-        self._entries, self._expanded = [], set()  # log entries shown / unfolded
-        self._log_filters = log_filters.default_log_filters()
         self.u = self.opts["scale"] / 100
         self.s = 1.5 * self.u
         # window attributes as set (only touched when they change). Starts at Tk's own defaults: setting -alpha or
@@ -265,8 +264,8 @@ class AgentNetworkWindow:
                 pass
         w.bind("<Right>", key(lambda: self.step_option(1) if self.overlay_open else self.step_agent(1)))
         w.bind("<Left>", key(lambda: self.step_option(-1) if self.overlay_open else self.step_agent(-1)))
-        w.bind("<Down>", key(lambda: self.step_option(1) if self.overlay_open else self.log.yview_scroll(1, "units")))
-        w.bind("<Up>", key(lambda: self.step_option(-1) if self.overlay_open else self.log.yview_scroll(-1, "units")))
+        w.bind("<Down>", key(lambda: self.step_option(1) if self.overlay_open else self.logs.text.yview_scroll(1, "units")))
+        w.bind("<Up>", key(lambda: self.step_option(-1) if self.overlay_open else self.logs.text.yview_scroll(-1, "units")))
         for k in ("a", "A"):
             w.bind(k, key(lambda: self.select(-1)))
         for k in ("plus", "equal", "KP_Add"):
@@ -321,18 +320,6 @@ class AgentNetworkWindow:
         self.win.clipboard_append(text)
         return "break"
 
-    def _arrange(self):
-        return agent_logs._arrange(self)
-
-    def _size_log(self):
-        return agent_logs._size_log(self)
-
-    def _split_start(self, e):
-        return agent_logs._split_start(self, e)
-
-    def _split_move(self, e):
-        return agent_logs._split_move(self, e)
-
     def _typing(self):
         try:
             return isinstance(self.win.focus_get(), tk.Entry)
@@ -375,7 +362,7 @@ class AgentNetworkWindow:
         if new_key != self.key:
             self.key, self.sel = new_key, -1
             self.open_overlay(False)
-            self._log_sig = self._graph_sig = self._prompt_sig = None
+            self.logs.sig = self._graph_sig = self._prompt_sig = None
         self._refresh()
 
     def step_session(self, d):
@@ -444,28 +431,28 @@ class AgentNetworkWindow:
         elif self.sel >= len(self.net["agents"]):
             self.sel = -1
         self._draw_graph()
-        self._draw_tabs()
-        self._update_log_filters()
-        self._draw_log()
+        self.logs.draw_tabs()
+        self.logs.update_filters()
+        self.logs.draw()
         self._draw_prompt()
         self._maybe_auto_fit()
 
     # ---- selection
     def select(self, i, clear_filters=False):
         if clear_filters:
-            self._log_filters = log_filters.default_log_filters()
+            self.logs.filters = log_filters.default_log_filters()
         if 0 <= i < len(self.net["agents"]) and self.net["agents"][i].get("tool"):
             tool = self.net["agents"][i]
-            self._log_filters.update(show_tools=True, primary=False, only_tool=tool["name"],
+            self.logs.filters.update(show_tools=True, primary=False, only_tool=tool["name"],
                                      tools=set() if is_mcp_tool(tool["name"]) else {tool["name"]},
                                      mcp={tool["name"]} if is_mcp_tool(tool["name"]) else set())
             i = next((j for j, a in enumerate(self.net["agents"]) if a["id"] == tool["parent"]), -1)
         self.sel = i
-        self._graph_sig = self._log_sig = None
+        self._graph_sig = self.logs.sig = None
         self._draw_graph()
-        self._draw_tabs()
-        self._update_log_filters()
-        self._draw_log()
+        self.logs.draw_tabs()
+        self.logs.update_filters()
+        self.logs.draw()
         return "break"
 
     def step_agent(self, d):
@@ -646,48 +633,8 @@ class AgentNetworkWindow:
         return agent_graph._animate(self)
 
     # ---- tabs and log
-    def set_log_filter(self, key, value):
-        return agent_logs.set_log_filter(self, key, value)
-
-    def clear_log_filters(self):
-        return agent_logs.clear_log_filters(self)
-
-    def _update_log_filters(self):
-        return agent_logs._update_log_filters(self)
-
-    def _layout_log_filters(self, event=None):
-        return agent_logs._layout_log_filters(self, event)
-
-    def _choose_tools(self, group, selected):
-        return agent_logs._choose_tools(self, group, selected)
-
-    def _toggle_log_tool(self, name, mcp):
-        return agent_logs._toggle_log_tool(self, name, mcp)
-
-    def open_tool_filters(self, mcp):
-        return agent_logs.open_tool_filters(self, mcp)
-
-    def _draw_tabs(self):
-        return agent_logs._draw_tabs(self)
-
-    def _update_tailbtn(self):
-        return agent_logs._update_tailbtn(self)
-
-    def _draw_log(self, keep=None):
-        return agent_logs._draw_log(self, keep)
-
-    def _position_log_borders(self, *args):
-        return agent_logs._position_log_borders(self, *args)
 
     # ---- log entries: fold / unfold, copy, open in a window
-    def _entry_click(self, n):
-        return agent_logs._entry_click(self, n)
-
-    def _toggle_entry(self, n):
-        return agent_logs._toggle_entry(self, n)
-
-    def _entry_menu(self, e, n):
-        return agent_logs._entry_menu(self, e, n)
 
     # ---- the prompt
     def _draw_prompt(self):

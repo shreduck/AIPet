@@ -77,31 +77,32 @@ class LogFilterTests(unittest.TestCase):
         view = object.__new__(window.AgentNetworkWindow)
         view.net = self.net
         view.sel = -1
-        view._log_filters = agent_log_filters.default_log_filters()
-        for name in ("_draw_graph", "_draw_tabs", "_draw_log", "_update_log_filters"):
-            setattr(view, name, MagicMock())
+        view.logs = window.agent_logs.LogPanel(view)
+        view._draw_graph = MagicMock()
+        for name in ("draw_tabs", "draw", "update_filters"):
+            setattr(view.logs, name, MagicMock())
         return view
 
     def test_tool_node_filters_under_owner_and_agent_selection_keeps_filters(self):
         view = self.view()
         view.select(2)
         self.assertEqual(view.sel, 0)
-        rows = agent_log_filters.filtered_log_rows(view.net, view.sel, view._log_filters)
+        rows = agent_log_filters.filtered_log_rows(view.net, view.sel, view.logs.filters)
         self.assertEqual({i for _, i, _, _ in rows}, {2})
-        before = dict(view._log_filters)
+        before = dict(view.logs.filters)
         view.select(1)
-        self.assertEqual(view._log_filters, before)
-        rows = agent_log_filters.filtered_log_rows(view.net, view.sel, view._log_filters)
+        self.assertEqual(view.logs.filters, before)
+        rows = agent_log_filters.filtered_log_rows(view.net, view.sel, view.logs.filters)
         self.assertEqual({i for _, i, _, _ in rows}, {5})
-        view.clear_log_filters()
-        self.assertEqual(view._log_filters, agent_log_filters.default_log_filters())
+        view.logs.clear_filters()
+        self.assertEqual(view.logs.filters, agent_log_filters.default_log_filters())
 
     def test_tool_node_selects_mcp_filter_when_appropriate(self):
         view = self.view()
         view.select(4)
-        self.assertEqual(view._log_filters["mcp"], {"mcp__demo__search"})
-        self.assertEqual(view._log_filters["tools"], set())
-        rows = agent_log_filters.filtered_log_rows(view.net, view.sel, view._log_filters)
+        self.assertEqual(view.logs.filters["mcp"], {"mcp__demo__search"})
+        self.assertEqual(view.logs.filters["tools"], set())
+        rows = agent_log_filters.filtered_log_rows(view.net, view.sel, view.logs.filters)
         self.assertEqual({i for _, i, _, _ in rows}, {4})
 
     def test_agent_keyboard_navigation_skips_tool_nodes(self):
