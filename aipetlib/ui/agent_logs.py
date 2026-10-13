@@ -102,7 +102,7 @@ class LogPanel:
         """Drag the split: the logs from a few lines (or 20 characters) up to 80% of the window."""
         window = self.window
         side = window.opts.get("log_side", "bottom")
-        x0, y0, w0, h0 = getattr(window, "_split", (e.x_root, e.y_root, self.text.winfo_width(), self.text.winfo_height()))
+        x0, y0, w0, h0 = getattr(self, "_split", (e.x_root, e.y_root, self.text.winfo_width(), self.text.winfo_height()))
         if side in ("left", "right"):
             col = max(1, window.f_main.measure("0"))
             want = w0 + ((e.x_root - x0) if side == "left" else (x0 - e.x_root))
