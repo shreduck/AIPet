@@ -1,8 +1,11 @@
-"""ClickThroughController: rendering and interaction, with explicit desktop services.
+"""ClickThroughController: lets clicks pass through the pet window, natively on Windows and macOS.
 
 This component does not import the application entry point.
 """
 import os
+import sys
+
+IS_MAC = sys.platform == "darwin"
 
 
 class ClickThroughController:
@@ -10,15 +13,14 @@ class ClickThroughController:
     style on the (already layered) window. macOS: NSWindow.ignoresMouseEvents through the Objective-C runtime (no
     extra packages). Elsewhere: does nothing."""
 
-    def __init__(self, services, root):
-        self.services = services
+    def __init__(self, root):
         self.root = root
         self._win = None
 
     def set(self, through):
         if os.name == "nt":
             self._set_windows(through)
-        elif self.services.IS_MAC:
+        elif IS_MAC:
             self._set_mac(through)
 
     def _set_windows(self, through):

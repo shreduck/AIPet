@@ -1,6 +1,6 @@
 """VS Code window and conversation routing.
 
-Services are supplied by the compatibility entry point; this module does not import aipet.
+Imports no Tk and no application entry point.
 """
 import json
 import os
@@ -10,18 +10,23 @@ import sys
 import urllib.error
 import urllib.request
 
+from .runtime import diagnostics
 
-def vscode_user_dirs(services):
+IS_MAC = sys.platform == "darwin"
+VSCODE_FLAVOURS = ("Code", "Code - Insiders", "VSCodium", "Cursor")
+
+
+def vscode_user_dirs():
     if os.name == "nt":
         base = os.environ.get("APPDATA", "")
-    elif services.IS_MAC:
+    elif IS_MAC:
         base = os.path.expanduser("~/Library/Application Support")
     else:
         base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
-    return [os.path.join(base, f) for f in services.VSCODE_FLAVOURS if base and os.path.isdir(os.path.join(base, f))]
+    return [os.path.join(base, f) for f in VSCODE_FLAVOURS if base and os.path.isdir(os.path.join(base, f))]
 
 
-def _uri_parts(services, uri):
+def _uri_parts(uri):
     """file:///c%3A/x -> ("", "c:/x"); vscode-remote://wsl%2Bubuntu/home/x -> ("wsl+ubuntu", "/home/x")."""
     import urllib.parse
     u = urllib.parse.urlparse(uri)
@@ -35,7 +40,7 @@ def _uri_parts(services, uri):
     return None, None
 
 
-def _backup_uris(services, b):
+def _backup_uris(b):
     """(uri, is_workspace_file) from VS Code's backup-workspaces record, in any of its formats."""
     if not isinstance(b, dict):
         return []
@@ -49,7 +54,7 @@ def _backup_uris(services, b):
     return uris
 
 
-def vscode_open_folders(services, user_dirs=None, report=None):
+def vscode_open_folders(user_dirs=None, report=None):
     """Folders and .code-workspace files open in VS Code windows: [(authority, path, is_workspace_file)].
 
     Sources, freshest first: globalStorage/storage.json "backupWorkspaces" (current VS Code keeps the open windows
@@ -57,18 +62,18 @@ def vscode_open_folders(services, user_dirs=None, report=None):
     storage.json (only written when VS Code quits or a window closes, so it can be stale: macOS keeps VS Code running
     with its windows closed). report, if a list, receives one line per source (counts only, for diagnostics)."""
     found = []
-    for d in user_dirs if user_dirs is not None else services.vscode_user_dirs():
+    for d in user_dirs if user_dirs is not None else vscode_user_dirs():
         uris, storage = [], {}
         try:
             with open(os.path.join(d, "User", "globalStorage", "storage.json"), encoding="utf-8") as f:
                 storage = json.load(f) or {}
         except (OSError, ValueError):
             pass
-        live = services._backup_uris(storage.get("backupWorkspaces"))
+        live = _backup_uris(storage.get("backupWorkspaces"))
         legacy_file = []
         try:
             with open(os.path.join(d, "Backups", "workspaces.json"), encoding="utf-8") as f:
-                legacy_file = services._backup_uris(json.load(f))
+                legacy_file = _backup_uris(json.load(f))
         except (OSError, ValueError):
             pass
         uris = live + legacy_file
@@ -91,13 +96,13 @@ def vscode_open_folders(services, user_dirs=None, report=None):
                           f"windowsState={len(saved)}")
         for uri, is_ws in uris:
             if isinstance(uri, str):
-                auth, path = services._uri_parts(uri)
+                auth, path = _uri_parts(uri)
                 if path:
                     found.append((auth, path, is_ws))
     return found
 
 
-def _workspace_roots(services, ws_path):
+def _workspace_roots(ws_path):
     """Folder paths listed in a local .code-workspace file (relative ones resolved against the file)."""
     try:
         with open(ws_path, encoding="utf-8") as f:
@@ -117,7 +122,7 @@ def _workspace_roots(services, ws_path):
     return roots
 
 
-def vscode_target(services, cwd, env="", distro="", user_dirs=None):
+def vscode_target(cwd, env="", distro="", user_dirs=None):
     """What to pass to `code` so it raises the window that already holds cwd: the deepest open folder that is cwd or
     one of its parents (so a session in a subfolder of an open workspace doesn't open a new window), or the
     .code-workspace file whose folders contain it. Falls back to cwd itself. Returns (args, path)."""
@@ -125,7 +130,7 @@ def vscode_target(services, cwd, env="", distro="", user_dirs=None):
     want_auth = f"wsl+{(distro or 'ubuntu').lower()}" if wsl else ""
     if wsl:
         norm = lambda p: p.rstrip("/") or "/"  # noqa: E731
-    elif services.IS_MAC or sys.platform == "darwin":
+    elif IS_MAC or sys.platform == "darwin":
         # macOS: the default file system ignores case, and folders are often reached through symlinks (/var ->
         # /private/var, a renamed or linked ~/Code); compare resolved, case-folded paths
         norm = lambda p: os.path.normpath(os.path.realpath(p)).casefold()  # noqa: E731
@@ -138,13 +143,13 @@ def vscode_target(services, cwd, env="", distro="", user_dirs=None):
         sep = "/" if wsl else os.sep
         return target == r or target.startswith(r.rstrip(sep) + sep)
     best = None  # (depth, path, is_workspace_file)
-    for auth, path, is_ws in services.vscode_open_folders(user_dirs):
+    for auth, path, is_ws in vscode_open_folders(user_dirs):
         if (auth or "") != want_auth:
             continue
         if is_ws:
             if wsl:
                 continue
-            roots = [r for r in services._workspace_roots(path) if inside(r)]
+            roots = [r for r in _workspace_roots(path) if inside(r)]
             if roots:
                 depth = max(len(norm(r)) for r in roots)
                 if not best or depth > best[0]:
@@ -156,7 +161,7 @@ def vscode_target(services, cwd, env="", distro="", user_dirs=None):
     return (["--remote", f"wsl+{distro or 'Ubuntu'}", path] if wsl else [path]), path
 
 
-def vscode_conversation_uri(services, d, code_path=""):
+def vscode_conversation_uri(d, code_path=""):
     """vscode://anthropic.claude-code/open?session=<id>: the Claude Code extension (v2.1.72+) opens that conversation's
     tab. Only for sessions that run in the extension (entry point claude-vscode), not the CLI in VS Code's terminal,
     where it would open a second copy of the conversation in the extension."""
@@ -168,11 +173,11 @@ def vscode_conversation_uri(services, d, code_path=""):
     return f"{scheme}://anthropic.claude-code/open?session={urllib.parse.quote(sid, safe='')}"
 
 
-def open_uri(services, uri):
+def open_uri(uri):
     try:
         if os.name == "nt":
             os.startfile(uri)
         else:
-            subprocess.Popen(["open" if services.IS_MAC else "xdg-open", uri])
+            subprocess.Popen(["open" if IS_MAC else "xdg-open", uri])
     except (AttributeError, OSError) as e:
-        services.log_error(f"couldn't open {uri.split('?')[0]}: {e!r}")
+        diagnostics.log_error(f"couldn't open {uri.split('?')[0]}: {e!r}")

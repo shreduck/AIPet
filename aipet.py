@@ -636,7 +636,7 @@ def diagnostics_report(app=None):
 
     def test_vscode():  # where the open VS Code folders come from (counts only, no paths)
         rep = []
-        vscode_open_folders(report=rep)
+        vscode.vscode_open_folders(report=rep)
         return "; ".join(rep) or "no VS Code user folder found"
     attempt("vscode_open_folders", test_vscode)
     if IS_MAC:
@@ -669,47 +669,13 @@ from aipetlib.geometry import _MAC_SCREENS, fit_on_screen, geo, mac_screen_at, w
 
 
 # --------------------------------------------------------------------------- VS Code: which open window holds a folder
-VSCODE_FLAVOURS = ("Code", "Code - Insiders", "VSCodium", "Cursor")
+from aipetlib.vscode import (  # noqa: E402,F401
+    VSCODE_FLAVOURS, _backup_uris, _uri_parts, _workspace_roots, open_uri, vscode_conversation_uri, vscode_open_folders,
+    vscode_target, vscode_user_dirs,
+)
 
 
-def vscode_user_dirs():
-    return vscode.vscode_user_dirs(sys.modules[__name__])
-
-
-def _uri_parts(uri):
-    return vscode._uri_parts(sys.modules[__name__], uri)
-
-
-def _backup_uris(b):
-    return vscode._backup_uris(sys.modules[__name__], b)
-
-
-def vscode_open_folders(user_dirs=None, report=None):
-    return vscode.vscode_open_folders(sys.modules[__name__], user_dirs, report)
-
-
-def _workspace_roots(ws_path):
-    return vscode._workspace_roots(sys.modules[__name__], ws_path)
-
-
-def vscode_target(cwd, env="", distro="", user_dirs=None):
-    return vscode.vscode_target(sys.modules[__name__], cwd, env, distro, user_dirs)
-
-
-def vscode_conversation_uri(d, code_path=""):
-    return vscode.vscode_conversation_uri(sys.modules[__name__], d, code_path)
-
-
-def open_uri(uri):
-    return vscode.open_uri(sys.modules[__name__], uri)
-
-
-class ClickThrough(ClickThroughController):
-    """Compatibility constructor for the desktop runtime."""
-    services = sys.modules[__name__]
-
-    def __init__(self, root):
-        super().__init__(self.services, root)
+ClickThrough = ClickThroughController  # the name the app and tests use
 
 
 # --------------------------------------------------------------------------- window focus (Windows)
@@ -1738,7 +1704,7 @@ class PetApp:
             self.root.bell()
             return
         try:  # the open window that holds this folder (it may have a parent folder open), not a new one
-            extra, _ = vscode_target(d["cwd"], d.get("env", ""), d.get("distro", ""))
+            extra, _ = vscode.vscode_target(d["cwd"], d.get("env", ""), d.get("distro", ""))
         except Exception as e:
             log_error(f"vscode_target failed: {e!r}")
             extra = (["--remote", f"wsl+{d.get('distro') or 'Ubuntu'}"] if d.get("env") == "wsl" else []) + [d["cwd"]]
@@ -1748,10 +1714,10 @@ class PetApp:
         except OSError:
             self.root.bell()
             return
-        uri = vscode_conversation_uri(d, code)
+        uri = vscode.vscode_conversation_uri(d, code)
         if uri and self.cfg.get("vscode_open_conversation", True):
             # VS Code hands a vscode:// link to its active window, so give `code` a moment to raise the right one
-            self.root.after(1200, lambda: open_uri(uri))
+            self.root.after(1200, lambda: vscode.open_uri(uri))
 
     def show_tip(self, pet):
         return tooltips.show_tip(self, sys.modules[__name__], pet)

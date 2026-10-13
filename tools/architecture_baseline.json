@@ -1,6 +1,6 @@
 {
   "module_services": {
-    "aipet.py": 59,
+    "aipet.py": 50,
     "aipet_agents_window.py": 98,
     "aipet_app.py": 3,
     "aipet_hook.py": 1
@@ -23,7 +23,6 @@
     "aipetlib/ui/appearance_controls.py": 38,
     "aipetlib/ui/permission_card.py": 38,
     "aipetlib/ui/pet_view.py": 104,
-    "aipetlib/ui/tooltips.py": 19,
-    "aipetlib/vscode.py": 11
+    "aipetlib/ui/tooltips.py": 19
   }
 }
