@@ -5,7 +5,7 @@ import time
 import unittest
 from pathlib import Path
 
-import aipet
+import aipetlib.housekeeping as housekeeping
 import support
 
 
@@ -32,7 +32,7 @@ class LeftoverTests(unittest.TestCase):
             Path(home, "events.log").touch()  # still being written: kept
             gone.remove(Path(home, "events.log"))
             kept.append(Path(home, "events.log"))
-            removed = aipet.sweep_leftovers(home, now=now)
+            removed = housekeeping.sweep_leftovers(home, now=now)
             self.assertEqual(sorted(map(str, gone)), sorted(removed))
             for p in kept:
                 self.assertTrue(p.exists(), p)
@@ -45,7 +45,7 @@ class LeftoverTests(unittest.TestCase):
                            "timed": {"old": {"until": 1}, "live": {"until": time.time() + 600}}}, f)
             from unittest.mock import patch
             with support.paths(HOME_DIR=home), support.paths(AUTO_APPROVE_PATH=path):
-                aipet.sweep_leftovers(home)
+                housekeeping.sweep_leftovers(home)
             with open(path) as f:
                 data = json.load(f)
             self.assertEqual(list(data["timed"]), ["live"])

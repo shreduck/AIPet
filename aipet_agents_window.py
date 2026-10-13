@@ -26,6 +26,7 @@ import tkinter as tk
 from tkinter import font as tkfont
 
 import aipet as core
+from aipetlib.runtime import diagnostics
 from aipetlib.agents import log_filters, network, stats
 from aipetlib.agents.tools import is_mcp_tool
 from aipetlib.ui.agent_common import (  # noqa: F401  (re-exported: the app and tests use these names here)
@@ -291,7 +292,7 @@ class AgentNetworkWindow(agent_controls.WindowControls):
         try:
             self._refresh()
         except Exception as e:  # never let one bad transcript kill the window
-            core.log_error(f"agent network: {e!r}")
+            diagnostics.log_error(f"agent network: {e!r}")
         self._after = self.win.after(REFRESH_MS, self._tick)
 
     def _refresh(self):
@@ -407,9 +408,9 @@ class AgentNetworkWindow(agent_controls.WindowControls):
         self._gesture_start_job = None
         try:
             from aipetlib.mac_gestures import MacGraphGestures
-            self._gestures = MacGraphGestures(self, core.log_error)
+            self._gestures = MacGraphGestures(self, diagnostics.log_error)
         except Exception as error:
-            core.log_error(f"graph gestures unavailable: {error!r}")
+            diagnostics.log_error(f"graph gestures unavailable: {error!r}")
 
     # ---- text
     @staticmethod

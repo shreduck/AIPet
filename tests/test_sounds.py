@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import aipet
+import aipetlib.ui.sounds as sounds
 import support
 
 
@@ -14,9 +15,9 @@ class ChimeTests(unittest.TestCase):
         app = object.__new__(aipet.PetApp)
         app.muted = MagicMock(get=MagicMock(return_value=False))
         app.root = MagicMock()
-        with patch.object(aipet, 'IS_MAC', True), patch.object(aipet, 'winsound', None), \
-                patch.object(aipet, 'chime_path', side_effect=lambda k: k + '.wav'), \
-                patch.object(aipet.subprocess, 'Popen') as play:
+        with patch.object(sounds, 'IS_MAC', True), patch.object(sounds, 'winsound', None), \
+                patch.object(sounds, 'chime_path', side_effect=lambda k: k + '.wav'), \
+                patch.object(sounds.subprocess, 'Popen') as play:
             for config in ({}, {"sound_style": "chimes"}, {"sound_style": "system"}):
                 app.cfg = config
                 for urgent, kind, chime, system in ((False, None, 'ting', 'Glass'),
@@ -37,9 +38,9 @@ class ChimeTests(unittest.TestCase):
         app = object.__new__(aipet.PetApp)
         app.cfg, app.root = {}, MagicMock()
         app.muted = MagicMock(get=MagicMock(return_value=False))
-        with patch.object(aipet, 'IS_MAC', True), patch.object(aipet, 'winsound', None), \
-                patch.object(aipet, 'chime_path', side_effect=OSError('read-only sound directory')), \
-                patch.object(aipet.subprocess, 'Popen') as play:
+        with patch.object(sounds, 'IS_MAC', True), patch.object(sounds, 'winsound', None), \
+                patch.object(sounds, 'chime_path', side_effect=OSError('read-only sound directory')), \
+                patch.object(sounds.subprocess, 'Popen') as play:
             app.beep(False)
             play.assert_called_once_with(['afplay', '/System/Library/Sounds/Glass.aiff'])
 
@@ -57,14 +58,14 @@ class ChimeTests(unittest.TestCase):
     def test_chimes_are_written_once_as_clean_wav_files(self):
         with tempfile.TemporaryDirectory() as home, support.paths(HOME_DIR=home):
             for kind, seconds in (("ting", 0.26 + 0.22 + 0.22 * 6), ("knock", 0.26 + 0.24 + 0.17 * 6)):
-                path = aipet.chime_path(kind)
+                path = sounds.chime_path(kind)
                 with wave.open(path) as f:
                     self.assertEqual((f.getnchannels(), f.getsampwidth(), f.getframerate()), (1, 2, 44100))
                     self.assertAlmostEqual(f.getnframes() / 44100, seconds, places=2)
                 stamp = os.path.getmtime(path)
-                self.assertEqual(aipet.chime_path(kind), path)
+                self.assertEqual(sounds.chime_path(kind), path)
                 self.assertEqual(os.path.getmtime(path), stamp)  # not rewritten
-            samples = aipet.chime_samples("knock")
+            samples = sounds.chime_samples("knock")
             self.assertLessEqual(max(abs(v) for v in samples), 0.5 + 1e-9)
             self.assertLess(abs(samples[0]), 0.01)
             self.assertLess(abs(samples[-1]), 0.01)
@@ -74,7 +75,7 @@ class ChimeTests(unittest.TestCase):
         app.muted = MagicMock(get=MagicMock(return_value=False))
         ws = SimpleNamespace(PlaySound=MagicMock(), MessageBeep=MagicMock(), SND_FILENAME=1, SND_ASYNC=2,
                              SND_NODEFAULT=4, MB_ICONEXCLAMATION=48, MB_ICONASTERISK=64, MB_ICONHAND=16)
-        with patch.object(aipet, 'winsound', ws), patch.object(aipet, 'chime_path', side_effect=lambda k: k + '.wav'):
+        with patch.object(sounds, 'winsound', ws), patch.object(sounds, 'chime_path', side_effect=lambda k: k + '.wav'):
             app.cfg = {"sound_style": "chimes"}
             app.beep(True)
             ws.PlaySound.assert_called_once_with('knock.wav', 7)

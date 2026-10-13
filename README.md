@@ -531,9 +531,10 @@ From source, the Windows hook runs via `pythonw` and the script, so no exe is ne
 | `aipetlib/runtime/` | Paths, live preference holders, reading and saving `config.json`, and the error log, shared by the app and background workers |
 | `aipetlib/agents/` | The agent network backend: Claude/Codex transcript adapters, incremental history, tool calls, network assembly, log filters, stats and the background tracker (no Tk) |
 | `aipetlib/config.py`, `records.py`, `sessions.py`, `permissions.py` | Configuration persistence, session interpretation and permission rules |
+| `aipetlib/housekeeping.py` | Sweeping leftovers (half-written files, dead hooks' answers, old debug logs) |
 | `aipetlib/geometry.py`, `windows.py`, `mac_panels.py`, `click_through.py` | Monitor geometry and native window behavior |
 | `aipetlib/vscode.py`, `workbench.py`, `hook_events.py` | Editor routing, MCP polling and hook event transitions |
-| `aipetlib/ui/` | Pet rendering (`pet_style`, `pet_view`, `sprites`, `theme`), permission cards, tooltips, size sliders, menu definitions, and the agent-window components with their shared values (`agent_common`) |
+| `aipetlib/ui/` | Pet rendering (`pet_style`, `pet_view`, `sprites`, `theme`), permission cards, tooltips, size sliders, menu definitions, the chimes (`sounds`), and the agent-window components (`agent_logs`, `agent_graph`, `agent_prompts`, `agent_menu`, `agent_controls`) with their shared values (`agent_common`) |
 | `aipetlib/text.py` | Plain-text helpers: phrases, "3m ago", countdowns |
 | `aipet_settings.py` | The AIPet menu window (built from the same menu definition) |
 | `aipet_agents.py` | Temporary facade over `aipetlib/agents/` (to be removed) |

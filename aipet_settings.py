@@ -144,6 +144,7 @@ def draw_icon(canvas, name, color=None, x=0, y=0, px=2, tile=True, bright=False)
 
 
 from aipetlib.runtime.preferences import ZOOM_MAX, ZOOM_MIN, ZOOM_STEP, clamp_zoom  # noqa: E402,F401
+from aipetlib.runtime import diagnostics  # noqa: E402
 BASE_SCALE = 1.5  # "100%" is drawn half again as big as the pet's other windows: easier to read
 
 
@@ -250,7 +251,7 @@ class SettingsWindow:
         try:
             spec = self.spec_fn()
         except Exception as e:
-            core.log_error(f"settings spec: {e!r}")
+            diagnostics.log_error(f"settings spec: {e!r}")
             return
         zoom = clamp_zoom(self.zoom_fn())
         sig = signature(spec, zoom)

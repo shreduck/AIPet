@@ -23,6 +23,8 @@ import webbrowser
 from tkinter import messagebox
 
 import aipet as core
+from aipetlib.runtime import diagnostics, paths, preferences
+from aipetlib.runtime import settings as runtime_settings
 import aipet_agents_window
 from aipetlib.agents.tracker import NetworkTracker
 import aipet_guide
@@ -47,7 +49,7 @@ RESTART_KEYS = {"workbench", "claude_code", "click_through", "max_pets"}  # read
 
 def config_stamp():
     try:
-        st = os.stat(core.CONFIG_PATH)
+        st = os.stat(paths.CONFIG_PATH)
         return st.st_mtime_ns, st.st_size
     except OSError:
         return None
@@ -57,7 +59,7 @@ RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 LAUNCH_AGENT = os.path.expanduser("~/Library/LaunchAgents/com.aipet.app.plist")
 RANK = {"needs_input": 0, "error": 1, "working": 2, "done": 3, "idle": 4}
 _mutex = None
-SETUP_MARKER = os.path.join(core.HOME_DIR, "setup-done")
+SETUP_MARKER = os.path.join(paths.HOME_DIR, "setup-done")
 from aipetlib.runtime.paths import DEBUG_FLAG  # noqa: E402
 from aipetlib.ui.pet_style import BETA_STYLES, PET_STYLES  # noqa: E402
 
@@ -68,8 +70,8 @@ def single_instance():
     if os.name != "nt":
         try:
             import fcntl
-            os.makedirs(core.HOME_DIR, exist_ok=True)
-            _mutex = open(os.path.join(core.HOME_DIR, "app.lock"), "w")  # kept open for the process lifetime
+            os.makedirs(paths.HOME_DIR, exist_ok=True)
+            _mutex = open(os.path.join(paths.HOME_DIR, "app.lock"), "w")  # kept open for the process lifetime
             fcntl.flock(_mutex, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return False
@@ -150,7 +152,7 @@ def refresh_autostart_path():
             if os.path.normcase(str(current).strip('" ')) != os.path.normcase(sys.executable):
                 set_autostart(True)
     except Exception as e:
-        core.log_error(f"autostart path: {e!r}")
+        diagnostics.log_error(f"autostart path: {e!r}")
 
 
 def set_autostart(on):
@@ -199,21 +201,21 @@ def set_window_icon(root):
         root.iconphoto(True, *photos)  # True: also every Toplevel created later
         root._aipet_icons = photos
     except Exception as e:
-        core.log_error(f"window icon: {e!r}")
+        diagnostics.log_error(f"window icon: {e!r}")
 
 
 def make_icon(state):
     col, dark = core.COLORS.get(state, core.COLORS["idle"]), core.DARK.get(state, core.DARK["idle"])
     img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    spr = core.load_sprites() if core.STYLE["v"] == "robot" else False
+    spr = core.load_sprites() if preferences.STYLE["v"] == "robot" else False
     if spr:  # the robot with the state's face (red while a session needs you), on a dot in the state colour
         im = robot_icon(state)
         k = min(60 / im.width, 60 / im.height)
         im = im.resize((max(1, int(im.width * k)), max(1, int(im.height * k))), Image.NEAREST)
         img.paste(im, ((64 - im.width) // 2, 62 - im.height), im)
         d.ellipse((46, 46, 62, 62), fill=col, outline="white", width=2)
-    elif core.STYLE["v"] != "cat":  # the mole: head poking out of a hill, ground rim in the state colour
+    elif preferences.STYLE["v"] != "cat":  # the mole: head poking out of a hill, ground rim in the state colour
         d.ellipse((2, 44, 62, 62), fill=core.MOLE_EDGE, outline=col, width=4)
         d.ellipse((14, 4, 50, 56), fill=core.MOLE_BODY, outline=core.MOLE_EDGE, width=3)
         if state in ("done", "idle"):
@@ -295,7 +297,7 @@ def setup_is_done():
 
 def mark_setup_done():
     try:
-        os.makedirs(core.HOME_DIR, exist_ok=True)
+        os.makedirs(paths.HOME_DIR, exist_ok=True)
         open(SETUP_MARKER, "w").close()
     except OSError:
         pass
@@ -304,7 +306,7 @@ def mark_setup_done():
 # --------------------------------------------------------------------------- app
 class TrayApp:
     def __init__(self):
-        core.ensure_home()
+        runtime_settings.ensure_home()
         self.pet = core.PetApp()
         self.root = self.pet.root
         set_window_icon(self.root)
@@ -325,7 +327,7 @@ class TrayApp:
         self._tk_thread = threading.current_thread()
         self.c_auto = core.auto_approve_targets()  # hook configs with auto-approval on (all off by default)
         self.version = upd.current_version()
-        self.update_state = upd.State(core.HOME_DIR)
+        self.update_state = upd.State(paths.HOME_DIR)
         found = self.update_state.load().get("latest") or {}
         self.update_info = found if upd.is_newer(found.get("tag"), self.version) else None  # a newer release, if any
         self._update_busy = False
@@ -348,7 +350,7 @@ class TrayApp:
                 import mac_statusbar
                 self.status_item = mac_statusbar.StatusItem(self._mac_menu_spec, self.ui, menu_bar_icons())
             except Exception as e:
-                core.log_error(f"menu bar icon: {e!r}")
+                diagnostics.log_error(f"menu bar icon: {e!r}")
 
         threading.Thread(target=self._startup_jobs, daemon=True).start()
         self._config_stamp = config_stamp()
@@ -399,7 +401,7 @@ class TrayApp:
             try:
                 hi.migrate_legacy_usage(key)  # backup and restore v0.3.1's automatic wrapper once
             except Exception as e:
-                core.log_error(f"restore legacy status line for {key}: {e!r}")
+                diagnostics.log_error(f"restore legacy status line for {key}: {e!r}")
         self.ui(lambda: self.root.after(20000, self.legacy_tick))  # LEGACY: daily reminder about old-name hooks
         self.ui(lambda: self.root.after(30000, self.update_tick))
         self.ui(self._show_update_in_menus)
@@ -678,7 +680,7 @@ class TrayApp:
                 found = legacy.findings(targets, pets)
             except Exception as e:
                 found = []
-                core.log_error(f"legacy check failed: {e!r}")
+                diagnostics.log_error(f"legacy check failed: {e!r}")
             if found or force:
                 self.ui(lambda: self._legacy_window(found))
             if found:
@@ -1022,14 +1024,14 @@ class TrayApp:
                 self._config_stamp = stamp
                 self.apply_config_file()
         except Exception as e:
-            core.log_error(f"config watch: {e!r}")
+            diagnostics.log_error(f"config watch: {e!r}")
         self.root.after(CONFIG_WATCH_MS, self.watch_config)
 
     def apply_config_file(self):
         """Apply what changed in config.json since the app last saw it. A file that isn't valid JSON (an editor
         mid-save, a typo) is skipped until it is. Returns the keys that only apply after a restart."""
         try:
-            with open(core.CONFIG_PATH, encoding="utf-8") as f:
+            with open(paths.CONFIG_PATH, encoding="utf-8") as f:
                 data = json.load(f)
         except (OSError, ValueError):
             return []
@@ -1061,7 +1063,7 @@ class TrayApp:
             "card_scale": pet.set_card_scale,
         }
         restart = []
-        core.SAVE_PAUSED["v"] = True  # the setters save; the file already says so
+        runtime_settings.SAVE_PAUSED["v"] = True  # the setters save; the file already says so
         try:
             for key, value in changed.items():
                 if key in RESTART_KEYS:
@@ -1072,9 +1074,9 @@ class TrayApp:
                         handlers[key](value)
                     cfg[key] = value  # everything else is read where it's used (sound_style, update_check...)
                 except Exception as e:
-                    core.log_error(f"config.json {key}={value!r}: {e!r}")
+                    diagnostics.log_error(f"config.json {key}={value!r}: {e!r}")
         finally:
-            core.SAVE_PAUSED["v"] = False
+            runtime_settings.SAVE_PAUSED["v"] = False
         self.refresh_menu()  # menus and the settings window show the new values
         if restart:
             self.info("config.json changed. Applied what could be applied now; these take effect after AIPet "
@@ -1084,7 +1086,7 @@ class TrayApp:
     def toggle_update_check(self):
         on = not self.pet.cfg.get("update_check", True)
         self.pet.cfg["update_check"] = on
-        core.save_setting("update_check", on)
+        runtime_settings.save_setting("update_check", on)
         self.refresh_menu()
 
     def _recheck_setup(self):
@@ -1198,7 +1200,7 @@ class TrayApp:
             if key == "attention":
                 self.root.attributes("-notify", True)  # Tk on macOS: bounce the Dock icon
         except Exception as e:
-            core.log_error(f"dock icon: {e!r}")
+            diagnostics.log_error(f"dock icon: {e!r}")
 
     def update_tray(self):
         if not self.icon:
@@ -1211,7 +1213,7 @@ class TrayApp:
                         try:
                             self.status_item.set_state("attention" if top in ("needs_input", "error") else "normal", text)
                         except Exception as e:
-                            core.log_error(f"menu bar icon: {e!r}")
+                            diagnostics.log_error(f"menu bar icon: {e!r}")
             return
         top, text = self.summary()
         if (top, text) != self._icon_key:
@@ -1318,7 +1320,7 @@ class TrayApp:
             self.root.after(1500, self.offer_agent_network)
             return
         self.pet.cfg["agent_network_intro_seen"] = True
-        core.save_setting("agent_network_intro_seen", True)
+        runtime_settings.save_setting("agent_network_intro_seen", True)
 
         def chosen(try_it):
             if try_it:
@@ -1369,7 +1371,7 @@ class TrayApp:
         opts = dict(aipet_agents_window.DEFAULT_OPTIONS,
                     separate=aipet_agents_window.load_options(self.pet.cfg)["separate"])
         self.pet.cfg[aipet_agents_window.OPTIONS_KEY] = opts
-        core.save_setting(aipet_agents_window.OPTIONS_KEY, opts)
+        runtime_settings.save_setting(aipet_agents_window.OPTIONS_KEY, opts)
         for n, w in enumerate(self._agent_windows().values()):
             w.reset_appearance(opts, cascade=n)
         self.refresh_menu()
@@ -1386,7 +1388,7 @@ class TrayApp:
         opts = aipet_agents_window.load_options(self.pet.cfg)
         opts["separate"] = not opts["separate"]
         self.pet.cfg[aipet_agents_window.OPTIONS_KEY] = opts
-        core.save_setting(aipet_agents_window.OPTIONS_KEY, opts)
+        runtime_settings.save_setting(aipet_agents_window.OPTIONS_KEY, opts)
         self._agent_mode_changed(None)
 
     def _agent_mode_changed(self, source):
@@ -1447,7 +1449,7 @@ class TrayApp:
     def copy_ai_guide(self):
         """Settings > General: the settings guide for an AI assistant, on the clipboard (Tk's clipboard is the
         system one on Windows and macOS)."""
-        text = aipet_guide.build_guide(self.pet.cfg, core.HOME_DIR, self.version)
+        text = aipet_guide.build_guide(self.pet.cfg, paths.HOME_DIR, self.version)
         try:
             self.root.clipboard_clear()
             self.root.clipboard_append(text)
@@ -1465,7 +1467,7 @@ class TrayApp:
     def set_settings_zoom(self, value):
         value = aipet_settings.clamp_zoom(value)
         self.pet.cfg["settings_zoom"] = value
-        core.save_setting("settings_zoom", value)
+        runtime_settings.save_setting("settings_zoom", value)
         self.refresh_menu()
 
     # ---- actions (Tk thread)
@@ -1531,7 +1533,7 @@ class TrayApp:
                                "AIPet saves usage figures, not your token. Disable this toggle at any time."):
             return
         self.pet.cfg["claude_oauth_usage"] = bool(on)
-        core.save_setting("claude_oauth_usage", bool(on))
+        runtime_settings.save_setting("claude_oauth_usage", bool(on))
         self.refresh_menu()
         self.pet.hide_tip()
 
@@ -1641,7 +1643,7 @@ class TrayApp:
     def _set_notify(self, value):
         self.c_notify = bool(value)
         self.pet.cfg["notifications"] = self.c_notify
-        if not core.save_setting("notifications", self.c_notify):
+        if not runtime_settings.save_setting("notifications", self.c_notify):
             self.info("Couldn't save this setting (config.json isn't valid JSON?). It applies until you quit.",
                       error=True)
         self.refresh_menu()
@@ -1649,9 +1651,9 @@ class TrayApp:
     def set_style(self, name):
         if name not in dict(PET_STYLES):
             return
-        core.STYLE["v"] = name
+        preferences.STYLE["v"] = name
         self.pet.cfg["pet_style"] = name
-        core.save_setting("pet_style", name)
+        runtime_settings.save_setting("pet_style", name)
         self._icon_key = None  # redraw the tray icon in the new style
         if hasattr(self, "style_var"):
             self.style_var.set(name)
@@ -1660,7 +1662,7 @@ class TrayApp:
     def toggle_theme(self):
         name = "light" if core.T.get("name") == "dark" else "dark"
         self.pet.apply_theme(name)
-        if not core.save_setting("theme", name):
+        if not runtime_settings.save_setting("theme", name):
             self.info("Couldn't save the theme (config.json isn't valid JSON?). It applies until you quit.", error=True)
         if hasattr(self, "theme_var"):
             self.theme_var.set(name == "dark")
@@ -1672,7 +1674,7 @@ class TrayApp:
             if os.path.exists(DEBUG_FLAG):
                 os.remove(DEBUG_FLAG)
             else:
-                os.makedirs(core.HOME_DIR, exist_ok=True)
+                os.makedirs(paths.HOME_DIR, exist_ok=True)
                 open(DEBUG_FLAG, "w").close()
         except OSError:
             pass
@@ -1702,7 +1704,7 @@ class TrayApp:
         self.refresh_menu()
 
     def open_config(self):
-        open_path(core.HOME_DIR)
+        open_path(paths.HOME_DIR)
 
     def quit(self):
         if getattr(self, "agent_tracker", None):
@@ -1724,8 +1726,8 @@ def main():
         sys.exit(0 if check_assets(output) else 1)
     if "--probe-workbench" in sys.argv:
         if sys.stdout is None:  # windowed exe: write the report to a file and open it
-            core.ensure_home()
-            path = os.path.join(core.HOME_DIR, "workbench-probe.txt")
+            runtime_settings.ensure_home()
+            path = os.path.join(paths.HOME_DIR, "workbench-probe.txt")
             with open(path, "w", encoding="utf-8") as f:
                 sys.stdout = f
                 try:
@@ -1739,7 +1741,7 @@ def main():
     if "--selftest-spaces" in sys.argv:
         if not IS_MAC:
             raise RuntimeError("The Spaces probe requires macOS")
-        core.ensure_home()
+        runtime_settings.ensure_home()
         mark_setup_done()
         app = TrayApp()
         from aipet_selftest import start_spaces_probe
@@ -1748,7 +1750,7 @@ def main():
         app.root.mainloop()
         return
     if "--selftest" in sys.argv:  # CI (mac-selftest workflow): run without the setup window, save diagnostics, quit
-        core.ensure_home()
+        runtime_settings.ensure_home()
         mark_setup_done()
         app = TrayApp()
         app.root.after(12000, app.pet.write_diagnostics)

@@ -18,12 +18,13 @@ Probe: python  aipet.py --probe-workbench   (prints what Workbench returns)
 Standard library only (tkinter, urllib, winsound).
 """
 import aipetlib.vscode as vscode
+import aipetlib.housekeeping as housekeeping
+import aipetlib.ui.sounds as sounds
 import aipetlib.ui.appearance_controls as appearance_controls
 import aipetlib.ui.tooltips as tooltips
 import copy
 import glob
 import json
-import math
 import random
 import re
 import os
@@ -70,18 +71,13 @@ from aipetlib.ui.sprites import (
     mono, bubble_image, mark_image, _solid_shadow, _sine_mouth,
 )
 
-try:
-    import winsound
-except ImportError:  # not Windows
-    winsound = None
-
 from aipetlib.runtime.paths import AUTO_APPROVE_PATH, CONFIG_PATH, HOME_DIR, LEGACY_SESSIONS_DIR, SESSIONS_DIR
 from aipetlib.runtime.preferences import (
     ANSWER_WAIT, CARD_SCALE, CARD_SCALE_MAX, CARD_SCALE_MIN, CARD_SCALE_STEP, DONE_TIMEOUT, HEALTH, MAX_HEALTH, MAX_WAIT,
     SCALE, SCALE_UNIT, STYLE, clamp_card_scale, clamp_done, clamp_health, clamp_scale, clamp_wait,
 )
 from aipetlib.runtime import diagnostics
-from aipetlib.runtime.settings import SAVE_PAUSED, load_config, save_setting
+from aipetlib.runtime.settings import SAVE_PAUSED, ensure_home, load_config, save_setting
 from aipetlib.text import ago, fmt_left, fmt_wait
 
 from aipetlib.config import DEFAULT_CONFIG, ConfigStore, deep_merge
@@ -212,132 +208,10 @@ def popup_native_menu(widget, entries, x, y, api=None):
     return actions[chosen - 1] if 0 < chosen <= len(actions) else None
 
 
-# --------------------------------------------------------------------------- chimes (macOS and Windows)
-# AIPet's own sounds are synthesized as two xylophone notes each: "ting" rises when a session is done, "knock" falls
-# when one needs you, and "thud" signals an error. Written once to ~/.aipet/sounds as WAV files, they are the default
-# on both platforms; users can choose their host OS sounds instead.
-CHIME_VERSION = 4  # bump when the sounds change, so the new WAV files get written
-CHIME_RATE = 44100
-
-
-# Two xylophone notes each: (frequency, start in seconds, loudness, ring time)
-CHIMES = {
-    # Mid register and mellow on purpose: noticeable without being shrill while you're concentrating
-    "ting": ((440.0, 0.0, 0.9, 0.17), (587.3, 0.22, 1.0, 0.22)),  # done: A4 then D5, rising
-    "knock": ((392.0, 0.0, 1.0, 0.14), (329.6, 0.24, 0.95, 0.17)),  # needs you: G4 then E4, like a doorbell
-    # error: a low, falling tritone (F4 then B3) - clearly "something's off", still soft, never a buzzer
-    "thud": ((349.2, 0.0, 1.0, 0.13), (246.9, 0.24, 1.0, 0.2)),
-}
-
-
-def xylophone_note(out, f0, start, amp, ring):
-    """Add one soft-mallet xylophone note: the bar's fundamental, its tuned 3rd harmonic and a faint high overtone
-    that die away quickly, with a tiny downward bend at the strike."""
-    rate, phase = CHIME_RATE, 0.0
-    first, n = int(start * rate), int(ring * 6 * rate)
-    attack, release = int(0.008 * rate), int(n * 0.3)
-    for i in range(n):
-        t = i / rate
-        phase += 2 * math.pi * f0 * (1 + 0.02 * math.exp(-t / 0.006)) / rate
-        v = (math.exp(-t / ring) * math.sin(phase)
-             + 0.12 * math.exp(-t / (ring * 0.3)) * math.sin(3 * phase)
-             + 0.02 * math.exp(-t / (ring * 0.12)) * math.sin(6.27 * phase))
-        # Smooth (raised-cosine) 8 ms attack and a release that lands exactly on zero: any corner in the envelope,
-        # at the start or where a note stops, is heard as a tick
-        env = 0.5 - 0.5 * math.cos(math.pi * i / attack) if i < attack else 1.0
-        if i > n - release:
-            env *= 0.5 - 0.5 * math.cos(math.pi * (n - i) / release)
-        if first + i < len(out):
-            out[first + i] += amp * v * env
-
-
-CHIME_PAD = (0.06, 0.2)  # seconds of silence before / after, so opening and closing the audio device is not heard
-
-
-def chime_samples(kind):
-    """The chime as floats in -1..1, padded with silence."""
-    notes = CHIMES.get(kind, CHIMES["ting"])
-    out = [0.0] * int(CHIME_RATE * max(start + ring * 6 for _, start, _, ring in notes))
-    for f0, start, amp, ring in notes:
-        xylophone_note(out, f0, start, amp, ring)
-    peak = max(abs(v) for v in out) or 1.0
-    lead, tail = (int(CHIME_RATE * s) for s in CHIME_PAD)
-    return [0.0] * lead + [v / peak * 0.5 for v in out] + [0.0] * tail
-
-
-def chime_path(kind):
-    """A WAV file for the chime, created on first use."""
-    import struct
-    import wave
-    folder = os.path.join(HOME_DIR, "sounds")
-    path = os.path.join(folder, f"{kind}-v{CHIME_VERSION}.wav")
-    if not os.path.exists(path):
-        os.makedirs(folder, exist_ok=True)
-        data = b"".join(struct.pack("<h", int(v * 32767)) for v in chime_samples(kind))
-        with wave.open(path + ".tmp", "wb") as f:
-            f.setnchannels(1)
-            f.setsampwidth(2)
-            f.setframerate(CHIME_RATE)
-            f.writeframes(data)
-        os.replace(path + ".tmp", path)
-    return path
-
-
 AUTO_FLASH_SECONDS = 10  # how long a pet celebrates a whitelist auto-approval
 
 
 # ---- timed auto approve: one session approves every permission prompt by itself for N minutes
-
-
-# ---- leftovers: files AIPet makes that nothing will ever need again (swept a minute after start, then hourly)
-# name pattern (in a folder of the AIPet folder) -> how old (seconds since last written) before it is deleted
-LEFTOVERS = (
-    ("sessions", ".tmp", 3600),    # a hook's half-written session file (the hook was killed mid-write)
-    ("sessions", ".lock", 3600),   # a hook's lock on a session file (held for milliseconds; a crashed hook's stays)
-    ("answers", ".waiting", 3600),  # "a hook waits here": touched every second while it waits, so 1 h = long gone
-    ("answers", ".json", 3600),    # an answer no hook picked up (each hook deletes any older one when it starts)
-    ("answers", ".tmp", 3600),
-    ("", ".tmp", 3600),            # half-written config / auto-approve / update files
-    ("", "codex-raw.log", 7 * 86400),   # Codex test log (full payloads): switched off in releases
-    ("", "events.log", 7 * 86400),      # debug event log: appended to while "Log hook events" is on
-    ("", "diagnostics.txt", 30 * 86400),  # saved by Save diagnostics..., for a bug report
-    ("", "workbench-probe.txt", 30 * 86400),
-)
-
-
-def sweep_leftovers(home=None, now=None):
-    """Delete leftovers (see LEFTOVERS) and expired timed auto approves. Returns the paths removed."""
-    home = home or HOME_DIR
-    now = time.time() if now is None else now
-    removed = []
-    for folder, suffix, max_age in LEFTOVERS:
-        base = os.path.join(home, folder) if folder else home
-        try:
-            names = os.listdir(base)
-        except OSError:
-            continue
-        for name in names:
-            path = os.path.join(base, name)
-            if not name.endswith(suffix):
-                continue
-            try:
-                if not os.path.isfile(path) or now - os.path.getmtime(path) < max_age:
-                    continue
-                os.remove(path)
-                removed.append(path)
-            except OSError:
-                pass
-    try:  # timed auto approves that ran out stay in auto-approve.json until something rewrites it
-        with open(os.path.join(home, "auto-approve.json"), encoding="utf-8") as f:
-            timed = (json.load(f) or {}).get("timed") or {}
-        live = {sid: g for sid, g in timed.items()
-                if isinstance(g, dict) and isinstance(g.get("until"), (int, float)) and g["until"] > now}
-        if len(live) != len(timed) and home == HOME_DIR:
-            _write_auto_approve(timed=live)
-            removed.append("auto-approve.json: expired timed auto approves")
-    except (OSError, ValueError, AttributeError):
-        pass
-    return removed
 
 
 # --------------------------------------------------------------------------- Workbench source
@@ -1003,34 +877,7 @@ class PetApp:
         """kind: "error" for its own sound; otherwise urgent = needs you, not urgent = done."""
         if self.muted.get() and not force:
             return
-        error = kind == "error"
-        if winsound:
-            if self.cfg.get("sound_style", "chimes") == "chimes":
-                try:
-                    winsound.PlaySound(chime_path("thud" if error else "knock" if urgent else "ting"),
-                                       winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
-                    return
-                except (RuntimeError, OSError):
-                    pass  # fall back to the system sound
-            try:
-                winsound.MessageBeep(winsound.MB_ICONHAND if error else
-                                     winsound.MB_ICONEXCLAMATION if urgent else winsound.MB_ICONASTERISK)
-            except RuntimeError:
-                pass
-        elif IS_MAC:
-            if self.cfg.get("sound_style", "chimes") == "chimes":
-                try:
-                    subprocess.Popen(["afplay", chime_path("thud" if error else "knock" if urgent else "ting")])
-                    return
-                except OSError:
-                    pass  # fall back to the system sound if the chime cannot be created or played
-            try:
-                sound = "Basso" if error else "Funk" if urgent else "Glass"
-                subprocess.Popen(["afplay", f"/System/Library/Sounds/{sound}.aiff"])
-            except OSError:
-                self.root.bell()
-        else:
-            self.root.bell()
+        sounds.play(urgent, error=kind == "error", style=self.cfg.get("sound_style", "chimes"), bell=lambda: self.root.bell())
 
     def set_sound_style(self, style):
         if style not in ("chimes", "system"):
@@ -1050,7 +897,7 @@ class PetApp:
         except Exception as e:
             log_error(f"usage sweep: {e!r}")
         try:
-            sweep_leftovers()
+            housekeeping.sweep_leftovers()
         except Exception as e:
             log_error(f"leftover sweep: {e!r}")
         self.root.after(3600 * 1000, self._sweep_usage)
@@ -1555,13 +1402,6 @@ def probe_workbench():
         n = normalize_chat(raw, w)
         print(f"  {n['state']:12} raw={str(first(raw, w['state_fields'])):22} {n['title']}")
     print("\nIf states look wrong, edit state_fields / state_map in", CONFIG_PATH)
-
-
-def ensure_home():
-    os.makedirs(SESSIONS_DIR, exist_ok=True)
-    if not os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(DEFAULT_CONFIG, f, indent=2)
 
 
 def main():
