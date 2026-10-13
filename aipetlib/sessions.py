@@ -272,6 +272,9 @@ def read_claude_code_sessions(services, cfg):
             # its Claude Code / Codex process is gone without a Stop or SessionEnd (the app was closed, or Cowork moved
             # the conversation to a new session): show it as done, so the done timeout clears it
             rec = dict(rec, state="done", message="", request={}, changed=rec.get("updated", 0))
+        if rec.get("agent") == "codex":
+            from .codex_questions import question_snapshot, reconcile_questions
+            rec = reconcile_questions(rec, question_snapshot(services.transcript_file(rec)))
         if rec.get("state") == "working" and services.turn_interrupted(rec):
             # You stopped the turn (Esc / the stop button). Claude Code sends no hook event for that, only a line in
             # its transcript, so the session would look busy until your next message.

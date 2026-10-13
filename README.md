@@ -106,8 +106,9 @@ newest few per install. Transcripts are only ever read, never copied.
 **Questions from Claude** (its AskUserQuestion tool) open in the pet's popup like permission prompts: each question with
 its options (check boxes when several may be picked) and a field for your own answer. *Send answer* hands the answers to
 Claude Code, which carries on as if you had answered there. Auto approve never answers a question, and a question is
-never hidden as a stale prompt. **Codex questions** show too, read-only: Codex takes the answer as your next message,
-which a hook can't type, so the card shows the question and its options and *Go to window* takes you there.
+never hidden as a stale prompt. **Codex questions** show too, read-only: the current AIPet hook integration handles
+Codex approval decisions, not question replies. The card shows the question and its options; *Go to window* takes
+you to Codex to answer.
 
 **API errors** that end a turn (usage limit reached, overloaded, billing, signed out...) show the session as an error,
 with the reason, until you send Claude a new message. Permission prompts that Claude Code settles by itself (auto mode,
@@ -177,8 +178,10 @@ Claude Code, kept in `~/.codex/hooks.json` (or `$CODEX_HOME/hooks.json`):
   don't answer in the pet's window within the answer timeout. To have Codex show its prompt straight away instead,
   switch off **Answer Codex prompts from the pet** (menu or tray). Updating from an older AIPet needs the Codex hooks
   updated once (they get a longer permission timeout) and trusted again in `/hooks`.
-- **Codex questions** (its `request_user_input` tool) show on the pet with their options, read-only: Codex takes the
-  answer as your next message, which a hook can't type, so answer in Codex (*Go to window*).
+- **Codex questions** (`request_user_input` and `request_user_input_async`) show on the pet with their options,
+  read-only. AIPet also reads pending question calls from the local rollout, so a blocking question appears before
+  its completion hook arrives and clears after it is answered. Answer in Codex (*Go to window*); the pet's Codex
+  permission-answer toggle controls Allow/Deny approvals, not question replies.
 - Events: start, prompt, tool use, permission, stop, **Interrupt** (shows as done), session end and subagents. Codex has no
   `Notification` event.
 

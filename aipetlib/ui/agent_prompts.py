@@ -30,7 +30,7 @@ def _draw_prompt(window, services):
         window._draw_graph()
     if not window.overlay_open:
         window.chip.place(in_=window.canvas, relx=1.0, rely=1.0, x=-window.px(170), y=-window.px(6), anchor="se")
-    sig = (req.get("id"), window.theme, window.s, services.core.hook_waiting(item))
+    sig = (req.get("id"), str(req.get("questions")), window.theme, window.s, services.core.hook_waiting(item))
     if sig != window._prompt_sig:
         window._prompt_sig = sig
         window._build_overlay(name, req, item)
@@ -112,7 +112,7 @@ def _build_overlay(window, services, name, req, item):
             lab.pack(fill="x", padx=pad, pady=(window.px(4), 0))
             window._wraps.append(lab)
         if len(questions) > 1 or (questions and questions[0].get("multiSelect")):
-            lab = tk.Label(ov, text="# several questions or picks: answer them on the full card", font=window.f_small,
+            lab = tk.Label(ov, text="# several questions or picks: open the full card to see them all", font=window.f_small,
                            bg=P["node"], fg=P["mu"], anchor="w", justify="left")
             lab.pack(fill="x", padx=pad)
             window._wraps.append(lab)
@@ -123,6 +123,15 @@ def _build_overlay(window, services, name, req, item):
                 window.options.append((label, lambda label=label, q=q: window._send(
                     "allow", {q["question"]: label})))
             window.options.append(("your own answer:", window._send_own))
+        elif not answerable:
+            for opt in questions[0].get("options") or []:
+                label = opt.get("label") if isinstance(opt, dict) else str(opt)
+                description = opt.get("description", "") if isinstance(opt, dict) else ""
+                lab = tk.Label(ov, text=label + (" — " + description if description else ""),
+                               font=window.f_small, bg=P["node"], fg=P["tx"], anchor="w", justify="left",
+                               wraplength=window.px(560))
+                lab.pack(fill="x", padx=pad, pady=(window.px(2), 0))
+                window._wraps.append(lab)
     elif answerable:
         window.options = [("allow once", lambda: window._send("allow"))]
         for sug in (req.get("suggestions") or [])[:3]:  # the AI's own "don't ask again" choices
@@ -169,6 +178,8 @@ def _build_overlay(window, services, name, req, item):
                 else "# 1-9 or ←→ + enter to answer · esc fold")
     elif req.get("id") in window._released:
         hint = "# handed back to codex: answer it in the codex window now (go to window takes you there)"
+    elif req.get("source") == "codex-question":
+        hint = "# answer this question in Codex · go to window opens the session"
     else:
         hint = "# this prompt can only be answered in the session window (or turn on answering in permissions)"
     window.note = tk.Label(ov, text=hint, font=window.f_small, bg=P["node"], fg=P["mu"], anchor="w", justify="left")
