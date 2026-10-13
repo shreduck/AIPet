@@ -49,13 +49,12 @@ class AgentNetworkWindow:
         self.net = {"agents": [], "log": []}
         self.item = None
         self.sel = -1  # -1: the shared log ("all")
-        self.overlay_open = self.menu_open = self._has_prompt = False
-        self.option = 0
+        self.menu_open = False
         self._after = self._anim = self._save_job = None
         self._gestures = self._gesture_start_job = None
         self.graph = agent_graph.GraphView(self)  # the graph and its viewport (owns its widgets and state)
         self.logs = agent_logs.LogPanel(self)  # the logs: tabs, filters, entries (owns its widgets and state)
-        self._prompt_sig = None
+        self.prompt = agent_prompts.PromptPanel(self)  # the prompt chip and overlay (owns its widgets and state)
         self.t0 = time.time()
         self.theme = None
         self.opts = load_options(getattr(pet, "cfg", {}))
@@ -70,8 +69,6 @@ class AgentNetworkWindow:
         self._drag = None
         self._fitting = False
         self._spin, self._spin_until = 0.0, 0.0
-        self._released = set()  # prompts handed back to Codex (Answer in Codex): answer them in its window
-        self.in_window = None  # index of the agent whose prompt can only be answered in the session's window
         w = self.win = tk.Toplevel(root)
         w.withdraw()
         w.title("AIPet · agent network")
@@ -258,32 +255,32 @@ class AgentNetworkWindow:
                 w.bind(seq, key(lambda: self.step_agent(-1), True))
             except tk.TclError:
                 pass
-        w.bind("<Right>", key(lambda: self.step_option(1) if self.overlay_open else self.step_agent(1)))
-        w.bind("<Left>", key(lambda: self.step_option(-1) if self.overlay_open else self.step_agent(-1)))
-        w.bind("<Down>", key(lambda: self.step_option(1) if self.overlay_open else self.logs.text.yview_scroll(1, "units")))
-        w.bind("<Up>", key(lambda: self.step_option(-1) if self.overlay_open else self.logs.text.yview_scroll(-1, "units")))
+        w.bind("<Right>", key(lambda: self.prompt.step_option(1) if self.prompt.overlay_open else self.step_agent(1)))
+        w.bind("<Left>", key(lambda: self.prompt.step_option(-1) if self.prompt.overlay_open else self.step_agent(-1)))
+        w.bind("<Down>", key(lambda: self.prompt.step_option(1) if self.prompt.overlay_open else self.logs.text.yview_scroll(1, "units")))
+        w.bind("<Up>", key(lambda: self.prompt.step_option(-1) if self.prompt.overlay_open else self.logs.text.yview_scroll(-1, "units")))
         for k in ("a", "A"):
             w.bind(k, key(lambda: self.select(-1)))
         for k in ("plus", "equal", "KP_Add"):
             w.bind(f"<{k}>", key(lambda: self.graph.zoom(1.25)))
         for k in ("minus", "KP_Subtract"):
             w.bind(f"<{k}>", key(lambda: self.graph.zoom(1 / 1.25)))
-        w.bind("0", key(lambda: self.graph.zoom(reset=True) if not self.overlay_open else None))
+        w.bind("0", key(lambda: self.graph.zoom(reset=True) if not self.prompt.overlay_open else None))
         w.bind("<Prior>", key(lambda: self.step_session(-1), True))
         w.bind("<Next>", key(lambda: self.step_session(1), True))
-        w.bind("<space>", key(lambda: self.open_overlay(not self.overlay_open)))
+        w.bind("<space>", key(lambda: self.prompt.open(not self.prompt.overlay_open)))
         w.bind("<Escape>", key(self._escape, True))
-        w.bind("<Return>", key(lambda: self.choose(self.option) if self.overlay_open else None))
+        w.bind("<Return>", key(lambda: self.prompt.choose(self.prompt.option) if self.prompt.overlay_open else None))
         for n in range(1, 10):
-            w.bind(str(n), key(lambda n=n: self.choose(n - 1) if self.overlay_open else None))
+            w.bind(str(n), key(lambda n=n: self.prompt.choose(n - 1) if self.prompt.overlay_open else None))
 
     def _escape(self):
         if self.graph.stat_open:
             self.graph.toggle_stat(None)
         elif self.menu_open:
             self.toggle_menu(False)
-        elif self.overlay_open:
-            self.open_overlay(False)
+        elif self.prompt.overlay_open:
+            self.prompt.open(False)
         else:
             self.close()
 
@@ -357,8 +354,8 @@ class AgentNetworkWindow:
             new_key = key  # its own session, even after it ends
         if new_key != self.key:
             self.key, self.sel = new_key, -1
-            self.open_overlay(False)
-            self.logs.sig = self.graph.sig = self._prompt_sig = None
+            self.prompt.open(False)
+            self.logs.sig = self.graph.sig = self.prompt.sig = None
         self._refresh()
 
     def step_session(self, d):
@@ -430,7 +427,7 @@ class AgentNetworkWindow:
         self.logs.draw_tabs()
         self.logs.update_filters()
         self.logs.draw()
-        self._draw_prompt()
+        self.prompt.draw()
         self.graph.maybe_auto_fit()
 
     # ---- selection
@@ -521,44 +518,16 @@ class AgentNetworkWindow:
     # ---- log entries: fold / unfold, copy, open in a window
 
     # ---- the prompt
-    def _draw_prompt(self):
-        return agent_prompts._draw_prompt(self)
 
-    def open_overlay(self, show):
-        return agent_prompts.open_overlay(self, show)
 
-    def _place_overlay(self):
-        return agent_prompts._place_overlay(self)
 
-    def _build_overlay(self, name, req, item):
-        return agent_prompts._build_overlay(self, name, req, item)
 
-    def _flow_options(self, width):
-        return agent_prompts._flow_options(self, width)
 
-    def _mark_option(self):
-        return agent_prompts._mark_option(self)
 
-    def _pick(self, n):
-        return agent_prompts._pick(self, n)
 
-    def _own_typed(self, n):
-        return agent_prompts._own_typed(self, n)
 
-    def _send_own(self):
-        return agent_prompts._send_own(self)
 
-    def step_option(self, d):
-        return agent_prompts.step_option(self, d)
 
-    def choose(self, n):
-        return agent_prompts.choose(self, n)
 
-    def _send(self, behavior, answers=None, permissions=None):
-        return agent_prompts._send(self, behavior, answers, permissions)
 
-    def _go(self):
-        return agent_prompts._go(self)
 
-    def _always(self):
-        return agent_prompts._always(self)

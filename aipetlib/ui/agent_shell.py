@@ -77,10 +77,7 @@ def _build(window):
     for seq in ("<FocusIn>", "<Map>", "<Unmap>"):  # brought to the front, minimised or restored
         window.win.bind(seq, window._window_event, add="+")
 
-    window.chip = tk.Label(w, font=window.f_main, cursor="hand2", padx=window.px(6), pady=window.px(1), bd=1,
-                         relief="solid")
-    window.chip.bind("<Button-1>", lambda e: window.open_overlay(True))
-    window.overlay = tk.Frame(w, bd=1, relief="solid")
+    window.prompt.build()
     window.menu = tk.Frame(w, bd=0, highlightthickness=1)
     window.graph.build_stat_drop()
     window.stats = network_stats({"agents": []})

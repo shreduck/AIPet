@@ -168,7 +168,7 @@ class GraphView:
         c, P = self.canvas, window.P
         W, H = max(50, c.winfo_width()), max(50, c.winfo_height())
         blocks = window.blocks
-        sig = (W, H, self.gz, window.sel, window.key, window.theme, window.s, window.opts["node_alpha"], window.in_window,
+        sig = (W, H, self.gz, window.sel, window.key, window.theme, window.s, window.opts["node_alpha"], window.prompt.in_window,
                tuple((k, tuple((a["id"], a.get("parent", ""), a.get("depth", 0),
                                 a["name"], a["state"], a["model_label"], a["effort"], a["ctx"], a["thought"] if a["main"] else "")
                                for a in net["agents"])) for k, _, net in blocks))
@@ -433,7 +433,7 @@ class GraphView:
                                   anchor="nw", fill=P["mu"], font=window.g_small, tags=tag)
                 ly += lh
             label = status
-            if current and i == window.in_window:
+            if current and i == window.prompt.in_window:
                 label = "! answer in the window"
             if a["main"] and a["state"] == "waiting" and a["thought"]:
                 label = "… " + a["thought"]
@@ -461,16 +461,16 @@ class GraphView:
             self.pick_session(key)
         window.select(i, clear_filters=True)
         if common.prompt_agent(window.net, window.item) == i:  # the agent that is asking: open its prompt
-            window._draw_prompt()
-            window.open_overlay(True)
+            window.prompt.draw()
+            window.prompt.open(True)
 
     def pick_session(self, key):
         window = self.window
         if self.panned or key == window.key:
             return
         window.key, window.sel = key, -1
-        window.open_overlay(False)
-        window.logs.sig = self.sig = window._prompt_sig = window.logs.tabs_sig = None
+        window.prompt.open(False)
+        window.logs.sig = self.sig = window.prompt.sig = window.logs.tabs_sig = None
         window._refresh()
 
     def zoom(self, factor=None, at=None, reset=False, precise=False):

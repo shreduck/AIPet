@@ -137,7 +137,7 @@ def _apply_scale(window, grow=True):
     window.f_bold.configure(size=max(5, int(round(8 * fs))))
     window.f_small.configure(size=max(5, int(round(7 * fs))))
     window.graph.robots.clear()
-    window.graph.sig = window.logs.tabs_sig = window._prompt_sig = window.logs.sig = None
+    window.graph.sig = window.logs.tabs_sig = window.prompt.sig = window.logs.sig = None
     window._update_minsize()
     if grow:
         try:
@@ -329,8 +329,8 @@ def _resized(window):
     window.graph.draw(force=True)
     if getattr(window, "backdrop", None) is not None:
         window.win.after_idle(window._sync_backdrop)
-    if window.overlay_open:
-        window._place_overlay()
+    if window.prompt.overlay_open:
+        window.prompt.place()
     if window.menu_open:
         window._place_menu()
     window.graph.maybe_auto_fit(force=True)  # the viewport changed even when the nodes did not
@@ -395,8 +395,8 @@ def _draw_cog(window):
 def toggle_menu(window, show=None):
     window.menu_open = (not window.menu_open) if show is None else bool(show)
     if window.menu_open:
-        if window.overlay_open:
-            window.open_overlay(False)
+        if window.prompt.overlay_open:
+            window.prompt.open(False)
         window._build_menu()
     else:
         window.menu.place_forget()
@@ -504,19 +504,19 @@ def _apply_theme(window):
     window.logs.sep.configure(bg=P["line"])
     window.logs.text.configure(bg=P["bg"], fg=P["tx"], insertbackground=P["bg"], selectbackground=common.mix(P["blue"], P["bg"], 0.65),
                        selectforeground=P["hi"], inactiveselectbackground=common.mix(P["blue"], P["bg"], 0.75))
-    window.chip.configure(bg=P["redbg"], fg=P["red"], highlightbackground=P["red"])
+    window.prompt.chip.configure(bg=P["redbg"], fg=P["red"], highlightbackground=P["red"])
     window.graph.zoombar.configure(bg=P["bar"], highlightbackground=P["line"])
     for lab in window.graph.zoom_btns:
         lab.configure(bg=P["bar"], fg=P["mu"] if lab is window.graph.zoom_label else P["tx"])
     window.logs.update_filters()
     window.graph.statc_sig = None
-    window.overlay.configure(bg=P["node"], highlightbackground=P["red"], highlightthickness=1, bd=0)
+    window.prompt.overlay.configure(bg=P["node"], highlightbackground=P["red"], highlightthickness=1, bd=0)
     try:
         theme.titlebar_theme(window.win)
     except Exception:
         pass
     window.graph.robots.clear()
-    window.logs.sig = window.graph.sig = window._prompt_sig = None
+    window.logs.sig = window.graph.sig = window.prompt.sig = None
     if window._applied.get("clear"):
         window._applied["clear"] = None  # the see-through key colour follows the theme
     window._apply_options()
