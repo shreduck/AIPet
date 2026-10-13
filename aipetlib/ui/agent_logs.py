@@ -441,8 +441,8 @@ class LogPanel:
                 window.opts["log_tail"] = False
                 window._save("tail")
                 self.update_tailbtn()
-                if window.menu_open:
-                    window._build_menu()
+                if window.settings.open:
+                    window.settings.build()
         self.sig = None
         self.draw(keep=self.text.yview()[0])
         try:

@@ -73,8 +73,8 @@ class PromptPanel:
         window = self.window
         self.overlay_open = bool(show) and self.has_prompt
         if self.overlay_open:
-            if window.menu_open:
-                window.toggle_menu(False)
+            if window.settings.open:
+                window.settings.toggle(False)
             self.chip.place_forget()
             self.option = 0
             self.mark_option()

@@ -36,7 +36,7 @@ class QuestionOverlayGuiTests(unittest.TestCase):
             "hi": "#ffffff", "red": "#ff9999", "mu": "#aaaaaa", "bar": "#15191f",
             "line": "#444444", "redbg": "#442222"}, px=lambda n: int(n),
             f_small=("Arial", 11), f_main=("Arial", 12), f_bold=("Arial", 12, "bold"),
-            key="isolated-fixture", theme="dark", s=1, menu_open=False,
+            key="isolated-fixture", theme="dark", s=1,
             net={"agents": [{"name": "Codex", "id": "main"}]})
         w.pet = SimpleNamespace(answers_enabled=lambda _: True,
             open_detail=lambda key: self.destinations.append(("card", key)),
@@ -49,7 +49,7 @@ class QuestionOverlayGuiTests(unittest.TestCase):
         w.graph = SimpleNamespace(canvas=canvas, draw=lambda: None)  # graph rendering is outside this fixture
         w.footbar = tk.Frame(self.root, height=32)
         w.footbar.pack(side="bottom", fill="x")
-        w.toggle_menu = lambda _: None
+        w.settings = SimpleNamespace(open=False, toggle=lambda _: None)  # the settings menu stays closed
         w.prompt = component.PromptPanel(w)
         w.prompt.overlay = tk.Frame(self.root, bg=w.P["node"])
         w.prompt.chip = tk.Label(canvas)

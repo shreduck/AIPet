@@ -12,7 +12,7 @@ from . import agent_common as common
 from . import theme
 
 
-def _build(window):
+def build(window):
     s = window._font_scale()
     window.f_main = tkfont.Font(root=window.win, family=theme.UI_FONT, size=max(5, int(round(8 * s))))
     window.f_bold = tkfont.Font(root=window.win, family=theme.UI_FONT, size=max(5, int(round(8 * s))), weight="bold")
@@ -25,11 +25,11 @@ def _build(window):
     window.head.pack(fill="x")
     # Packed right to left before the title, and the title asks for no width of its own: whatever the scale,
     # the cogwheel and the session arrows keep their place and the title gets cut instead
-    window.cog = tk.Canvas(window.head, highlightthickness=0, bd=0, cursor="hand2")
-    window.cog.pack(side="right", padx=(window.px(6), window.px(6)))
-    window.cog.bind("<Button-1>", lambda e: window.toggle_menu())
-    window.cog.bind("<Enter>", lambda e: setattr(window, "_cog_hover", True))
-    window.cog.bind("<Leave>", lambda e: setattr(window, "_cog_hover", False))
+    window.settings.cog = tk.Canvas(window.head, highlightthickness=0, bd=0, cursor="hand2")
+    window.settings.cog.pack(side="right", padx=(window.px(6), window.px(6)))
+    window.settings.cog.bind("<Button-1>", lambda e: window.settings.toggle())
+    window.settings.cog.bind("<Enter>", lambda e: setattr(window.settings, "hover", True))
+    window.settings.cog.bind("<Leave>", lambda e: setattr(window.settings, "hover", False))
     window.close_btn = tk.Label(window.head, text="✕", font=window.f_small, cursor="hand2", padx=window.px(4))
     window.close_btn.bind("<Button-1>", lambda e: window.close())
     window.next_btn = tk.Label(window.head, text="›", font=window.f_bold, cursor="hand2", padx=window.px(4))
@@ -48,7 +48,7 @@ def _build(window):
         wdg.bind("<Double-Button-1>", window.toggle_maximize)
     window.prev_btn.bind("<Button-1>", lambda e: window.step_session(-1))
     window.next_btn.bind("<Button-1>", lambda e: window.step_session(1))
-    window._size_cog()
+    window.settings.size_cog()
 
     window.footbar = tk.Frame(w)
     window.footbar.pack(side="bottom", fill="x")
@@ -78,6 +78,6 @@ def _build(window):
         window.win.bind(seq, window._window_event, add="+")
 
     window.prompt.build()
-    window.menu = tk.Frame(w, bd=0, highlightthickness=1)
+    window.settings.frame = tk.Frame(w, bd=0, highlightthickness=1)
     window.graph.build_stat_drop()
     window.stats = network_stats({"agents": []})

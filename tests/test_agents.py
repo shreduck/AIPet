@@ -14,7 +14,7 @@ import aipetlib.agents.network as agent_network
 import aipetlib.agents.records as agent_records
 import aipetlib.agents.stats as agent_stats
 from aipetlib.runtime import preferences
-from aipetlib.ui import agent_prompts
+from aipetlib.ui import agent_menu, agent_prompts
 
 
 def iso(t):
@@ -483,7 +483,7 @@ class WindowLogicTests(unittest.TestCase):
         view = self.auto_fit_window()
         view.graph.draw = MagicMock()
         view.prompt = agent_prompts.PromptPanel(view)  # no prompt open
-        view.menu_open = False
+        view.settings = agent_menu.SettingsMenu(view)  # menu closed
         view.graph.maybe_auto_fit()
         view.graph.fit_all.reset_mock()
         view.graph.canvas.winfo_width.return_value = 800

@@ -14,6 +14,7 @@ Keys: Tab / Right next agent, Shift+Tab / Left previous, A shared log, PgUp / Pg
 """
 import aipetlib.ui.agent_shell as agent_shell
 import aipetlib.ui.agent_controls as agent_controls
+import aipetlib.ui.agent_menu as agent_menu
 import aipetlib.ui.agent_prompts as agent_prompts
 import aipetlib.ui.agent_logs as agent_logs
 import aipetlib.ui.agent_graph as agent_graph
@@ -37,7 +38,7 @@ from aipetlib.ui.agent_common import (  # noqa: F401  (re-exported: the app and 
 )
 
 
-class AgentNetworkWindow:
+class AgentNetworkWindow(agent_controls.WindowControls):
     def __init__(self, root, pet, key=None, pinned=False, on_options=None, cascade=0, at=None):
         """pinned: this window belongs to one session (one window per session): no switching sessions.
         on_options(opts, window, changed): called after a setting changed, so the app can apply it to its other
@@ -49,7 +50,7 @@ class AgentNetworkWindow:
         self.net = {"agents": [], "log": []}
         self.item = None
         self.sel = -1  # -1: the shared log ("all")
-        self.menu_open = False
+        self.settings = agent_menu.SettingsMenu(self)  # the cog and the settings drop-down (owns their state)
         self._after = self._anim = self._save_job = None
         self._gestures = self._gesture_start_job = None
         self.graph = agent_graph.GraphView(self)  # the graph and its viewport (owns its widgets and state)
@@ -68,12 +69,11 @@ class AgentNetworkWindow:
         self._moving_until = 0.0
         self._drag = None
         self._fitting = False
-        self._spin, self._spin_until = 0.0, 0.0
         w = self.win = tk.Toplevel(root)
         w.withdraw()
         w.title("AIPet · agent network")
         w.protocol("WM_DELETE_WINDOW", self.close)
-        self._build()
+        agent_shell.build(self)
         self._bind_keys()
         self.show_session(key)
         self._place()
@@ -168,72 +168,7 @@ class AgentNetworkWindow:
         except tk.TclError:
             pass
 
-    # ---- settings (the cogwheel's drop-down)
-    def tool(self, name, d=1):
-        return agent_controls.tool(self, name, d)
-
-    def _save(self, name, delay=0):
-        return agent_controls._save(self, name, delay)
-
-    def set_options(self, opts):
-        return agent_controls.set_options(self, opts)
-
-    def reset_appearance(self, opts, cascade=0):
-        return agent_controls.reset_appearance(self, opts, cascade)
-
-    def set_scale(self, u, save=True, grow=True):
-        return agent_controls.set_scale(self, u, save, grow)
-
-    def set_text_scale(self, value, save=True):
-        return agent_controls.set_text_scale(self, value, save)
-
-    def _font_scale(self):
-        return agent_controls._font_scale(self)
-
-    def _apply_scale(self, grow=True):
-        return agent_controls._apply_scale(self, grow)
-
-    # ---- the backdrop behind a see-through graph background
-    def _sync_backdrop(self):
-        return agent_controls._sync_backdrop(self)
-
-    def _restack(self, focus=False):
-        return agent_controls._restack(self, focus)
-
-    def _window_event(self, e):
-        return agent_controls._window_event(self, e)
-
-    def _on_window_resize(self, e):
-        return agent_controls._on_window_resize(self, e)
-
-    def _apply_options(self, changed=None):
-        return agent_controls._apply_options(self, changed)
-
-    def _win_caption(self, show):
-        return agent_controls._win_caption(self, show)
-
-    def toggle_maximize(self, e=None):
-        return agent_controls.toggle_maximize(self, e)
-
-    def _on_resize(self, e=None):
-        return agent_controls._on_resize(self, e)
-
-    def _resized(self):
-        return agent_controls._resized(self)
-
-    def _drag_start(self, e):
-        return agent_controls._drag_start(self, e)
-
-    def _drag_move(self, e):
-        return agent_controls._drag_move(self, e)
-
-    def _resize_move(self, e, side="se"):
-        return agent_controls._resize_move(self, e, side)
-
-    # ---- building
-    def _build(self):
-        return agent_shell._build(self)
-
+    # ---- keys and clicks
     def _bind_keys(self):
         """Keys work wherever the focus is in the window, except while typing your own answer."""
         w = self.win
@@ -277,8 +212,8 @@ class AgentNetworkWindow:
     def _escape(self):
         if self.graph.stat_open:
             self.graph.toggle_stat(None)
-        elif self.menu_open:
-            self.toggle_menu(False)
+        elif self.settings.open:
+            self.settings.toggle(False)
         elif self.prompt.overlay_open:
             self.prompt.open(False)
         else:
@@ -287,11 +222,11 @@ class AgentNetworkWindow:
     def _click_anywhere(self, e):
         """A click outside the settings drop-down folds it; a borderless window takes the keyboard on any click."""
         try:
-            inside = str(e.widget).startswith(str(self.menu)) or e.widget is self.cog
+            inside = str(e.widget).startswith(str(self.settings.frame)) or e.widget is self.settings.cog
         except (tk.TclError, AttributeError):
             inside = True
-        if self.menu_open and not inside:
-            self.toggle_menu(False)
+        if self.settings.open and not inside:
+            self.settings.toggle(False)
         try:
             in_stats = str(e.widget).startswith(str(self.graph.statdrop)) or str(e.widget).startswith(str(self.graph.statc))
         except (tk.TclError, AttributeError):
@@ -319,32 +254,10 @@ class AgentNetworkWindow:
         except (tk.TclError, KeyError):
             return False
 
-    # ---- the cogwheel and its drop-down
-    def _size_cog(self):
-        return agent_controls._size_cog(self)
-
-    def _draw_cog(self):
-        return agent_controls._draw_cog(self)
-
-    def toggle_menu(self, show=None):
-        return agent_controls.toggle_menu(self, show)
-
-    def _build_menu(self):
-        return agent_controls._build_menu(self)
-
-    def _slide(self, key, value):
-        return agent_controls._slide(self, key, value)
-
-    def _place_menu(self):
-        return agent_controls._place_menu(self)
-
     # ---- theme
     @property
     def P(self):
         return PALETTES.get(core.T.get("name"), PALETTES["light"])
-
-    def _apply_theme(self):
-        return agent_controls._apply_theme(self)
 
     # ---- data
     def show_session(self, key=None):
@@ -489,9 +402,7 @@ class AgentNetworkWindow:
             cols.append(col)
         return cols, False
 
-    # ---- stacked sessions (compact, not tabbed): bands that fade out and slide up
-
-    # ---- zoom and pan
+    # ---- trackpad gestures (macOS)
     def _start_gestures(self):
         self._gesture_start_job = None
         try:
@@ -500,8 +411,7 @@ class AgentNetworkWindow:
         except Exception as error:
             core.log_error(f"graph gestures unavailable: {error!r}")
 
-    # ---- the stats node and its drop-downs (fixed at the bottom right of the graph, outside the zoom)
-
+    # ---- text
     @staticmethod
     def _fit(text, width, font):
         text = str(text or "")
@@ -512,22 +422,3 @@ class AgentNetworkWindow:
         while text and font.measure(text + "…") > width:
             text = text[:-1]
         return text + "…" if text else ""
-
-    # ---- tabs and log
-
-    # ---- log entries: fold / unfold, copy, open in a window
-
-    # ---- the prompt
-
-
-
-
-
-
-
-
-
-
-
-
-

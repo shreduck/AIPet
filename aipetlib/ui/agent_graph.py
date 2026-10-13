@@ -742,8 +742,8 @@ class GraphView:
         if kind is None:
             self.statdrop.place_forget()
         else:
-            if window.menu_open:
-                window.toggle_menu(False)
+            if window.settings.open:
+                window.settings.toggle(False)
             self.fill_stat()
         self.draw_stats()
         return "break"
@@ -823,9 +823,9 @@ class GraphView:
                     if entry[2].measure(entry[1]) > entry[5]:
                         self.draw_title(entry, now)
             # the cogwheel turns while hovered, while its drop-down is open, and for a moment after a change
-            if window.menu_open or getattr(window, "_cog_hover", False) or time.time() < window._spin_until:
-                window._spin = (window._spin + 0.12) % (2 * math.pi)
-                window._draw_cog()
+            if window.settings.open or window.settings.hover or time.time() < window.settings.spin_until:
+                window.settings.spin = (window.settings.spin + 0.12) % (2 * math.pi)
+                window.settings.draw_cog()
         except tk.TclError:
             pass
         window._anim = window.win.after(common.FRAME_MS, self.animate)
