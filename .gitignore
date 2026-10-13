@@ -16,3 +16,5 @@ aipet-cowork-plugin.zip
 # builds are published as GitHub Release assets by CI, never committed
 bin/
 claude-pet-cowork-plugin.zip
+# local support files: restructure plans, handoffs, parity harnesses and reports, test notes
+/tmp/

@@ -549,7 +549,7 @@ Place new behavior in the component responsible for it and keep lifecycle coordi
 the existing entry-point methods when callers or tests depend on them. For a structural change, compare the same
 synthetic sessions and isolated settings before and after, exercise the actual native widgets, and capture matching
 screenshots. Native macOS checks opt in with `AIPET_NATIVE_WINDOW_TEST=1`; a pass on macOS does not verify the Windows
-desktop. Keep local parity handoffs, scripts, screenshots and reports outside the tracked source tree.
+desktop. Keep local plans, parity handoffs, scripts, screenshots and reports in the git-ignored `tmp/` folder.
 
 ## License
 Free for everyone to use, modify and share, including at work. Forks and modified versions must keep the license and credit "AIPet by Duck Code". Selling AIPet, or a product that mainly provides it, needs a written agreement first. See [LICENSE](LICENSE).
