@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 import aipet
+import support
 import aipet_hook as hook
 
 
@@ -23,7 +24,7 @@ class WhitelistButtonTests(unittest.TestCase):
         data = {"tool_name": "Bash", "tool_input": {"command": cmd}}
         req = hook.build_request(data)
         item = {"env": "wsl", "distro": "U", "request": req}
-        with tempfile.TemporaryDirectory() as home, patch.object(aipet, "AUTO_APPROVE_PATH",
+        with tempfile.TemporaryDirectory() as home, support.paths(AUTO_APPROVE_PATH=
                                                                  os.path.join(home, "auto-approve.json")):
             line = self.app().whitelist_request(item)
             self.assertIn("exact command", line)
@@ -38,7 +39,7 @@ class WhitelistButtonTests(unittest.TestCase):
     def test_mcp_tool_is_whitelisted_by_name(self):
         data = {"tool_name": "mcp__wb__search", "tool_input": {"q2": "x", "n": 3}}
         item = {"env": "windows", "request": hook.build_request(data)}
-        with tempfile.TemporaryDirectory() as home, patch.object(aipet, "AUTO_APPROVE_PATH",
+        with tempfile.TemporaryDirectory() as home, support.paths(AUTO_APPROVE_PATH=
                                                                  os.path.join(home, "auto-approve.json")):
             self.assertIn("every mcp__wb__search", self.app().whitelist_request(item))
             rules = aipet.auto_approve_rules()[aipet.auto_approve_key_for(item)]

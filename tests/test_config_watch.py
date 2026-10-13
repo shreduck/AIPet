@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 import aipet
+import support
 import aipet_app
 
 
@@ -12,7 +13,7 @@ class ConfigWatchTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.path = os.path.join(self.tmp.name, "config.json")
-        self.p = patch.object(aipet, "CONFIG_PATH", self.path)
+        self.p = support.paths(CONFIG_PATH=self.path)
         self.p.start()
         app = self.app = object.__new__(aipet_app.TrayApp)
         app.pet = MagicMock(cfg=aipet.load_config())

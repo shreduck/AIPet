@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import aipet
+import support
 import aipet_app
 import aipet_settings as settings
 
@@ -35,8 +36,8 @@ class SettingsSpecTests(unittest.TestCase):
         pet = object.__new__(aipet.PetApp)
         pet.cfg, pet.tip = {"size": 1.35}, None
         with tempfile.TemporaryDirectory() as directory, \
-                patch.object(aipet, 'HOME_DIR', directory), \
-                patch.object(aipet, 'CONFIG_PATH', str(Path(directory) / 'config.json')):
+                support.paths(HOME_DIR=directory), \
+                support.paths(CONFIG_PATH=str(Path(directory) / 'config.json')):
             self.assertEqual(pet.tooltip_text_scale(), 1.0)
             pet.set_tooltip_text_scale(1.75)
             self.assertEqual(pet.cfg['size'], 1.35)
@@ -73,8 +74,8 @@ class SettingsSpecTests(unittest.TestCase):
         pet.cfg, pet.pets = {}, {}
         pet.reposition, pet._sync_usage_padding = MagicMock(), MagicMock()
         with tempfile.TemporaryDirectory() as directory, \
-                patch.object(aipet, 'HOME_DIR', directory), \
-                patch.object(aipet, 'CONFIG_PATH', str(Path(directory) / 'config.json')), \
+                support.paths(HOME_DIR=directory), \
+                support.paths(CONFIG_PATH=str(Path(directory) / 'config.json')), \
                 patch.dict(aipet.SCALE), patch.dict(aipet.ANSWER_WAIT), \
                 patch.dict(aipet.DONE_TIMEOUT), patch.dict(aipet.HEALTH):
             pet.set_size(1.35)

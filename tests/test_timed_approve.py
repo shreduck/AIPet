@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import aipet
+import support
 import aipet_app
 import aipet_hook as hook
 
@@ -16,7 +17,7 @@ class TimedApproveTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.path = os.path.join(self.tmp.name, "auto-approve.json")
-        self.p = patch.object(aipet, "AUTO_APPROVE_PATH", self.path)
+        self.p = support.paths(AUTO_APPROVE_PATH=self.path)
         self.p.start()
 
     def tearDown(self):

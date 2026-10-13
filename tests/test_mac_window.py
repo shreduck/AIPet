@@ -6,6 +6,8 @@ import os
 import sys
 import unittest
 
+import support
+
 
 @unittest.skipUnless(sys.platform == "darwin" and os.environ.get("AIPET_NATIVE_WINDOW_TEST") == "1",
                      "requires an opt-in macOS GUI session")
@@ -126,7 +128,7 @@ class MacWindowTests(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory(prefix="aipet-text-scale-") as folder:
                 config = Path(folder) / "config.json"
-                with patch.object(aipet, "HOME_DIR", folder), patch.object(aipet, "CONFIG_PATH", str(config)):
+                with support.paths(HOME_DIR=folder), support.paths(CONFIG_PATH=str(config)):
                     window = AgentNetworkWindow(root, SimpleNamespace(cfg={}, _last_items=[]))
                     window.toggle_menu(True)
                     root.update()
@@ -294,7 +296,7 @@ class MacWindowTests(unittest.TestCase):
             with tempfile.TemporaryDirectory(prefix="aipet-rules-test-") as directory:
                 path = Path(directory) / "auto-approve.json"
                 # Exercise real reads and atomic writes, without touching user rules.
-                with patch.object(aipet, "HOME_DIR", directory), patch.object(aipet, "AUTO_APPROVE_PATH", str(path)):
+                with support.paths(HOME_DIR=directory), support.paths(AUTO_APPROVE_PATH=str(path)):
                     app, settings = open_settings()
                     checks = [w for w in descendants(settings) if isinstance(w, tk.Checkbutton)]
                     checks[0].invoke()

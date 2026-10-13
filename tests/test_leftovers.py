@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 import aipet
+import support
 
 
 class LeftoverTests(unittest.TestCase):
@@ -43,7 +44,7 @@ class LeftoverTests(unittest.TestCase):
                 json.dump({"targets": {"windows": {"enabled": True}},
                            "timed": {"old": {"until": 1}, "live": {"until": time.time() + 600}}}, f)
             from unittest.mock import patch
-            with patch.object(aipet, "HOME_DIR", home), patch.object(aipet, "AUTO_APPROVE_PATH", path):
+            with support.paths(HOME_DIR=home), support.paths(AUTO_APPROVE_PATH=path):
                 aipet.sweep_leftovers(home)
             with open(path) as f:
                 data = json.load(f)

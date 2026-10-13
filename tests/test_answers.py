@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import aipet
+import support
 import aipet_hook as hook
 
 
@@ -35,7 +36,7 @@ class AnswerToggleTests(unittest.TestCase):
         app.cfg = dict(aipet.DEFAULT_CONFIG)
         app.claude_answer_var = MagicMock()
         app.sync_bubbles, app._last_items = MagicMock(), []
-        with tempfile.TemporaryDirectory() as folder, patch.object(aipet, 'HOME_DIR', folder), \
+        with tempfile.TemporaryDirectory() as folder, support.paths(HOME_DIR=folder), \
                 patch.object(aipet, 'save_setting') as save:
             codex_flag = Path(folder, 'codex-answers')
             codex_flag.touch()

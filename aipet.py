@@ -64,14 +64,14 @@ try:
 except ImportError:  # not Windows
     winsound = None
 
-from aipetlib.runtime.paths import HOME_DIR
-from aipetlib.runtime.preferences import DONE_TIMEOUT
+from aipetlib.runtime.paths import AUTO_APPROVE_PATH, CONFIG_PATH, HOME_DIR, LEGACY_SESSIONS_DIR, SESSIONS_DIR
+from aipetlib.runtime.preferences import (
+    ANSWER_WAIT, CARD_SCALE, CARD_SCALE_MAX, CARD_SCALE_MIN, CARD_SCALE_STEP, DONE_TIMEOUT, HEALTH, MAX_HEALTH, MAX_WAIT,
+    SCALE, SCALE_UNIT, STYLE, clamp_card_scale, clamp_done, clamp_health, clamp_scale, clamp_wait,
+)
 from aipetlib.runtime import diagnostics
-SESSIONS_DIR = os.path.join(HOME_DIR, "sessions")
-# Claude Pet (the old name) kept its files in ~/.claude-pet. Hooks not yet updated to AIPet still write their sessions
-# there, so the pet keeps reading that folder while it exists.
-LEGACY_SESSIONS_DIR = os.path.join(os.path.expanduser("~"), ".claude-pet", "sessions")  # LEGACY
-CONFIG_PATH = os.path.join(HOME_DIR, "config.json")
+from aipetlib.runtime.settings import SAVE_PAUSED, load_config, save_setting
+from aipetlib.text import ago, fmt_left, fmt_wait
 
 from aipetlib.config import DEFAULT_CONFIG, ConfigStore, deep_merge
 
@@ -322,23 +322,6 @@ def chime_path(kind):
     return path
 
 
-STYLE ={"v": "robot"}  # "robot", "mole" or "cat"
-from aipetlib.runtime.preferences import SCALE, SCALE_UNIT  # live drawing scale (see preferences)
-
-
-ANSWER_WAIT = {"v": 180}  # seconds; mirrored into <pet dir>/answer-wait for the hook (0 = wait until answered)
-MAX_WAIT = 1800  # every timer: 0 (no limit / never) to 30 minutes
-HEALTH = {"v": 15}  # seconds between checks that a working session's process still runs (0 = off)
-MAX_HEALTH = 300
-
-
-def clamp_health(v):
-    try:
-        return int(max(0, min(MAX_HEALTH, round(float(v)))))
-    except (TypeError, ValueError):
-        return 15
-
-
 PROMPT_CONFIRM_SECONDS = 12  # Claude Code's permission_prompt Notification comes ~6 s after the prompt appears
 
 
@@ -358,33 +341,10 @@ def answers_dir():
     return permissions.answers_dir(sys.modules[__name__])
 
 
-def clamp_wait(v):
-    try:
-        return int(max(0, min(MAX_WAIT, round(float(v)))))
-    except (TypeError, ValueError):
-        return 180
-
-
-def clamp_done(v):
-    try:
-        return int(max(0, min(MAX_WAIT // 60, round(float(v)))))
-    except (TypeError, ValueError):
-        return 3
-
-
-def fmt_wait(sec):
-    sec = int(sec)
-    if sec <= 0:
-        return "no limit"
-    m, s = divmod(sec, 60)
-    return f"{m} min {s} s" if m and s else (f"{m} min" if m else f"{s} s")
-
-
 def write_answer_wait(sec):
     return permissions.write_answer_wait(sys.modules[__name__], sec)
 
 
-AUTO_APPROVE_PATH = os.path.join(HOME_DIR, "auto-approve.json")  # read by every hook (WSL ones through /mnt/c)
 DEFAULT_BLACKLIST = [".*"]  # by default every request still needs you
 AUTO_FLASH_SECONDS = 10  # how long a pet celebrates a whitelist auto-approval
 
@@ -484,25 +444,12 @@ def sweep_leftovers(home=None, now=None):
     return removed
 
 
-def fmt_left(seconds):
-    """Countdown text: 9:41, then 0:05."""
-    seconds = max(0, int(round(seconds)))
-    return f"{seconds // 60}:{seconds % 60:02d}"
-
-
 def bad_patterns(lines):
     return permissions.bad_patterns(sys.modules[__name__], lines)
 
 
 def answers_enabled():
     return permissions.answers_enabled(sys.modules[__name__])
-
-
-def clamp_scale(v):
-    try:
-        return max(0.6, min(6.0, float(v)))  # 30% - 300% of SCALE_UNIT
-    except (TypeError, ValueError):
-        return 1.0
 
 
 def px(n):
@@ -523,28 +470,6 @@ HEAD_LAYOUTS = {
     3: [(-27, 0.7), (27, 0.7), (0, 0.92)],
     4: [(-31, 0.62), (31, 0.62), (-11, 0.78), (11, 0.92)],
 }
-
-
-# --------------------------------------------------------------------------- config
-# Compatibility entry points keep paths and pause state controlled by the app.
-SAVE_PAUSED = {"v": False}
-
-
-def load_config():
-    return ConfigStore(CONFIG_PATH, HOME_DIR, DEFAULT_CONFIG).load()
-
-
-def save_setting(key, value):
-    return ConfigStore(CONFIG_PATH, HOME_DIR, DEFAULT_CONFIG).save_setting(key, value, paused=SAVE_PAUSED["v"])
-
-
-def ago(ts):
-    s = max(0, int(time.time() - ts))
-    if s < 60:
-        return f"{s}s ago"
-    if s < 3600:
-        return f"{s // 60}m ago"
-    return f"{s // 3600}h {s % 3600 // 60}m ago"
 
 
 def place_name(rec):
@@ -795,16 +720,7 @@ from aipetlib.windows import (  # noqa: E402,F401
 
 
 # --------------------------------------------------------------------------- app
-CARD_SCALE = {"v": 1.0}  # the permission / question card's size (its slider, Ctrl + plus / minus / 0, Ctrl + wheel)
-CARD_SCALE_MIN, CARD_SCALE_MAX, CARD_SCALE_STEP = 0.5, 1.5, 0.1
 _CARD_FONTS = {}  # (family, size, style) -> tkfont.Font, resized in place when the scale changes
-
-
-def clamp_card_scale(value):
-    try:
-        return round(min(CARD_SCALE_MAX, max(CARD_SCALE_MIN, float(value))), 2)
-    except (TypeError, ValueError):
-        return 1.0
 
 
 def card_font(size, *style, family=None):

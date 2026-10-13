@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 import aipet
+import support
 import aipet_app
 
 
@@ -27,8 +28,8 @@ class AgentIntroTests(unittest.TestCase):
     def test_accept_decline_and_close_are_remembered_across_restarts(self):
         for result in (True, False, None):
             with self.subTest(result=result), tempfile.TemporaryDirectory() as tmp, \
-                    patch.object(aipet, "HOME_DIR", tmp), \
-                    patch.object(aipet, "CONFIG_PATH", os.path.join(tmp, "config.json")):
+                    support.paths(HOME_DIR=tmp), \
+                    support.paths(CONFIG_PATH=os.path.join(tmp, "config.json")):
                 app = self.app()
                 with patch.object(aipet, "themed_dialog",
                                   side_effect=lambda *args, **kw: kw["on_result"](result)) as dialog:

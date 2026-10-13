@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import aipet
+import support
 import aipetlib.agents.codex as agent_codex
 import aipetlib.agents.network as agent_network
 import aipet_codex as codex
@@ -102,8 +103,8 @@ class CodexRolloutTests(unittest.TestCase):
         cfg = copy.deepcopy(aipet.DEFAULT_CONFIG)
         cfg['claude_code']['enabled'] = True
         cfg['claude_code']['extra_session_dirs'] = []
-        with patch.object(aipet, 'SESSIONS_DIR', str(sessions)), \
-                patch.object(aipet, 'LEGACY_SESSIONS_DIR', str(self.home / 'unused')):
+        with support.paths(SESSIONS_DIR=str(sessions)), \
+                support.paths(LEGACY_SESSIONS_DIR=str(self.home / 'unused')):
             items = aipet.read_claude_code_sessions(cfg)
         self.assertEqual({i['session_id'] for i in items}, {'root', 'approval', 'failure', 'claude'})
         self.assertEqual(candidate_sessions(items), items)

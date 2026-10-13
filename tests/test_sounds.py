@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import aipet
+import support
 
 
 class ChimeTests(unittest.TestCase):
@@ -54,7 +55,7 @@ class ChimeTests(unittest.TestCase):
                 app.beep.assert_called_with(False, force=True)
 
     def test_chimes_are_written_once_as_clean_wav_files(self):
-        with tempfile.TemporaryDirectory() as home, patch.object(aipet, 'HOME_DIR', home):
+        with tempfile.TemporaryDirectory() as home, support.paths(HOME_DIR=home):
             for kind, seconds in (("ting", 0.26 + 0.22 + 0.22 * 6), ("knock", 0.26 + 0.24 + 0.17 * 6)):
                 path = aipet.chime_path(kind)
                 with wave.open(path) as f:
