@@ -24,6 +24,7 @@ def parse_claude(entries):
             [c for c in content or [] if isinstance(c, dict)]
         if kind == "assistant":
             info["model"] = msg.get("model") or e.get("requestedModel") or info["model"]
+            info["model_hint"] = e.get("requestedModel") or info["model_hint"]
             info["effort"] = e.get("effort") or e.get("perTurnEffort") or info["effort"]
             usage = msg.get("usage") or {}
             ctx = sum(int(usage.get(k) or 0) for k in ("input_tokens", "cache_read_input_tokens",

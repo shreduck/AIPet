@@ -6,6 +6,7 @@ No application entry point is imported by this component.
 import time
 import tkinter as tk
 import aipet_usage as usage
+from ..agents import context as agent_context
 from . import sprites
 from . import theme
 from .. import geometry
@@ -29,9 +30,14 @@ def show_tip(app, services, pet):
         return
     d = pet.data
     lines = [d.get("title", ""), f"{d.get('where') or services.SOURCE_NAMES.get(d.get('source'), '')} · {services.LABELS.get(d.get('state'), d.get('state'))}".strip(" ·")]
+    overrides = app.cfg.get("context_windows")
     if d.get("everyone"):  # compact mode: every session, the one in front first
         lines += [""] + [f"{'> ' if m['key'] == d.get('focus') else '   '}{m.get('title', '')} · "
-                         f"{services.LABELS.get(m.get('state'), m.get('state'))}" for m in d["everyone"][:12]]
+                         f"{services.LABELS.get(m.get('state'), m.get('state'))}"
+                         + (f" · ctx {agent_context.banner_rows([m], overrides)[0]['percent']}%" if m.get("context") else "")
+                         for m in d["everyone"][:12]]
+    elif d.get("context"):
+        lines.append(agent_context.describe(agent_context.banner_rows([d], overrides)[0]))
     if d.get("message"):
         lines.append(d["message"][:200])
     if d.get("detail"):
@@ -53,7 +59,8 @@ def show_usage_tip(app, services, pet, detail):
     app.hide_tip()
     if not app.cfg.get("usage_tooltips", True):
         return
-    app._show_tooltip(pet, usage.tooltip(detail), usage_detail=detail)
+    text = agent_context.tooltip(detail) if detail.get("kind") == "context" else usage.tooltip(detail)
+    app._show_tooltip(pet, text, usage_detail=detail)
 
 
 def set_tooltip(app, services, kind, on):

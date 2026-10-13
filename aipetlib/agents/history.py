@@ -58,7 +58,7 @@ def _merge_info(previous, current):
     if not previous:
         current["lines"] = current["lines"][-MAX_LOG:]
         return current
-    for key in ("model", "effort", "ctx", "ctx_max", "last_prompt_t", "closed_t"):
+    for key in ("model", "model_hint", "effort", "ctx", "ctx_max", "last_prompt_t", "closed_t"):
         current[key] = current.get(key) or previous.get(key) or current[key]
     current["first_t"] = previous["first_t"] or current["first_t"]
     if current["done"] is None:

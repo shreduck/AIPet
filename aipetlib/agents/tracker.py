@@ -2,7 +2,10 @@
 import threading
 
 from ..runtime.diagnostics import log_error
+from . import context
 from .network import read_network
+
+
 class NetworkTracker(threading.Thread):
     """Keep agent and tool history warm for every live Claude/Codex session without any Tk window."""
     def __init__(self, get_items, interval=0.7):
@@ -11,13 +14,18 @@ class NetworkTracker(threading.Thread):
         self._stop_event = threading.Event()
 
     def poll(self):
+        readings = {}
         for item in list(self.get_items()):
             if item.get("source") != "CC" or not item.get("session_id"):
                 continue
             try:
-                read_network(item, include_tools=True, bootstrap=True)
+                net = read_network(item, include_tools=True, bootstrap=True)
+                reading = context.reading(item, net["agents"][0] if net.get("agents") else None)
+                if reading:
+                    readings[item["key"]] = reading
             except Exception as exc:
                 log_error(f"agent tracker: {exc!r}")
+        context.publish(readings)
 
     def run(self):
         while not self._stop_event.is_set():

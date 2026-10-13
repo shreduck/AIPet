@@ -20,6 +20,11 @@ CONFIG_KEYS = {
     "session_titles": ('"name" or "prompt"', "Extra title under a pet: the session's name or the latest prompt.", "live"),
     "session_tooltips": ("true / false", "Tooltip with title, state and last message when hovering a pet.", "live"),
     "usage_tooltips": ("true / false", "Tooltip with usage limits when hovering a usage badge.", "live"),
+    "context_banner": ("true / false (default true)", "Beside the pet: each AI's context in use and its window "
+                       "(CL ctx 84k/~200k; ~ = window estimated from the model).", "live"),
+    "context_windows": ("object (default {})", "Claude context window per model name part, e.g. {\"opus\": 1000000}. "
+                        "Claude transcripts don't record the window, so it is estimated (200k, or 1M for [1m] models "
+                        "and contexts past 200k). Codex reports its own.", "live"),
     "tooltip_text_scale": ("0.5 - 2.5 (default 1.0)", "Text size in session and usage tooltips, independent of pet size.", "live"),
     "sounds": ("true / false", "Play sounds (false = muted).", "live"),
     "sound_on_done": ("true / false", "Play the 'done' chime when a working session finishes.", "live"),

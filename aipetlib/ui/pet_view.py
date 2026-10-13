@@ -8,6 +8,7 @@ import random
 import time
 import tkinter as tk
 import aipet_usage as usage
+from ..agents import context as agent_context
 from . import sprites
 from . import theme
 
@@ -86,7 +87,11 @@ class PetView:
 
     def _draw_usage(self):
         services = self.services
-        details = usage.badge_details(self.data.get("everyone") or [self.data])
+        group = self.data.get("everyone") or [self.data]
+        cfg = getattr(getattr(self, "app", None), "cfg", None) or {}
+        context_rows = agent_context.banner_rows(group, cfg.get("context_windows")) \
+            if cfg.get("context_banner", True) else []
+        details = context_rows + usage.badge_details(group)  # each AI's context first, then its account limits
         rows = [(r["agent"], r["window"], r["percent"]) for r in details]
         self._usage_details = {}
         if not rows:
@@ -99,12 +104,14 @@ class PetView:
         # Start beside the robot, below its speech bubble. Never cover the name tag.
         for start in range(0, len(rows), 6):
             column = rows[start:start + 6]
-            labels = [("CX" if ai == "codex" else "CL") + f" {window} {percent}%" for ai, window, percent in column]
+            labels = [agent_context.label(detail) if detail.get("kind") == "context" else
+                      ("CX" if ai == "codex" else "CL") + f" {window} {percent}%"
+                      for (ai, window, percent), detail in zip(column, details[start:start + 6])]
             width = max(self._char_w(font) * len(label) + 6 for label in labels)
             for i, ((ai, window, percent), label) in enumerate(zip(column, labels)):
                 colour = "#5b8def" if ai == "codex" else "#d98960"
                 y = top + i * 9
-                tag = f"usage:{ai}:{window}:{percent}"
+                tag = f"{'ctx' if details[start + i].get('kind') == 'context' else 'usage'}:{ai}:{window}:{percent}"
                 self._usage_details[tag] = details[start + i]
                 c.create_rectangle(left, y, left + width, y + 8, fill=theme.T["tag_bg"], outline=colour, width=1, tags=("usage", tag))
                 c.create_text(left + 3, y + 4, text=label, font=font, fill=colour, anchor="w", tags=("usage", tag))

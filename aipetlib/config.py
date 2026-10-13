@@ -23,6 +23,8 @@ DEFAULT_CONFIG = {
     "click_to_focus": True,  # clicking a pet (or a badge) brings its session's window to the front
     "session_tooltips": True,
     "usage_tooltips": True,
+    "context_banner": True,  # beside the pet: each AI's context in use (CL ctx 84k/~200k), before its usage limits
+    "context_windows": {},  # Claude context window per model name part, e.g. {"opus": 1000000}; else estimated
     "tooltip_text_scale": 1.0,
     "claude_oauth_usage": False,  # experimental credential-based quota requests require explicit consent
     "all_spaces": True,  # show the pet on every virtual desktop / macOS Space

@@ -45,6 +45,7 @@ import aipetlib.windows as windows
 import aipetlib.geometry as geometry
 import aipetlib.permissions as permissions
 import aipetlib.sessions as sessions
+import aipetlib.agents.context as agent_context
 from aipetlib.records import STATE_ORDER, first
 from aipetlib.ui.theme import (
     INK, THEMES, DARK_TEXT, T, THEMED, _DEFAULT_FG, MUTED_FG, DIALOG_ACCENTS, UI_FONT, set_theme, _fg_role,
@@ -991,6 +992,12 @@ class PetApp:
         items = [i for i in items
                  if not (hide and i["state"] in ("done", "idle") and i.get("changed") and now - i["changed"] > hide)]
         self._agent_items = [i for i in items if i.get("source") == "CC"]
+        for i in self._agent_items:  # context in use, published by the agent tracker (None until it has read the session)
+            reading = agent_context.get(i["key"])
+            if reading:
+                i["context"] = reading
+            else:
+                i.pop("context", None)
         disambiguate_titles(items)
         # Stable slots: a pet keeps its place for as long as it exists, whatever its state does. New sessions join
         # on the left, so the pets already on screen don't move (the overlay is anchored bottom-right).

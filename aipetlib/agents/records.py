@@ -2,6 +2,7 @@
 
 A parsed transcript ("info", see _empty) is a dict:
     model, effort        str
+    model_hint           str: the model Claude Code was asked for (requestedModel), e.g. with a "[1m]" suffix
     ctx, ctx_max         int tokens (ctx_max 0 when unknown)
     lines                [(t, kind, text)]  kind: you / say / think / tool / spawn / error
     final_lines          [(t, text)]        replies known to be final results
@@ -91,5 +92,5 @@ def full(text, limit=60000):
 
 
 def _empty():
-    return {"model": "", "effort": "", "ctx": 0, "ctx_max": 0, "lines": [], "last_prompt_t": 0.0, "done": None,
+    return {"model": "", "model_hint": "", "effort": "", "ctx": 0, "ctx_max": 0, "lines": [], "last_prompt_t": 0.0, "done": None,
             "first_t": 0.0, "tool_calls": [], "closed_t": 0.0, "final_lines": [], "queries": []}

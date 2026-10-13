@@ -121,6 +121,7 @@ def _read_network(item, now=None, include_tools=False, bootstrap=False):
             "state": main_state, "tool_calls": main_info["tool_calls"],
             "final_lines": main_info["final_lines"],
             "queries": main_info["queries"],
+            "model_hint": main_info.get("model_hint", ""),
             **{k: main_info[k] for k in ("model", "effort", "ctx", "ctx_max", "lines")}}
     agents = [main] + subs
     if include_tools:
