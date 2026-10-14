@@ -290,7 +290,7 @@ class AgentNetworkWindow(agent_controls.WindowControls):
     def _tick(self):
         if not self.alive():
             return
-        if time.time() < self._moving_until:  # being dragged / resized: catch up once it settles
+        if self.paused():  # being dragged / resized, or the pet is: catch up once it settles
             self._after = self.win.after(150, self._tick)
             return
         try:
@@ -298,6 +298,14 @@ class AgentNetworkWindow(agent_controls.WindowControls):
         except Exception as e:  # never let one bad transcript kill the window
             diagnostics.log_error(f"agent network: {e!r}")
         self._after = self.win.after(REFRESH_MS, self._tick)
+
+    def paused(self):
+        """Hold refreshes and animation while this window is moved or resized (drawing then leaves trails on Windows)
+        and while the pet is dragged: they share the UI thread, and the drag should get all of it."""
+        if time.time() < self._moving_until:
+            return True
+        pointer = getattr(self.pet, "pointer", None)
+        return bool(pointer and getattr(pointer, "dragging", None) and pointer.dragging())
 
     def _network(self, item):
         """A session's agent network. While the background tracker runs, the one it read last: reading transcripts

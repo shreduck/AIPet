@@ -116,3 +116,32 @@ class TrackerModeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DragPauseTests(unittest.TestCase):
+    """While the pet is dragged, agent network windows hold their refresh and animation (one UI thread)."""
+
+    def window(self, dragging):
+        from aipetlib.app.pointer import Pointer
+        from aipetlib.ui.agent_window import AgentNetworkWindow
+        win = object.__new__(AgentNetworkWindow)
+        win.pet = MagicMock()
+        win.pet.pointer = Pointer(win.pet)
+        win.pet.pointer.drag = [0, 0, 0, 0, dragging]  # [x, y, window x, window y, moved]
+        win._moving_until = 0.0
+        win.win = MagicMock()
+        win.alive = lambda: True
+        win._refresh = MagicMock()
+        return win
+
+    def test_refresh_waits_while_the_pet_is_dragged(self):
+        win = self.window(dragging=True)
+        win._tick()
+        win._refresh.assert_not_called()
+        win.win.after.assert_called_once_with(150, win._tick)  # looks again shortly
+
+    def test_a_press_without_moving_is_not_a_drag(self):
+        win = self.window(dragging=False)
+        self.assertFalse(win.paused())
+        win._tick()
+        win._refresh.assert_called_once()

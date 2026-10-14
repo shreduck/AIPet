@@ -812,7 +812,7 @@ class GraphView:
         window = self.window
         if not window.alive():
             return
-        if time.time() < window._moving_until:  # being dragged / resized: drawing now leaves trails on Windows
+        if window.paused():  # being dragged / resized, or the pet is: drawing waits until it settles
             window._anim = window.win.after(common.FRAME_MS, self.animate)
             return
         try:

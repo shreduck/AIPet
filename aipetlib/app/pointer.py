@@ -21,6 +21,10 @@ class Pointer:
         self.drag = None
         self.passing = None
 
+    def dragging(self):
+        """The pet is being moved right now (the agent network windows hold their drawing meanwhile)."""
+        return bool(self.drag and self.drag[4])
+
     def over_hit(self, x, y, margin=3):
         app = self.app
         for pet in list(app.pets.values()):
