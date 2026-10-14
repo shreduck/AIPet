@@ -13,11 +13,8 @@ from tools.share_mac_runtime import share_runtime
 
 
 def add_source_hook_components(frameworks):
-    components = Path(__file__).resolve().parents[1] / 'aipetlib'
-    if components.is_dir():
-        (frameworks / 'aipetlib').mkdir(exist_ok=True)
-        for name in ('__init__.py', 'hook_events.py'):
-            shutil.copyfile(components / name, frameworks / 'aipetlib' / name)
+    components = Path(__file__).resolve().parents[1] / 'aipet_hook_runtime'
+    shutil.copytree(components, frameworks / 'aipet_hook_runtime', ignore=shutil.ignore_patterns('__pycache__'), dirs_exist_ok=True)
 
 
 class MacRuntimeSharingTests(unittest.TestCase):

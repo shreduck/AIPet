@@ -8,6 +8,8 @@ from unittest.mock import patch
 import aipet
 import support
 import aipet_hook as hook
+from aipet_hook_runtime import approvals as hook_approvals
+from aipet_hook_runtime import requests as hook_requests
 
 
 class WhitelistButtonTests(unittest.TestCase):
@@ -24,7 +26,7 @@ class WhitelistButtonTests(unittest.TestCase):
     def test_exact_command_is_whitelisted_and_matches_only_itself(self):
         cmd = 'cd /x && python3 -m py_compile a.py | grep -n "Exit 0\\\\|warn"'
         data = {"tool_name": "Bash", "tool_input": {"command": cmd}}
-        req = hook.build_request(data)
+        req = hook_requests.build_request(data)
         item = {"env": "wsl", "distro": "U", "request": req}
         with tempfile.TemporaryDirectory() as home, support.paths(AUTO_APPROVE_PATH=
                                                                  os.path.join(home, "auto-approve.json")):
@@ -34,18 +36,18 @@ class WhitelistButtonTests(unittest.TestCase):
                 rules = json.load(f)["targets"]["wsl:U"]
             self.assertTrue(rules["enabled"])
             self.assertEqual(rules["blacklist"], [])  # the default ".*" would have blocked it
-            self.assertEqual(hook.auto_decision(rules, data), "whitelist")
+            self.assertEqual(hook_approvals.auto_decision(rules, data), "whitelist")
             other = {"tool_name": "Bash", "tool_input": {"command": cmd + "; rm -rf ~"}}
-            self.assertIsNone(hook.auto_decision(rules, other))
+            self.assertIsNone(hook_approvals.auto_decision(rules, other))
 
     def test_mcp_tool_is_whitelisted_by_name(self):
         data = {"tool_name": "mcp__wb__search", "tool_input": {"q2": "x", "n": 3}}
-        item = {"env": "windows", "request": hook.build_request(data)}
+        item = {"env": "windows", "request": hook_requests.build_request(data)}
         with tempfile.TemporaryDirectory() as home, support.paths(AUTO_APPROVE_PATH=
                                                                  os.path.join(home, "auto-approve.json")):
             self.assertIn("every mcp__wb__search", self.app().answers.whitelist(item))
             rules = aipet.auto_approve_rules()[aipet.auto_approve_key_for(item)]
-            self.assertEqual(hook.auto_decision(rules, data), "whitelist")
+            self.assertEqual(hook_approvals.auto_decision(rules, data), "whitelist")
 
     def test_card_scale_is_clamped(self):
         self.assertEqual(aipet.clamp_card_scale(3), 1.5)

@@ -9,6 +9,16 @@ import unittest
 from unittest.mock import patch
 
 import aipet_hook as hook
+from aipet_hook_runtime import approvals as hook_approvals
+from aipet_hook_runtime import capture as hook_capture
+from aipet_hook_runtime import cli as hook_cli
+from aipet_hook_runtime import config as hook_config
+from aipet_hook_runtime import diagnostics as hook_diagnostics
+from aipet_hook_runtime import hosts as hook_hosts
+from aipet_hook_runtime import io as hook_io
+from aipet_hook_runtime import requests as hook_requests
+from aipet_hook_runtime import sessions as hook_sessions
+from aipet_hook_runtime import waiting as hook_waiting
 
 QUESTIONS = {"questions": [
     {"question": "Which fruit?", "header": "Fruit", "multiSelect": False,
@@ -23,9 +33,9 @@ class QuestionTests(unittest.TestCase):
         self.path = os.path.join(self.tmp.name, "s.json")
         self.target = os.path.join(self.tmp.name, "sessions", "s.json")
         os.makedirs(os.path.dirname(self.target))
-        self.patches = [patch.object(hook, "AGENT", "claude"), patch.object(hook, "find_claude_pid", return_value=None),
-                        patch.object(hook, "find_host_window", return_value=(None, "")),
-                        patch.object(hook, "debug_log"), patch.object(hook, "is_cowork", return_value=False)]
+        self.patches = [patch.object(hook_config, "AGENT", "claude"), patch.object(hook_hosts, "find_claude_pid", return_value=None),
+                        patch.object(hook_hosts, "find_host_window", return_value=(None, "")),
+                        patch.object(hook_diagnostics, "debug_log"), patch.object(hook_hosts, "is_cowork", return_value=False)]
         for p in self.patches:
             p.start()
         self.data = {"session_id": "s", "hook_event_name": "PermissionRequest", "tool_name": "AskUserQuestion",
@@ -41,7 +51,7 @@ class QuestionTests(unittest.TestCase):
             return json.load(f)
 
     def test_question_is_recorded_for_the_popup(self):
-        hook._update_session(self.path, self.target, "PermissionRequest", self.data, False)
+        hook_sessions._update_session(self.path, self.target, "PermissionRequest", self.data, False)
         rec = self.record()
         self.assertEqual(rec["state"], "needs_input")
         self.assertEqual(rec["message"], "Claude has a question for you")
@@ -52,16 +62,16 @@ class QuestionTests(unittest.TestCase):
         self.assertEqual(req["questions"][0]["options"][0], {"label": "Apple", "description": "Crunchy"})
 
     def test_answers_go_back_with_the_original_questions(self):
-        hook._update_session(self.path, self.target, "PermissionRequest", self.data, False)
+        hook_sessions._update_session(self.path, self.target, "PermissionRequest", self.data, False)
         answers = {"Which fruit?": "Apple", "Which lights?": ["Red", "something else"]}
 
         def click(*_a, **_k):
-            hook.LAST_ANSWER.clear()
-            hook.LAST_ANSWER.update(behavior="allow", answers=answers)
+            hook_waiting.LAST_ANSWER.clear()
+            hook_waiting.LAST_ANSWER.update(behavior="allow", answers=answers)
             return "allow"
-        with patch.object(hook, "pet_alive", return_value=True), patch.object(hook, "answers_enabled", return_value=True), \
-                patch.object(hook, "await_answer", side_effect=click), patch.object(hook, "write_stdout") as out:
-            hook.answer_flow(self.tmp.name, self.path, "", "q1", QUESTIONS)
+        with patch.object(hook_waiting, "pet_alive", return_value=True), patch.object(hook_waiting, "answers_enabled", return_value=True), \
+                patch.object(hook_waiting, "await_answer", side_effect=click), patch.object(hook_io, "write_stdout") as out:
+            hook_waiting.answer_flow(self.tmp.name, self.path, "", "q1", QUESTIONS)
         decision = json.loads(out.call_args.args[0])["hookSpecificOutput"]["decision"]
         self.assertEqual(decision["behavior"], "allow")
         self.assertEqual(decision["updatedInput"],
@@ -69,41 +79,41 @@ class QuestionTests(unittest.TestCase):
         self.assertEqual(self.record()["state"], "working")
 
     def test_answers_are_texts_even_for_multi_select(self):
-        self.assertEqual(hook.answer_texts({"a": "One", "b": ["Red", "Blue"], "c": ["Only"], "d": 3}),
+        self.assertEqual(hook_requests.answer_texts({"a": "One", "b": ["Red", "Blue"], "c": ["Only"], "d": 3}),
                          {"a": "One", "b": "Red, Blue", "c": "Only", "d": "3"})
 
     def test_allow_without_answers_leaves_it_to_claude_code(self):
-        hook._update_session(self.path, self.target, "PermissionRequest", self.data, False)
+        hook_sessions._update_session(self.path, self.target, "PermissionRequest", self.data, False)
 
         def click(*_a, **_k):
-            hook.LAST_ANSWER.clear()
-            hook.LAST_ANSWER.update(behavior="allow")
+            hook_waiting.LAST_ANSWER.clear()
+            hook_waiting.LAST_ANSWER.update(behavior="allow")
             return "allow"
-        with patch.object(hook, "pet_alive", return_value=True), patch.object(hook, "answers_enabled", return_value=True), \
-                patch.object(hook, "await_answer", side_effect=click), patch.object(hook, "write_stdout") as out:
-            hook.answer_flow(self.tmp.name, self.path, "", "q1", QUESTIONS)
+        with patch.object(hook_waiting, "pet_alive", return_value=True), patch.object(hook_waiting, "answers_enabled", return_value=True), \
+                patch.object(hook_waiting, "await_answer", side_effect=click), patch.object(hook_io, "write_stdout") as out:
+            hook_waiting.answer_flow(self.tmp.name, self.path, "", "q1", QUESTIONS)
         out.assert_not_called()
 
     def test_auto_approve_never_answers_a_question(self):
-        with patch.object(hook, "read_stdin", return_value=json.dumps(dict(self.data, _aipet_request_id=None))), \
-                patch.object(hook, "is_wsl", return_value=False), \
-                patch.object(hook, "sessions_dir", return_value=os.path.dirname(self.target)), \
-                patch.object(hook, "usage", None), patch.object(hook, "claude_usage", None), \
-                patch.object(hook, "auto_decision", return_value="all") as auto, \
-                patch.object(hook, "answers_enabled", return_value=False), patch.object(hook, "write_stdout") as out:
-            hook.main()
+        with patch.object(hook_io, "read_stdin", return_value=json.dumps(dict(self.data, _aipet_request_id=None))), \
+                patch.object(hook_hosts, "is_wsl", return_value=False), \
+                patch.object(hook_hosts, "sessions_dir", return_value=os.path.dirname(self.target)), \
+                patch.object(hook_capture, "usage", None), patch.object(hook_capture, "claude_usage", None), \
+                patch.object(hook_approvals, "auto_decision", return_value="all") as auto, \
+                patch.object(hook_waiting, "answers_enabled", return_value=False), patch.object(hook_io, "write_stdout") as out:
+            hook_cli.main()
         auto.assert_not_called()
         out.assert_not_called()
 
     def test_other_tools_are_not_questions(self):
-        self.assertEqual(hook.question_list({"tool_name": "Bash", "tool_input": QUESTIONS}), [])
+        self.assertEqual(hook_requests.question_list({"tool_name": "Bash", "tool_input": QUESTIONS}), [])
 
     def test_codex_question_shows_until_answered_and_survives_the_wait(self):
-        with patch.object(hook, "AGENT", "codex"):
+        with patch.object(hook_config, "AGENT", "codex"):
             ask = {"session_id": "s", "hook_event_name": "PostToolUse", "tool_name": "request_user_input_async",
                    "tool_use_id": "call_1", "tool_input": {"questions": [
                        {"title": "Which fruit should the robot like?", "options": ["Apple", "Banana", "Cherry"]}]}}
-            hook._update_session(self.path, self.target, "PostToolUse", ask, False)
+            hook_sessions._update_session(self.path, self.target, "PostToolUse", ask, False)
             rec = self.record()
             self.assertEqual((rec["state"], rec["message"]), ("needs_input", "Codex has a question for you"))
             req = rec["request"]
@@ -111,66 +121,66 @@ class QuestionTests(unittest.TestCase):
             self.assertEqual([o["label"] for o in req["questions"][0]["options"]], ["Apple", "Banana", "Cherry"])
             sleep = {"session_id": "s", "hook_event_name": "PostToolUse", "tool_name": "clocksleep",
                      "tool_use_id": "call_2", "tool_input": {"duration_ms": 60000}}
-            hook._update_session(self.path, self.target, "PostToolUse", sleep, False)  # Codex waits: still asking
+            hook_sessions._update_session(self.path, self.target, "PostToolUse", sleep, False)  # Codex waits: still asking
             self.assertEqual(self.record()["state"], "needs_input")
-            hook._update_session(self.path, self.target, "UserPromptSubmit",
+            hook_sessions._update_session(self.path, self.target, "UserPromptSubmit",
                                  {"session_id": "s", "hook_event_name": "UserPromptSubmit", "prompt": "Apple"}, False)
             rec = self.record()
             self.assertEqual((rec["state"], rec["requests"]), ("working", []))
 
     def test_questions_are_never_hidden_as_ghost_prompts(self):
         import aipet
-        hook._update_session(self.path, self.target, "PermissionRequest", self.data, False)
+        hook_sessions._update_session(self.path, self.target, "PermissionRequest", self.data, False)
         rec = dict(self.record(), notifies=True)
         self.assertFalse(aipet.unconfirmed_prompts(rec, now=rec["request"]["t"] + 600))
 
     def test_question_answered_in_claude_settles_it(self):
-        hook._update_session(self.path, self.target, "PermissionRequest", self.data, False)
+        hook_sessions._update_session(self.path, self.target, "PermissionRequest", self.data, False)
         done = {"session_id": "s", "hook_event_name": "PostToolUse", "tool_name": "AskUserQuestion",
                 "tool_use_id": "toolu_9", "tool_input": dict(QUESTIONS, answers={"Which fruit?": "Apple"})}
-        hook._update_session(self.path, self.target, "PostToolUse", done, False)
+        hook_sessions._update_session(self.path, self.target, "PostToolUse", done, False)
         rec = self.record()
         self.assertEqual((rec["state"], rec["requests"]), ("working", []))
 
     def test_claude_answers_on_both_platforms_preserve_another_pending_prompt(self):
         for platform in ('nt', 'posix'):
-            with self.subTest(platform=platform), patch.object(hook.os, 'name', platform):
+            with self.subTest(platform=platform), patch.object(hook_io.os, 'name', platform):
                 if os.path.exists(self.path):
                     os.remove(self.path)
-                hook._update_session(self.path, self.target, 'PermissionRequest', self.data, False)
+                hook_sessions._update_session(self.path, self.target, 'PermissionRequest', self.data, False)
                 other = dict(self.data, tool_name='Bash', tool_input={'command': 'test'}, _aipet_request_id='p2')
-                hook._update_session(self.path, self.target, 'PermissionRequest', other, False)
+                hook_sessions._update_session(self.path, self.target, 'PermissionRequest', other, False)
                 done = dict(self.data, tool_input=dict(QUESTIONS, answers={'Which fruit?': 'Apple'}))
-                hook._update_session(self.path, self.target, 'PostToolUse', done, False)
+                hook_sessions._update_session(self.path, self.target, 'PostToolUse', done, False)
                 rec = self.record()
                 self.assertEqual(rec['state'], 'needs_input')
                 self.assertEqual([r['id'] for r in rec['requests']], ['p2'])
-                hook._update_session(self.path, self.target, 'PostToolUse', other, False)
+                hook_sessions._update_session(self.path, self.target, 'PostToolUse', other, False)
                 self.assertEqual((self.record()['state'], self.record()['requests']), ('working', []))
 
     def test_codex_completed_question_does_not_reopen_the_prompt(self):
-        with patch.object(hook, 'AGENT', 'codex'):
+        with patch.object(hook_config, 'AGENT', 'codex'):
             ask = {'session_id': 's', 'tool_name': 'request_user_input_async', 'tool_use_id': 'q1',
                    'tool_input': {'questions': [{'title': 'Which?', 'options': ['A', 'B']}]}}
-            hook._update_session(self.path, self.target, 'PostToolUse', ask, False)
+            hook_sessions._update_session(self.path, self.target, 'PostToolUse', ask, False)
             self.assertEqual(self.record()['state'], 'needs_input')
             done = dict(ask, tool_response={'answers': {'Which?': 'A'}})
-            hook._update_session(self.path, self.target, 'PostToolUse', done, False)
+            hook_sessions._update_session(self.path, self.target, 'PostToolUse', done, False)
             self.assertEqual((self.record()['state'], self.record()['requests']), ('working', []))
             done.update(tool_name='request_user_input', tool_use_id='q2',
                         tool_response=json.dumps({'answers': {'Which?': 'B'}}))
-            hook._update_session(self.path, self.target, 'PostToolUse', done, False)
+            hook_sessions._update_session(self.path, self.target, 'PostToolUse', done, False)
             self.assertEqual((self.record()['state'], self.record()['requests']), ('working', []))
 
     def test_codex_question_card_reply_clears_status(self):
-        with patch.object(hook, 'AGENT', 'codex'):
+        with patch.object(hook_config, 'AGENT', 'codex'):
             ask = {'session_id': 's', 'tool_name': 'request_user_input_async', 'tool_use_id': 'q1',
                    'tool_input': {'questions': [{'title': 'Which?', 'options': ['A', 'B']}]}}
-            hook._update_session(self.path, self.target, 'PostToolUse', ask, False)
+            hook_sessions._update_session(self.path, self.target, 'PostToolUse', ask, False)
             reply = '<send_user_message_question_reply>\n' + json.dumps([
                 {'questionItemId': '["request_user_input_async","q1",0]', 'question': 'Which?', 'answer': 'A'}
             ]) + '\n</send_user_message_question_reply>'
-            hook._update_session(self.path, self.target, 'UserPromptSubmit',
+            hook_sessions._update_session(self.path, self.target, 'UserPromptSubmit',
                                  {'session_id': 's', 'prompt': reply}, False)
             self.assertEqual((self.record()['state'], self.record()['requests']), ('working', []))
 

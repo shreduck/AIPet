@@ -1,7 +1,7 @@
 """One session's agent network: the main agent, its subagents (and theirs), states, retention and tool nodes."""
 import time
 
-from aipet_codex import root_rollout
+from aipet_hook_runtime.codex import root_rollout
 
 from ..runtime import preferences
 from ..sessions import transcript_path

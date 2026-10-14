@@ -9,7 +9,7 @@ Rules
   2. Headless modules (agent backend, runtime, config, records, ...) never reach Tk, Pillow or the tray, directly or
      through other repository modules, so background work and tests run without a display.
   3. The hook (aipet_hook.py and what it imports from this repository) uses only the standard library and only the
-     source files hooks_installer.deploy_files copies next to it.
+     source files aipetlib.integrations.deployment copies next to it.
   4. Modules that have been given explicit interfaces never take or use a `services` object again.
   5. Ratchets on the transitional wiring; counts may only go down:
        services_core     `services.core.X` reaches back into aipet.py from aipetlib
@@ -27,9 +27,9 @@ ROOT = Path(__file__).resolve().parent.parent
 BASELINE = Path(__file__).with_name("architecture_baseline.json")
 
 ENTRY_MODULES = {"aipet", "aipet_app", "aipet_agents", "aipet_settings", "aipet_guide",
-                 "aipet_selftest", "hooks_installer", "legacy"}
+                 "aipet_selftest", "hooks_installer", "legacy", "aipet_hook"}
 GUI_PACKAGES = {"tkinter", "_tkinter", "PIL", "pystray", "pyvda", "comtypes", "objc", "AppKit"}
-HEADLESS = ["aipetlib.agents", "aipetlib.runtime", "aipetlib.config", "aipetlib.records", "aipetlib.text",
+HEADLESS = ["aipet_hook_runtime", "aipetlib.agents", "aipetlib.runtime", "aipetlib.config", "aipetlib.records", "aipetlib.text",
             "aipetlib.housekeeping", "aipetlib.ui.sounds", "aipetlib.update", "aipetlib.integrations.targets",
             "aipetlib.workbench", "aipetlib.codex_questions", "aipetlib.gestures", "aipetlib.hook_events",
             "aipetlib.sessions", "aipetlib.permissions",
@@ -37,8 +37,11 @@ HEADLESS = ["aipetlib.agents", "aipetlib.runtime", "aipetlib.config", "aipetlib.
             "aipetlib.integrations.commands", "aipetlib.integrations.deployment", "aipetlib.integrations.backups",
             "aipetlib.integrations.installer", "aipetlib.integrations.discovery", "aipetlib.integrations.cowork",
             "aipetlib.integrations.legacy"]
-# What hooks_installer.deploy_files copies to ~/.aipet/bin for the source hook (keep both lists in step)
-HOOK_SOURCES = {"aipet_hook", "aipet_codex", "aipet_usage", "aipet_claude_usage", "aipetlib", "aipetlib.hook_events"}
+# What deployment copies to ~/.aipet/bin for the source hook (no application package dependency).
+HOOK_SOURCES = {"aipet_hook", "aipet_usage", "aipet_claude_usage", "aipet_hook_runtime"} | {
+    ".".join(path.relative_to(ROOT).with_suffix("").parts)
+    for path in (ROOT / "aipet_hook_runtime").rglob("*.py") if "__pycache__" not in path.parts
+}
 HOOK_OPTIONAL = {"certifi"}  # imported inside try/except by aipet_usage; never required
 # Modules with explicit interfaces (restructure.md step 3 onwards): no `services` parameter or name
 SERVICE_FREE = ["aipetlib.agents", "aipetlib.runtime", "aipetlib.text", "aipetlib.ui.theme", "aipetlib.ui.sprites",
@@ -53,7 +56,7 @@ SERVICE_FREE = ["aipetlib.agents", "aipetlib.runtime", "aipetlib.text", "aipetli
 
 def module_files():
     files = {}
-    for path in list(ROOT.glob("*.py")) + list((ROOT / "aipetlib").rglob("*.py")):
+    for path in list(ROOT.glob("*.py")) + list((ROOT / "aipetlib").rglob("*.py")) + list((ROOT / "aipet_hook_runtime").rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
         rel = path.relative_to(ROOT).with_suffix("")

@@ -53,7 +53,7 @@ def transcript_path(rec):
     if rec.get("env") == "wsl" and os.name == "nt" and path.startswith("/") and rec.get("distro"):
         path = "\\\\wsl.localhost\\" + rec["distro"] + path.replace("/", "\\")
     if rec.get("agent") == "codex" and (rec.get("env") != "wsl" or os.name == "nt"):
-        from aipet_codex import root_rollout
+        from aipet_hook_runtime.codex import root_rollout
         path = root_rollout(rec.get("session_id") or rec.get("id"), path)
     return path
 
@@ -62,7 +62,7 @@ def visible_hook_session(rec):
     """Use the same conversation identity for desktop pets and agent graph groups."""
     if rec.get("agent") != "codex":
         return True
-    from aipet_codex import session_meta, internal_thread
+    from aipet_hook_runtime.codex import session_meta, internal_thread
     path = transcript_file(rec)
     meta = session_meta(path or str(rec.get("transcript_path") or ""))
     if internal_thread(meta) or meta.get("parent_thread_id"):

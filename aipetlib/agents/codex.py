@@ -3,7 +3,7 @@ import datetime
 import glob
 import os
 
-from aipet_codex import internal_thread, session_meta
+from aipet_hook_runtime.codex import internal_thread, session_meta
 
 from ..text import phrase
 from .records import SKIP_TEXT, _empty, _script_arg, _tool_arg, _ts, full, short

@@ -35,7 +35,7 @@ print(json.dumps({
 
 def all_modules():
     names = []
-    for path in sorted((ROOT / "aipetlib").rglob("*.py")):
+    for path in sorted(list((ROOT / "aipetlib").rglob("*.py")) + list((ROOT / "aipet_hook_runtime").rglob("*.py"))):
         if "__pycache__" in path.parts:
             continue
         parts = list(path.relative_to(ROOT).with_suffix("").parts)

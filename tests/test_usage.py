@@ -14,6 +14,14 @@ from unittest.mock import MagicMock, patch
 
 import aipet
 import aipet_hook
+from aipet_hook_runtime import approvals as hook_approvals
+from aipet_hook_runtime import capture as hook_capture
+from aipet_hook_runtime import cli as hook_cli
+from aipet_hook_runtime import config as hook_config
+from aipet_hook_runtime import hosts as hook_hosts
+from aipet_hook_runtime import io as hook_io
+from aipet_hook_runtime import sessions as hook_sessions
+from aipet_hook_runtime import waiting as hook_waiting
 import aipetlib.update as aipet_update
 import aipet_selftest
 import aipet_claude_usage as claude_usage
@@ -264,7 +272,7 @@ class UsageTests(unittest.TestCase):
         state = {"text": json.dumps(before)}
         def write(key, text):
             state["text"] = text
-        with tempfile.TemporaryDirectory() as folder, patch.object(hook_locations, "PET_DIR", folder), patch.object(hook_targets, "read_raw", side_effect=lambda key: (True, state["text"])), patch.object(hook_targets, "write_raw", side_effect=write), patch.object(hook_backups, "_save_backup") as backup, patch.object(hook_deployment, "deploy_files"), patch.object(hook_commands, "windows_hook_command", return_value="aipet-hook"), patch.object(aipet_hook, "find_statusline_bash", return_value="bash"):
+        with tempfile.TemporaryDirectory() as folder, patch.object(hook_locations, "PET_DIR", folder), patch.object(hook_targets, "read_raw", side_effect=lambda key: (True, state["text"])), patch.object(hook_targets, "write_raw", side_effect=write), patch.object(hook_backups, "_save_backup") as backup, patch.object(hook_deployment, "deploy_files"), patch.object(hook_commands, "windows_hook_command", return_value="aipet-hook"), patch.object(hook_hosts, "find_statusline_bash", return_value="bash"):
             hook_installer.set_usage("windows", True)
             installed = json.loads(state["text"])
             self.assertNotIn("aipet_previous", installed["statusLine"])
@@ -285,8 +293,8 @@ class UsageTests(unittest.TestCase):
     def test_usage_failure_does_not_skip_permission_hook(self):
         with tempfile.TemporaryDirectory() as folder:
             data = {"hook_event_name": "PermissionRequest", "session_id": "test", "rate_limits": {"five_hour": {"used_percentage": 40}}}
-            with patch.object(aipet_hook, "read_stdin", return_value=json.dumps(data)), patch.object(aipet_hook, "is_wsl", return_value=False), patch.object(aipet_hook, "sessions_dir", return_value=str(Path(folder) / "sessions")), patch.object(aipet_hook, "AGENT", "claude"), patch.object(usage, "save", side_effect=PermissionError("usage read-only")), patch.object(aipet_hook, "auto_decision", return_value=None), patch.object(aipet_hook, "_update_session", return_value="approval-id") as update, patch.object(aipet_hook, "answer_flow") as answer:
-                aipet_hook.main()
+            with patch.object(hook_io, "read_stdin", return_value=json.dumps(data)), patch.object(hook_hosts, "is_wsl", return_value=False), patch.object(hook_hosts, "sessions_dir", return_value=str(Path(folder) / "sessions")), patch.object(hook_config, "AGENT", "claude"), patch.object(usage, "save", side_effect=PermissionError("usage read-only")), patch.object(hook_approvals, "auto_decision", return_value=None), patch.object(hook_sessions, "_update_session", return_value="approval-id") as update, patch.object(hook_waiting, "answer_flow") as answer:
+                hook_cli.main()
             update.assert_called_once()
             answer.assert_called_once()
 
@@ -294,13 +302,9 @@ class UsageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             script = Path(folder) / "aipet_hook.py"
             shutil.copyfile(aipet_hook.__file__, script)
-            shutil.copyfile(Path(aipet_hook.__file__).with_name("aipet_codex.py"), Path(folder) / "aipet_codex.py")
             # Required source components travel with the hook; usage modules remain optional.
-            components = Path(aipet_hook.__file__).parent / "aipetlib"
-            if components.is_dir():
-                (Path(folder) / "aipetlib").mkdir()
-                for name in ("__init__.py", "hook_events.py"):
-                    shutil.copyfile(components / name, Path(folder) / "aipetlib" / name)
+            components = Path(aipet_hook.__file__).parent / "aipet_hook_runtime"
+            shutil.copytree(components, Path(folder) / "aipet_hook_runtime", ignore=shutil.ignore_patterns("__pycache__"))
             data = {"hook_event_name": "UserPromptSubmit", "session_id": "isolated", "cwd": folder, "prompt": "test"}
             result = subprocess.run([sys.executable, str(script)], input=json.dumps(data), text=True, capture_output=True,
                                     cwd=folder, env={**os.environ, "PYTHONPATH": "", "AIPET_DIR": folder}, timeout=10)
@@ -313,7 +317,7 @@ class UsageTests(unittest.TestCase):
             target = str(Path(folder) / "sessions")
             rollout = Path(folder) / "rollout.jsonl"
             rollout.write_text(json.dumps({"payload": {"type": "token_count", "rate_limits": {"primary": {"used_percent": 42}}}}))
-            aipet_hook.capture_codex_usage(target, "test", {"transcript_path": str(rollout)}, {})
+            hook_capture.capture_codex_usage(target, "test", {"transcript_path": str(rollout)}, {})
             import builtins
             original = builtins.open
             def guarded(path, *args, **kwargs):
@@ -321,10 +325,10 @@ class UsageTests(unittest.TestCase):
                     self.fail("unchanged rollout was opened")
                 return original(path, *args, **kwargs)
             with patch("builtins.open", side_effect=guarded):
-                aipet_hook.capture_codex_usage(target, "test", {"transcript_path": str(rollout)}, {})
+                hook_capture.capture_codex_usage(target, "test", {"transcript_path": str(rollout)}, {})
 
     def test_existing_statusline_runs_in_bash(self):
-        if not aipet_hook.find_statusline_bash():
+        if not hook_hosts.find_statusline_bash():
             self.skipTest("Bash unavailable")
         with tempfile.TemporaryDirectory() as folder:
             encoded = base64.urlsafe_b64encode(b"printf 'bash status line\\n'").decode()
@@ -378,7 +382,7 @@ class UsageTests(unittest.TestCase):
             rollout = Path(folder) / "rollout.jsonl"
             rollout.write_text("\n".join(json.dumps({"type": "event_msg", "payload": {"type": "token_count", "rate_limits": limits}})
                                          for limits in ({"primary": {"used_percent": 42, "window_minutes": 300}}, None)), encoding="utf-8")
-            aipet_hook.capture_codex_usage(str(target), "test", {"transcript_path": str(rollout)}, {})
+            hook_capture.capture_codex_usage(str(target), "test", {"transcript_path": str(rollout)}, {})
             self.assertEqual(usage.load(str(target / "test.json"))[0]["percent"], 42)
 
     def test_tls_supplements_default_trust(self):

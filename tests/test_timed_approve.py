@@ -13,6 +13,8 @@ import support
 import aipet_app
 from aipetlib.app.agent_windows import AgentWindows
 import aipet_hook as hook
+from aipet_hook_runtime import approvals as hook_approvals
+from aipet_hook_runtime import waiting as hook_waiting
 
 
 class TimedApproveTests(unittest.TestCase):
@@ -43,12 +45,12 @@ class TimedApproveTests(unittest.TestCase):
     def test_hook_approves_only_that_session_only_while_running(self):
         aipet.set_timed_grant("s-1", 10)
         base = self.tmp.name
-        with patch.object(hook, "pet_alive", return_value=True):
-            self.assertEqual(hook.timed_decision(base, "s-1"), "timed")
-            self.assertIsNone(hook.timed_decision(base, "s-2"))  # other sessions keep asking
-            self.assertIsNone(hook.timed_decision(base, "s-1", now=time.time() + 601))  # timer over
-        with patch.object(hook, "pet_alive", return_value=False):
-            self.assertIsNone(hook.timed_decision(base, "s-1"))  # AIPet closed
+        with patch.object(hook_waiting, "pet_alive", return_value=True):
+            self.assertEqual(hook_approvals.timed_decision(base, "s-1"), "timed")
+            self.assertIsNone(hook_approvals.timed_decision(base, "s-2"))  # other sessions keep asking
+            self.assertIsNone(hook_approvals.timed_decision(base, "s-1", now=time.time() + 601))  # timer over
+        with patch.object(hook_waiting, "pet_alive", return_value=False):
+            self.assertIsNone(hook_approvals.timed_decision(base, "s-1"))  # AIPet closed
 
     def test_start_asks_first(self):
         app = object.__new__(aipet.PetApp)

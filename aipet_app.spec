@@ -84,7 +84,12 @@ def without_ucrt(toc):
                     or os.path.basename(entry[0]).lower().startswith("api-ms-win-"))]
 
 
-datas = ([(HOOK, "hook")] if IS_MAC else []) + [("aipetlib/__init__.py", "aipetlib"), ("aipetlib/hook_events.py", "aipetlib")] + [("aipet_hook.py", "."), ("aipet_codex.py", "."), ("aipet_usage.py", "."), ("aipet_claude_usage.py", "."),
+from pathlib import Path
+
+# Runnable source travels with the installer too; normal frozen imports alone are not deployable files.
+runtime_sources = [(str(path), str(path.parent)) for path in sorted(Path("aipet_hook_runtime").rglob("*.py"))
+                   if "__pycache__" not in path.parts]
+datas = ([(HOOK, "hook")] if IS_MAC else []) + runtime_sources + [("aipet_hook.py", "."), ("aipet_usage.py", "."), ("aipet_claude_usage.py", "."),
          (os.path.join("assets", "sprites"), os.path.join("assets", "sprites"))]
 hiddenimports = HASH_IMPORTS + ([] if IS_MAC else ["pystray._win32"] + collect_submodules("pyvda"))
 

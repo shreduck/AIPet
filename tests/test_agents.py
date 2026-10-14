@@ -215,28 +215,33 @@ class ClaudeNetworkTests(unittest.TestCase):
 class CodexNetworkTests(unittest.TestCase):
     def test_child_hooks_keep_root_transcript_and_user_prompt(self):
         import aipet_hook as hook
+        from aipet_hook_runtime import config as hook_config, hosts as hook_hosts, diagnostics as hook_diagnostics
+        from aipet_hook_runtime import io as hook_io
+        from aipet_hook_runtime import sessions as hook_sessions
+        from aipet_hook_runtime import transcripts as hook_transcripts
         with tempfile.TemporaryDirectory() as root, ExitStack() as stack:
             for name, value in (("AGENT", "codex"), ("find_claude_pid", None),
                                 ("find_host_window", (None, "")), ("is_cowork", False),
                                 ("codex_thread_name", ""), ("debug_log", None)):
-                stack.enter_context(patch.object(hook, name, value) if name == "AGENT"
-                                    else patch.object(hook, name, return_value=value))
+                module = hook_config if name == "AGENT" else hook_transcripts if name == "codex_thread_name" else hook_diagnostics if name == "debug_log" else hook_hosts
+                stack.enter_context(patch.object(module, name, value) if name == "AGENT"
+                                    else patch.object(module, name, return_value=value))
             parent = os.path.join(root, "rollout-2026-10-12T16-05-50-root.jsonl")
             child = os.path.join(root, "rollout-2026-10-12T16-06-00-child.jsonl")
             write_lines(parent, [{"type": "session_meta", "payload": {"id": "root"}}])
             record = os.path.join(root, "root.json")
             base = {"session_id": "root", "cwd": root}
-            hook._update_session(record, record, "UserPromptSubmit",
+            hook_sessions._update_session(record, record, "UserPromptSubmit",
                                  dict(base, transcript_path=parent, prompt="test nesting"), False)
             for event in ("SubagentStart", "UserPromptSubmit", "PostToolUse", "SubagentStop"):
-                hook._update_session(record, record, event,
+                hook_sessions._update_session(record, record, event,
                                      dict(base, agent_id="child", agent_type="default",
                                           transcript_path=child, prompt="child task"), False)
-                current = hook.read_json(record)
+                current = hook_io.read_json(record)
                 self.assertEqual(current["transcript_path"], parent, event)
                 self.assertEqual(current["last_prompt"], "test nesting", event)
             # Repair a session file already overwritten by a previous hook version.
-            self.assertEqual(hook.codex_session_transcript("root", child, child), parent)
+            self.assertEqual(hook_transcripts.codex_session_transcript("root", child, child), parent)
 
     def test_metadata_is_retried_after_empty_rollout_is_written(self):
         with tempfile.TemporaryDirectory() as root:

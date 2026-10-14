@@ -9,62 +9,9 @@ import tempfile
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tools.hook_probe import check_hook
 from aipetlib.integrations import deployment as hook_deployment
 from aipetlib.integrations import locations as hook_locations
-
-
-def check_hook(executable, base):
-    for agent in ('claude', 'codex'):
-        config = base / agent
-        config.mkdir(parents=True)
-        (config / 'debug-events').touch()
-        (config / 'no-answers').touch()  # observe synthetic prompts; never approve anything
-        record = config / 'sessions' / 'packaging-check.json'
-        env = dict(os.environ, AIPET_DIR=str(config))
-
-        def event(name, **fields):
-            data = dict(session_id='packaging-check', hook_event_name=name, cwd=str(config), **fields)
-            command = [str(executable)] + (['--codex'] if agent == 'codex' else [])
-            result = subprocess.run(command, input=json.dumps(data), text=True, capture_output=True,
-                                    env=env, timeout=15)
-            if result.returncode or result.stderr:
-                raise RuntimeError(f'{agent} {name}: {result.returncode} {result.stderr}')
-            return json.loads(record.read_text()) if record.exists() else None
-
-        assert event('SessionStart')['state'] == 'idle'
-        assert event('UserPromptSubmit', prompt='Packaging test')['state'] == 'working'
-        if agent == 'codex':
-            rollout = config / 'rollout-2026-10-12T12-00-00-packaging-check_resumed.jsonl'
-            rollout.write_text(json.dumps({'type': 'session_meta', 'payload': {'id': 'packaging-check'}}) + '\n')
-            child = config / 'rollout-2026-10-12T12-01-00-child.jsonl'
-            child.write_text(json.dumps({'type': 'session_meta', 'payload': {
-                'id': 'child', 'parent_thread_id': 'packaging-check'}}) + '\n')
-            assert event('UserPromptSubmit', prompt='Resume check', transcript_path=str(rollout))['transcript_path'] == str(rollout)
-            assert event('PostToolUse', tool_name='Test', agent_id='child', transcript_path=str(child))['transcript_path'] == str(rollout)
-            assert event('SubagentStop', agent_id='child', transcript_path=str(child))['transcript_path'] == str(rollout)
-        if agent == 'claude':
-            question = {'questions': [{'question': 'Test question?', 'options': [{'label': 'Test'}]}]}
-            assert event('PermissionRequest', tool_name='AskUserQuestion', tool_input=question)['state'] == 'needs_input'
-            answered = event('PostToolUse', tool_name='AskUserQuestion', tool_use_id='question-1',
-                             tool_input=dict(question, answers={'Test question?': 'Test'}))
-        else:
-            question = {'questions': [{'title': 'Test question?', 'options': ['Test']}]}
-            assert event('PostToolUse', tool_name='request_user_input_async', tool_input=question,
-                         tool_use_id='question-1', tool_response={'accepted': True})['state'] == 'needs_input'
-            assert event('PostToolUse', tool_name='clocksleep', tool_input={'duration_ms': 1})['state'] == 'needs_input'
-            reply = '<send_user_message_question_reply>\n' + json.dumps([
-                {'questionItemId': '["request_user_input_async","question-1",0]',
-                 'question': 'Test question?', 'answer': 'Test'}]) + '\n</send_user_message_question_reply>'
-            answered = event('UserPromptSubmit', prompt=reply)
-            completed = event('PostToolUse', tool_name='request_user_input', tool_input=question,
-                              tool_use_id='question-2', tool_response={'answers': {'Test question?': 'Test'}})
-            assert completed['state'] == 'working' and not completed['requests'], completed
-        assert answered['state'] == 'working' and not answered['requests'], answered
-        assert event('Stop')['state'] == 'done'
-        assert event('SessionEnd') is None
-        rows = [json.loads(line) for line in (config / 'events.log').read_text().splitlines()]
-        assert any(row['prev'] == 'needs_input' and row['new'] == 'working' for row in rows)
-        print(f'  {agent}: lifecycle, question answered in AI UI, and debug logging passed')
 
 
 def check_bundle(bundle):
@@ -94,6 +41,8 @@ def check_bundle(bundle):
         # Make every original bundle path unavailable before exercising the installed copy.
         restored.rename(relocated / 'moved.app')
         check_hook(deployed / 'hook/aipet-hook', root / 'deployed-check')
+        assert (deployed / 'aipet_hook_runtime/cli.py').is_file(), 'Source runtime package missing'
+        check_hook(deployed / 'aipet_hook.py', root / 'source-check', interpreter=[sys.executable, '-S'])
         size = sum(p.stat().st_size for p in bundle.rglob('*') if p.is_file() and not p.is_symlink())
         print(f'Verified ZIP relocation and independent deployment: app {size / 2**20:.2f} MiB, ZIP {archive.stat().st_size / 2**20:.2f} MiB')
 

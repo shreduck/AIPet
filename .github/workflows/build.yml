@@ -36,6 +36,10 @@ jobs:
         run: build.bat
       - name: Check imports have no side effects
         run: python -m unittest discover -s tests -p test_imports.py -v
+      - name: Check hook runtime and source upgrades
+        run: python -m unittest discover -s tests -p test_hook_runtime.py -v
+      - name: Check packaged and independently deployed hooks
+        run: python tools/check_hook_runtime.py --app dist/AIPet
       - name: Check packaged robot assets
         run: python -c "import subprocess; subprocess.run(['dist/AIPet/AIPet.exe', '--selftest-assets', 'build/assets-check.json'], check=True, timeout=30)"
       - uses: actions/upload-artifact@v4

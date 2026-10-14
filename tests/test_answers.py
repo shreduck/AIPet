@@ -9,6 +9,15 @@ import aipetlib.app.answers as answers_module
 from aipetlib.app.answers import Answers
 import support
 import aipet_hook as hook
+from aipet_hook_runtime import approvals as hook_approvals
+from aipet_hook_runtime import capture as hook_capture
+from aipet_hook_runtime import cli as hook_cli
+from aipet_hook_runtime import config as hook_config
+from aipet_hook_runtime import hosts as hook_hosts
+from aipet_hook_runtime import io as hook_io
+from aipet_hook_runtime import requests as hook_requests
+from aipet_hook_runtime import sessions as hook_sessions
+from aipet_hook_runtime import waiting as hook_waiting
 
 
 class AnswerToggleTests(unittest.TestCase):
@@ -42,19 +51,19 @@ class AnswerToggleTests(unittest.TestCase):
             Path(folder, 'no-claude-answers').touch()
             data = {'hook_event_name': 'PermissionRequest', 'session_id': 'test'}
             for auto in (None, 'whitelist'):
-                with self.subTest(auto=auto), patch.object(hook, 'AGENT', 'claude'), \
-                        patch.object(hook, 'read_stdin', return_value=json.dumps(data)), \
-                        patch.object(hook, 'is_wsl', return_value=False), \
-                        patch.object(hook, 'sessions_dir', return_value=str(Path(folder, 'sessions'))), \
-                        patch.object(hook, 'usage', None), patch.object(hook, 'claude_usage', None), \
-                        patch.object(hook, 'auto_decision', return_value=auto), \
-                        patch.object(hook, '_update_session', return_value='test') as update, \
-                        patch.object(hook, 'answer_flow') as answer, patch.object(hook, 'write_stdout') as output:
-                    hook.main()
+                with self.subTest(auto=auto), patch.object(hook_config, 'AGENT', 'claude'), \
+                        patch.object(hook_io, 'read_stdin', return_value=json.dumps(data)), \
+                        patch.object(hook_hosts, 'is_wsl', return_value=False), \
+                        patch.object(hook_hosts, 'sessions_dir', return_value=str(Path(folder, 'sessions'))), \
+                        patch.object(hook_capture, 'usage', None), patch.object(hook_capture, 'claude_usage', None), \
+                        patch.object(hook_approvals, 'auto_decision', return_value=auto), \
+                        patch.object(hook_sessions, '_update_session', return_value='test') as update, \
+                        patch.object(hook_waiting, 'answer_flow') as answer, patch.object(hook_io, 'write_stdout') as output:
+                    hook_cli.main()
                     update.assert_called_once()
                     answer.assert_not_called()
                     if auto:
-                        output.assert_called_once_with(hook.decision_output('allow'))
+                        output.assert_called_once_with(hook_requests.decision_output('allow'))
                     else:
                         output.assert_not_called()
 
@@ -87,33 +96,33 @@ class AnswerToggleTests(unittest.TestCase):
                     flag.touch() if codex_on else flag.unlink(missing_ok=True)
                     for agent, expected in [('claude', claude_on), ('codex', codex_on)]:
                         with self.subTest(agent=agent, claude=claude_on, codex=codex_on), \
-                                patch.object(hook, 'AGENT', agent):
-                            self.assertEqual(hook.answers_enabled(folder), expected)
-                            with patch.object(hook, 'pet_alive', return_value=True), \
-                                    patch.object(hook, 'await_answer') as wait:
+                                patch.object(hook_config, 'AGENT', agent):
+                            self.assertEqual(hook_waiting.answers_enabled(folder), expected)
+                            with patch.object(hook_waiting, 'pet_alive', return_value=True), \
+                                    patch.object(hook_waiting, 'await_answer') as wait:
                                 if not expected:
-                                    hook.answer_flow(folder, str(Path(folder, 'unused.json')), '')
+                                    hook_waiting.answer_flow(folder, str(Path(folder, 'unused.json')), '')
                                     wait.assert_not_called()
             Path(folder, 'no-answers').touch()
             for agent in ('claude', 'codex'):
-                with patch.object(hook, 'AGENT', agent):
-                    self.assertFalse(hook.answers_enabled(folder))
+                with patch.object(hook_config, 'AGENT', agent):
+                    self.assertFalse(hook_waiting.answers_enabled(folder))
 
     def test_disabling_claude_releases_hook_already_waiting(self):
-        with tempfile.TemporaryDirectory() as folder, patch.object(hook, 'AGENT', 'claude'), \
-                patch.object(hook, 'pet_alive', return_value=True), \
-                patch.object(hook.time, 'sleep', side_effect=lambda _: Path(folder, 'no-claude-answers').touch()) as sleep:
-            result = hook._await(str(Path(folder, 'answer.json')), str(Path(folder, 'waiting')), folder, 0, None, None)
+        with tempfile.TemporaryDirectory() as folder, patch.object(hook_config, 'AGENT', 'claude'), \
+                patch.object(hook_waiting, 'pet_alive', return_value=True), \
+                patch.object(hook_io.time, 'sleep', side_effect=lambda _: Path(folder, 'no-claude-answers').touch()) as sleep:
+            result = hook_waiting._await(str(Path(folder, 'answer.json')), str(Path(folder, 'waiting')), folder, 0, None, None)
             self.assertIsNone(result)
             sleep.assert_called_once()
 
     def test_release_lets_go_so_codex_shows_its_own_prompt(self):
-        with tempfile.TemporaryDirectory() as folder, patch.object(hook, 'AGENT', 'codex'), \
-                patch.object(hook, 'pet_alive', return_value=True):
+        with tempfile.TemporaryDirectory() as folder, patch.object(hook_config, 'AGENT', 'codex'), \
+                patch.object(hook_waiting, 'pet_alive', return_value=True):
             Path(folder, 'codex-answers').touch()
             answer = Path(folder, 'answer.json')
             answer.write_text('{"behavior": "release"}')
-            self.assertIsNone(hook._await(str(answer), str(Path(folder, 'waiting')), folder, 5, None, None))
+            self.assertIsNone(hook_waiting._await(str(answer), str(Path(folder, 'waiting')), folder, 5, None, None))
             self.assertFalse(answer.exists())
 
     def test_go_to_window_releases_only_codex_prompts(self):

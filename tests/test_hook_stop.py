@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import patch
 
 import aipet_hook as hook
+from aipet_hook_runtime import waiting as hook_waiting
 from aipetlib import permissions
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -29,7 +30,7 @@ class WaitReasonTests(unittest.TestCase):
         self.base = self.tmp.name
         self.path = os.path.join(self.base, "sess.json")
         record(self.path)
-        for p in (patch.object(hook, "pet_alive", return_value=True), patch.object(hook, "answers_enabled", return_value=True)):
+        for p in (patch.object(hook_waiting, "pet_alive", return_value=True), patch.object(hook_waiting, "answers_enabled", return_value=True)):
             p.start()
             self.addCleanup(p.stop)
 
@@ -40,30 +41,30 @@ class WaitReasonTests(unittest.TestCase):
 
     def wait(self, seconds=0.4, click=None):
         if click:  # the click lands just after the hook cleared old answers
-            original = hook._await
+            original = hook_waiting._await
 
             def delayed(*args):
                 self.answer(click)
                 os.replace(os.path.join(self.base, "answers", "r1.json.tmp"), os.path.join(self.base, "answers", "r1.json"))
                 return original(*args)
-            with patch.object(hook, "_await", side_effect=delayed):
-                result = hook.await_answer(self.base, "r1", seconds, self.path, "r1")
+            with patch.object(hook_waiting, "_await", side_effect=delayed):
+                result = hook_waiting.await_answer(self.base, "r1", seconds, self.path, "r1")
         else:
-            result = hook.await_answer(self.base, "r1", seconds, self.path, "r1")
+            result = hook_waiting.await_answer(self.base, "r1", seconds, self.path, "r1")
         self.assertFalse(os.path.exists(os.path.join(self.base, "answers", "r1.waiting")))  # always cleaned up
-        return result, dict(hook.WAIT_END)
+        return result, dict(hook_waiting.WAIT_END)
 
     def test_each_way_a_wait_ends_is_named(self):
         self.assertEqual(self.wait(click="allow")[0], "allow")
-        self.assertEqual(hook.WAIT_END["reason"], "answered")
+        self.assertEqual(hook_waiting.WAIT_END["reason"], "answered")
         self.assertEqual(self.wait(click="release")[1]["reason"], "released")
         result, end = self.wait(0.3)
         self.assertIsNone(result)
         self.assertEqual(end["reason"], "timed_out")
         self.assertGreaterEqual(end["after"], 0.3)
-        with patch.object(hook, "pet_alive", return_value=False):
+        with patch.object(hook_waiting, "pet_alive", return_value=False):
             self.assertEqual(self.wait()[1]["reason"], "pet_closed")
-        with patch.object(hook, "answers_enabled", return_value=False):
+        with patch.object(hook_waiting, "answers_enabled", return_value=False):
             self.assertEqual(self.wait()[1]["reason"], "answers_off")
         record(self.path, rid="someone-else")
         self.assertEqual(self.wait(3)[1]["reason"], "answered_elsewhere")
@@ -71,14 +72,7 @@ class WaitReasonTests(unittest.TestCase):
 
 @unittest.skipIf(os.name == "nt", "Windows has no catchable stop signal for a child process")
 class StoppedHookTests(unittest.TestCase):
-    SCRIPT = r"""
-import sys, time
-sys.path.insert(0, sys.argv[1])
-import aipet_hook as hook
-hook.pet_alive = lambda base: True
-hook.answer_flow(sys.argv[2], sys.argv[3], "", "r1")
-print("finished", flush=True)
-"""
+    SCRIPT = '\nimport sys, time\nsys.path.insert(0, sys.argv[1])\nimport aipet_hook as hook\nfrom aipet_hook_runtime import waiting as hook_waiting\nhook_waiting.pet_alive = lambda base: True\nhook_waiting.answer_flow(sys.argv[2], sys.argv[3], "", "r1")\nprint("finished", flush=True)\n'
 
     def test_a_stopped_hook_records_it_cleans_up_and_answers_nothing(self):
         with tempfile.TemporaryDirectory() as base:

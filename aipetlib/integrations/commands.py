@@ -56,7 +56,7 @@ def windows_statusline_command(check=True):
     neutral = [_shell_neutral(p) for p in paths]
     if all(neutral):
         return " ".join(neutral)
-    from aipet_hook import find_statusline_bash
+    from aipet_hook_runtime.hosts import find_statusline_bash
     if find_statusline_bash():
         return windows_hook_command(check)  # quoted: fine, Claude Code uses Git Bash here
     raise RuntimeError("The path to AIPet's hook contains spaces and Git Bash isn't installed, so Claude Code would run "

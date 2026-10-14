@@ -52,7 +52,7 @@ def set_usage(key, on):
         if previous and (not isinstance(previous, dict) or previous.get("type") != "command"):
             raise RuntimeError("This status line type cannot be safely wrapped. Your settings were kept.")
         if previous and hook_targets.is_local(key):
-            from aipet_hook import find_statusline_bash
+            from aipet_hook_runtime.hosts import find_statusline_bash
             if not find_statusline_bash():
                 raise RuntimeError("Bash was not found. Install Git Bash before enabling a collector with an existing status line.")
         result = hook_settings.merge_usage(settings, command, previous=previous)

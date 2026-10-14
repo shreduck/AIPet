@@ -558,7 +558,8 @@ From source, the Windows hook runs via `pythonw` and the script, so no exe is ne
 | `aipet_settings.py` | The AIPet menu window (built from the same menu definition) |
 | `aipet_agents.py` | Temporary facade over `aipetlib/agents/` (to be removed) |
 | `aipet_guide.py` | The settings guide for AI assistants (Copy settings guide for AI) |
-| `aipet_hook.py` | The hook Claude Code and Codex run on each event |
+| `aipet_hook.py` | Stable, small hook entry script for Claude Code and Codex on Windows, WSL and macOS |
+| `aipet_hook_runtime/` | Independently deployed stdlib-only hook package: CLI, host detection, locked JSON I/O, requests, approvals, waiting, transcript identity, provider interpretation, session records and optional usage capture |
 | `hooks_installer.py` | Temporary compatibility exports over the installation owners in `aipetlib/integrations/` |
 | `aipet_usage.py`, `aipet_claude_usage.py` | Usage-limit readings |
 | `mac_statusbar.py` | The macOS menu-bar icon and native panels |
@@ -575,7 +576,9 @@ owning window or app and import every other value from the module that owns it (
 `HookAPI`. The owner keeps the
 mutable UI state and callbacks, so extracting a component does not create a second configuration, cache or session
 store. Pure record helpers and the Workbench transport can also be used without a desktop runtime. The hook's source
-fallback deploys only the toolkit-free package files it needs alongside the script.
+fallback deploys the complete `aipet_hook_runtime` source package alongside the entry script and the two optional
+usage helpers. Dependencies are synchronized before the entry script, and changed source files have stale bytecode
+removed. The hook runtime imports no application package or GUI toolkit.
 
 Place new behavior in the component responsible for it and keep lifecycle coordination in the entry points. Preserve
 the existing entry-point methods when callers or tests depend on them. For a structural change, compare the same

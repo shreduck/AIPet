@@ -10,8 +10,9 @@ import aipet
 import support
 import aipetlib.agents.codex as agent_codex
 import aipetlib.agents.network as agent_network
-import aipet_codex as codex
+from aipet_hook_runtime import codex
 import aipet_hook as hook
+from aipet_hook_runtime import transcripts as hook_transcripts
 from aipetlib.ui.agent_window import candidate_sessions
 
 
@@ -42,8 +43,8 @@ class CodexRolloutTests(unittest.TestCase):
                              {'id': 'child', 'parent_thread_id': 'root'})
         os.utime(original, (self.now - 100, self.now - 100))
         self.assertEqual(codex.root_rollout('root', resumed), resumed)
-        self.assertEqual(hook.codex_session_transcript('root', child, resumed), resumed)
-        self.assertEqual(hook.codex_session_transcript('root', child), resumed)
+        self.assertEqual(hook_transcripts.codex_session_transcript('root', child, resumed), resumed)
+        self.assertEqual(hook_transcripts.codex_session_transcript('root', child), resumed)
         self.assertEqual(aipet.transcript_file({'agent': 'codex', 'id': 'root', 'transcript_path': ''}), resumed)
         self.assertEqual(codex.root_rollout('root', original), original)  # ordinary Windows/CLI filenames still work
         misleading = self.rollout(4, 'rollout-2026-10-04T12-02-00-root_wrong.jsonl', {'id': 'unrelated'})
