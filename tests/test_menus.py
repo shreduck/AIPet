@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import aipet
 import aipet_app
+from aipetlib.app.agent_windows import AgentWindows
 
 
 class MenuTests(unittest.TestCase):
@@ -57,8 +58,8 @@ class MenuTests(unittest.TestCase):
         calls = []
         window = MagicMock()
         window.alive.side_effect = lambda: calls.append(threading.current_thread().name) or True
-        app.agents_wins = {'k': window}
-        self.assertTrue(app.agent_network_open())  # on the Tk thread: asks the window and caches the answer
+        app.agent_windows.wins = {'k': window}
+        self.assertTrue(app.agent_windows.is_open())  # on the Tk thread: asks the window and caches the answer
         self.assertEqual(calls, ['MainThread'])
         found = {}
 
@@ -81,8 +82,8 @@ class MenuTests(unittest.TestCase):
         self.assertEqual(calls, ['MainThread'])  # nothing asked Tk from the tray thread
         self.assertNotIn('error', found)
         self.assertTrue(found['checked'] and all(found['checked']))  # the cached answer
-        app.agents_wins = {}
-        self.assertFalse(app.agent_network_open())
+        app.agent_windows.wins = {}
+        self.assertFalse(app.agent_windows.is_open())
 
     def make_app(self):
         app = object.__new__(aipet_app.TrayApp)
@@ -91,6 +92,7 @@ class MenuTests(unittest.TestCase):
         app.c_auto, app.updates = [], MagicMock(info=None)
         app.hidden = app.c_muted = app.c_notify = app.c_autostart = False
         app.c_wb, app.version = 'off', 'test'
+        app.agent_windows = AgentWindows(app)
         return app
 
     @patch.object(aipet_app.hi, 'list_backups', return_value=[])

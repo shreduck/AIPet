@@ -37,7 +37,7 @@ def _context_menu_spec(app, pet):
     ]
     shared = app._mac_menu_spec()  # starts with AIPet menu... and a separator
     timers = app._timed_countdown_items()
-    network = app.agent_network_item(pet.data.get("focus", pet.key) if real_pet else None)
+    network = app.agent_windows.menu_item(pet.data.get("focus", pet.key) if real_pet else None)
     return shared[:1] + [network] + timers + [app._fast_cancel_item(pet, session),
                                   {"label": "This session", "submenu": session_actions}, None] + shared[2:]
 
@@ -129,7 +129,7 @@ def _mac_menu_spec(app, settings=False):
                          "min": 0.5, "max": 2.5, "step": 0.05,
                          "set": app.pet.set_tooltip_text_scale, "format": lambda v: f"{int(round(v * 100))}%"}),
             item("Reset pet size", app.pet.reset_scale, help="Back to the standard size."),
-            item("Reset agent network appearance", app.reset_agent_network,
+            item("Reset agent network appearance", app.agent_windows.reset_appearance,
                  help="The agent network window's default look again (opacity, background, nodes, scale, title "
                       "bar, always on top), centred on the main screen."),
             item("Compact mode (one pet)", app.pet.toggle_compact, checked=bool(cfg.get("compact")),
@@ -289,8 +289,8 @@ def _live_spec(app, item, settings=False):
                          "set": app.pet.set_timed_minutes, "format": lambda v: f"{int(v)} min"},
                  submenu=[item(f"{m} min", lambda m=m: app.pet.set_timed_minutes(m), checked=default == m)
                           for m in (5, 10, 15, 30, 60)]),
-            dict(app.agent_network_item(None), icon="link"),
-            app.agent_network_separate_item(),
+            dict(app.agent_windows.menu_item(None), icon="link"),
+            app.agent_windows.separate_item(),
             None]
     sessions = [d for d in app.pet._last_items if d.get("source") == "CC" and d.get("session_id")]
     for d in sessions:
@@ -309,7 +309,7 @@ def _live_spec(app, item, settings=False):
         entries += [None, item(f"Subagents running: {len(agents)}" if agents else "No subagents running",
                                enabled=False)]
         entries += [item(f"• {a}", enabled=False) for a in agents]
-        entries += [None, item("Agent network...", lambda k=d.get("key"): app.show_agent_network(k))]
+        entries += [None, item("Agent network...", lambda k=d.get("key"): app.agent_windows.show(k))]
         said = session_text.last_said(d)  # the newest reply phrase or your latest prompt, from the transcript
         who = "Codex" if d.get("agent") == "codex" else "Claude"
         said_text = (f"{who if said[0] == 'ai' else 'You'}: “{said[1]}”" if said else "")

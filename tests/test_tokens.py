@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import aipet
 import aipet_app
+from aipetlib.app.agent_windows import AgentWindows
 import aipetlib.agents.context as context
 import aipetlib.agents.history as agent_history
 from aipetlib.agents.claude import parse_claude
@@ -118,6 +119,7 @@ class MenuSwitchTests(unittest.TestCase):
         app.c_auto, app.updates = [], MagicMock(info=None)
         app.hidden = app.c_muted = app.c_notify = app.c_autostart = False
         app.c_wb, app.version = 'off', 'test'
+        app.agent_windows = AgentWindows(app)
         with patch.object(aipet_app.hi, 'list_backups', return_value=[]), \
                 patch.object(aipet, 'auto_approve_rules', return_value={}), \
                 patch.object(aipet.permissions, 'timed_grants', return_value={}):

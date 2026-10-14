@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import aipet
 import support
 import aipet_app
+from aipetlib.app.agent_windows import AgentWindows
 import aipet_hook as hook
 
 
@@ -71,6 +72,7 @@ class TimedApproveTests(unittest.TestCase):
         app.c_auto, app.updates = [], MagicMock(info=None)
         app.hidden = app.c_muted = app.c_notify = app.c_autostart = False
         app.c_wb, app.version = "off", "test"
+        app.agent_windows = AgentWindows(app)
         app.pet._last_items = [
             {"source": "CC", "session_id": "s-1", "title": "esign", "state": "working", "agent_types": ["tester"]},
             {"source": "CC", "session_id": "s-2", "title": "notes", "state": "idle", "agent_types": []}]

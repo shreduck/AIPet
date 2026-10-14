@@ -25,11 +25,11 @@ from tkinter import messagebox
 import aipet as core
 from aipetlib.runtime import diagnostics, paths, preferences
 from aipetlib.runtime import settings as runtime_settings
-import aipet_agents_window
 from aipetlib.agents.tracker import NetworkTracker
 import aipet_guide
 import aipet_settings
 from aipetlib import update as releases
+from aipetlib.app.agent_windows import AgentWindows
 from aipetlib.app.updates import UpdateFlow
 import hooks_installer as hi
 import legacy  # LEGACY: moving over from Claude Pet
@@ -324,7 +324,7 @@ class TrayApp:
         self.c_autostart = autostart_enabled()
         self.c_notify = bool(self.pet.cfg.get("notifications", False))
         self.c_wb = "off"
-        self.c_agent_open = False  # whether an agent network window is open, for the tray menu (see agent_network_open)
+        self.agent_windows = AgentWindows(self)  # the agent network windows and their menu switches
         self._tk_thread = threading.current_thread()
         self.c_auto = core.auto_approve_targets()  # hook configs with auto-approval on (all off by default)
         self.version = releases.current_version()
@@ -370,7 +370,7 @@ class TrayApp:
             print(f"[aipet] ui error: {e}", file=sys.stderr)
         self.c_muted = self.pet.muted.get()
         self.c_wb = self.pet.wb.status if self.pet.wb else "off"
-        self.agent_network_open()  # refresh the cached answer the tray menu reads
+        self.agent_windows.is_open()  # refresh the cached answer the tray menu reads
         self.update_tray()
         self.root.after(250, self.pump)
 
@@ -408,7 +408,7 @@ class TrayApp:
             self.ui(self.show_setup)  # first run: shows what is installed / up to date / outdated per target
         elif stale:
             self.ui(lambda: self.offer_update(stale))
-        self.ui(lambda: self.root.after(1500, self.offer_agent_network))
+        self.ui(lambda: self.root.after(1500, self.agent_windows.offer_intro))
 
     # ---- first-run setup
     def show_setup(self, check_stopped=False):
@@ -1237,131 +1237,9 @@ class TrayApp:
                 "settings": True}
 
     # ---- agent network windows: one for all sessions, or one per session ("each")
-    def offer_agent_network(self):
-        """Offer the new view once, after setup and any other startup dialog have closed."""
-        if self.pet.cfg.get("agent_network_intro_seen"):
-            return
-        if not setup_is_done() or self.setup_win is not None or self.busy or self.root.grab_current() is not None:
-            self.root.after(1500, self.offer_agent_network)
-            return
-        self.pet.cfg["agent_network_intro_seen"] = True
-        runtime_settings.save_setting("agent_network_intro_seen", True)
-
-        def chosen(try_it):
-            if try_it:
-                self.show_agent_network()
-                self.refresh_menu()
-
-        core.themed_dialog(
-            self.root, "Try AIPet's agent view", kind="question", heading="Meet the agent view",
-            text="See your Claude and Codex agents in a live graph, including nested subagents, "
-                 "their tool calls, inputs, outputs and shared logs.\n\nWould you like to try it? "
-                 "You can also open it later from the AIPet menu: Agent network window.",
-            buttons=(("Not now", False, "secondary"), ("Try it", True, "primary")),
-            cancel=False, on_result=chosen)
-
-    def _agent_windows(self):
-        wins = {k: w for k, w in (getattr(self, "agents_wins", None) or {}).items() if w.alive()}
-        self.agents_wins = wins
-        return wins
-
-    def agent_network_open(self):
-        """Whether an agent network window is open. The Windows tray builds its menu on pystray's own thread, which
-        must never call into Tk: a Tk call from another thread waits for the Tk thread, and after Quit that wait never
-        ends, so the tray thread (and the process, with its icon) would stay alive. Off the Tk thread this returns the
-        answer last cached on it (by pump, the menus and the toggles)."""
-        if threading.current_thread() is getattr(self, "_tk_thread", threading.main_thread()):
-            self.c_agent_open = bool(self._agent_windows())
-        return getattr(self, "c_agent_open", False)
-
-    def agent_network_separate(self):
-        return aipet_agents_window.load_options(self.pet.cfg)["separate"]
-
-    def agent_network_item(self, key=None, label="Agent network window"):
-        """A switch: opens the agent network window (on this session), or closes it (them) when open."""
-        return {"label": label, "action": lambda: self.toggle_agent_network(key), "enabled": True, "submenu": None,
-                "checked": self.agent_network_open(),
-                "help": "A live map of a session's main agent and its subagents: what each one is doing, its model "
-                        "and context, a shared log, and prompts you can answer from there."}
-
-    def agent_network_separate_item(self):
-        return {"label": "Agent network compact mode", "action": self.toggle_agent_network_separate,
-                "enabled": True, "submenu": None, "checked": not self.agent_network_separate(),
-                "help": "Like the pet's compact mode: one agent network window for every session (PgUp / PgDn "
-                        "switch). Off: each session gets its own window."}
-
-    def reset_agent_network(self):
-        """Default appearance for the agent network windows (one window or one per session stays as it is), and every
-        open one centred on the main screen."""
-        opts = dict(aipet_agents_window.DEFAULT_OPTIONS,
-                    separate=aipet_agents_window.load_options(self.pet.cfg)["separate"])
-        self.pet.cfg[aipet_agents_window.OPTIONS_KEY] = opts
-        runtime_settings.save_setting(aipet_agents_window.OPTIONS_KEY, opts)
-        for n, w in enumerate(self._agent_windows().values()):
-            w.reset_appearance(opts, cascade=n)
-        self.refresh_menu()
-
-    def toggle_agent_network(self, key=None):
-        if self.agent_network_open():
-            for w in list(self._agent_windows().values()):
-                w.close()
-        else:
-            self.show_agent_network(key)
-        self.refresh_menu()
-
-    def toggle_agent_network_separate(self):
-        opts = aipet_agents_window.load_options(self.pet.cfg)
-        opts["separate"] = not opts["separate"]
-        self.pet.cfg[aipet_agents_window.OPTIONS_KEY] = opts
-        runtime_settings.save_setting(aipet_agents_window.OPTIONS_KEY, opts)
-        self._agent_mode_changed(None)
-
-    def _agent_mode_changed(self, source):
-        """Switched between one window and one per session: reopen what was open in the new mode."""
-        wins = self._agent_windows()
-        if wins:
-            keep = source.key if source is not None else None
-            ref = source if source is not None and source.alive() else next(iter(wins.values()))
-            try:  # the new window(s) open where this one is
-                at = ref.win.geometry()
-            except Exception:
-                at = None
-            for w in list(wins.values()):
-                w.close()
-            self.show_agent_network(keep if not self.agent_network_separate() else None, at=at)
-        self.refresh_menu()
-
-    def _agent_options_changed(self, opts, source, changed):
-        if changed == "each":
-            self._agent_mode_changed(source)
-            return
-        for w in self._agent_windows().values():  # the same look for every agent network window
-            if w is not source:
-                w.set_options(opts)
-
-    def show_agent_network(self, key=None, at=None):
-        """One window for all sessions (opening it again switches it to that session), or, in "one per session"
-        mode, that session's own window (key None: every session's)."""
-        wins = self._agent_windows()
-        new = lambda k, pinned, n=0: aipet_agents_window.AgentNetworkWindow(  # noqa: E731
-            self.root, self.pet, k, pinned=pinned, on_options=self._agent_options_changed, cascade=n, at=at)
-        if not self.agent_network_separate():
-            win = wins.get("*")
-            if win:
-                win.show_session(key)
-                win.raise_()
-            else:
-                wins["*"] = new(key, False)
-            return
-        keys = [key] if key else [i["key"] for i in aipet_agents_window.candidate_sessions(self.pet._last_items)][:6]
-        if not keys:  # no session yet: one window that waits for the first
-            wins["*"] = wins.get("*") or new(None, False)
-            return
-        for n, k in enumerate(keys):
-            if k in wins:
-                wins[k].raise_()
-            else:
-                wins[k] = new(k, True, len(wins) + n)
+    def startup_dialogs_open(self):
+        """Setup not done yet, its window or a hook job still open, or a dialog holding the grab: wait with offers."""
+        return not setup_is_done() or self.setup_win is not None or self.busy or self.root.grab_current() is not None
 
     def show_settings(self):
         if getattr(self, "settings_win", None) is not None and self.settings_win.alive():

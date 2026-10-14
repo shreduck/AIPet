@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import aipetlib.agents.log_filters as agent_log_filters
 import aipetlib.agents.tools as agent_tools
-import aipet_agents_window as window
+import aipetlib.ui.agent_window as window
 
 
 def agent(aid, name, lines, state="working", **extra):

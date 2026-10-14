@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import aipet
 import support
 import aipet_app
+from aipetlib.app.agent_windows import AgentWindows
 import aipet_settings as settings
 
 
@@ -134,6 +135,7 @@ class SettingsSpecTests(unittest.TestCase):
         app.c_auto, app.updates = [], MagicMock(info=None)
         app.hidden = app.c_muted = app.c_notify = app.c_autostart = False
         app.c_wb, app.version = 'off', 'test'
+        app.agent_windows = AgentWindows(app)
         pages = settings.pages_from_spec(app._mac_menu_spec())
         self.assertEqual([p[0] for p in pages],
                          ["General", "Live Management", "Appearance", "Behavior", "Integrations", "Permissions", "Help"])

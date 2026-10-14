@@ -18,7 +18,7 @@ class MacWindowTests(unittest.TestCase):
         from unittest.mock import patch
         import aipet
         import aipetlib.agents.log_filters as agent_log_filters
-        from aipet_agents_window import AgentNetworkWindow
+        from aipetlib.ui.agent_window import AgentNetworkWindow
 
         root = aipet.MacPetWindow()
         root.withdraw()
@@ -70,7 +70,7 @@ class MacWindowTests(unittest.TestCase):
         from unittest.mock import patch
         import aipet
         import aipetlib.agents.log_filters as agent_log_filters
-        from aipet_agents_window import AgentNetworkWindow
+        from aipetlib.ui.agent_window import AgentNetworkWindow
 
         root = aipet.MacPetWindow()
         root.withdraw()
@@ -120,7 +120,7 @@ class MacWindowTests(unittest.TestCase):
         from types import SimpleNamespace
         from unittest.mock import patch
         import aipet
-        from aipet_agents_window import AgentNetworkWindow, DEFAULT_OPTIONS
+        from aipetlib.ui.agent_window import AgentNetworkWindow, DEFAULT_OPTIONS
 
         root = aipet.MacPetWindow()
         root.withdraw()
@@ -167,7 +167,7 @@ class MacWindowTests(unittest.TestCase):
     def test_log_filter_toolbar_aligns_and_wraps_without_overlapping_logs(self):
         from types import SimpleNamespace
         import aipet
-        from aipet_agents_window import AgentNetworkWindow
+        from aipetlib.ui.agent_window import AgentNetworkWindow
 
         root = aipet.MacPetWindow()
         root.withdraw()
@@ -211,7 +211,7 @@ class MacWindowTests(unittest.TestCase):
     def test_agent_network_opens_with_and_without_sessions(self):
         from types import SimpleNamespace
         import aipet
-        from aipet_agents_window import AgentNetworkWindow
+        from aipetlib.ui.agent_window import AgentNetworkWindow
 
         root = aipet.MacPetWindow()
         root.withdraw()
@@ -239,7 +239,7 @@ class MacWindowTests(unittest.TestCase):
     def test_resize_preserves_ui_scale_and_text_size(self):
         from types import SimpleNamespace
         import aipet
-        from aipet_agents_window import AgentNetworkWindow
+        from aipetlib.ui.agent_window import AgentNetworkWindow
 
         root = aipet.MacPetWindow()
         root.withdraw()
@@ -514,7 +514,7 @@ class MacWindowTests(unittest.TestCase):
         import Quartz
         import aipet
         import mac_statusbar as mac
-        from aipet_agents_window import AgentNetworkWindow
+        from aipetlib.ui.agent_window import AgentNetworkWindow
 
         workspace = mac.send(mac.cls("NSWorkspace"), "sharedWorkspace")
         previous = mac.send(workspace, "frontmostApplication")
