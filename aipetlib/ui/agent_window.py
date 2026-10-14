@@ -18,25 +18,18 @@ import aipetlib.ui.agent_menu as agent_menu
 import aipetlib.ui.agent_prompts as agent_prompts
 import aipetlib.ui.agent_logs as agent_logs
 import aipetlib.ui.agent_graph as agent_graph
-import json
 import math
-import sys
 import time
 import tkinter as tk
-from tkinter import font as tkfont
 
 from aipetlib.ui import theme
 from aipetlib.runtime import diagnostics
 from aipetlib.runtime import perf
 from aipetlib.agents import log_filters, network, stats, tracker
 from aipetlib.agents.tools import is_mcp_tool
-from aipetlib.ui.agent_common import (  # noqa: F401  (the window's values, also read from here)
-    REFRESH_MS, FRAME_MS, IS_MAC, ALPHA_MIN, ALPHA_STEP, OPACITY_STEP, SCALE_MIN, SCALE_MAX, SCALE_STEP,
-    TEXT_SCALE_MIN, TEXT_SCALE_MAX, TEXT_SCALE_STEP, ZOOM_MIN, ZOOM_MAX, OPTIONS_KEY, DEFAULT_OPTIONS, LOG_SIDES,
-    HINT, BG_OPACITY, _snap, load_options, log_preview, formatted_log_content, key_color, dither, needed_size,
-    PALETTES, STATUS, ROBOT_STATE, KIND_MARK, mix, bezier, session_label, candidate_sessions, pick_session,
-    suggestion_label, prompt_agent, parse_geometry, set_caption, has_caption, work_area, toggle_maximize, TextPopup,
-    Slider,
+from aipetlib.ui.agent_common import (
+    REFRESH_MS, IS_MAC, load_options, needed_size, PALETTES, session_label, candidate_sessions, pick_session,
+    parse_geometry,
 )
 
 

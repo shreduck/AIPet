@@ -126,7 +126,8 @@ class MacWindowTests(unittest.TestCase):
         from types import SimpleNamespace
         from unittest.mock import patch
         import aipet
-        from aipetlib.ui.agent_window import AgentNetworkWindow, DEFAULT_OPTIONS
+        from aipetlib.ui.agent_common import DEFAULT_OPTIONS
+        from aipetlib.ui.agent_window import AgentNetworkWindow
 
         root = mac_panels.MacPetWindow()
         root.withdraw()

@@ -33,7 +33,7 @@ ENTRY_MODULES = {"aipet", "aipet_app", "aipet_settings", "aipet_guide", "aipet_s
 REMOVED_MODULES = {"aipet_agents", "aipet_agents_window", "aipet_update", "hooks_installer", "legacy", "aipet_codex",
                    "aipetlib.hook_events"}
 # Entry modules that may only import what they use themselves (no re-exports for other code to reach through)
-NO_REEXPORTS = ["aipet", "aipet_app", "aipet_settings"]
+NO_REEXPORTS = ["aipet", "aipet_app", "aipet_settings", "aipetlib.ui.agent_window"]
 GUI_PACKAGES = {"tkinter", "_tkinter", "PIL", "pystray", "pyvda", "comtypes", "objc", "AppKit"}
 HEADLESS = ["aipet_hook_runtime", "aipetlib.agents", "aipetlib.runtime", "aipetlib.config", "aipetlib.records", "aipetlib.text",
             "aipetlib.housekeeping", "aipetlib.ui.sounds", "aipetlib.update", "aipetlib.integrations.targets",

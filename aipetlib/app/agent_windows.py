@@ -3,6 +3,7 @@ import threading
 
 from ..runtime import settings as runtime_settings
 from ..agents import tracker
+from ..ui import agent_common
 from ..ui import agent_window
 from ..ui import theme
 
@@ -62,7 +63,7 @@ class AgentWindows:
 
     def separate(self):
         app = self.app
-        return agent_window.load_options(app.pet.cfg)["separate"]
+        return agent_common.load_options(app.pet.cfg)["separate"]
 
     def menu_item(self, key=None, label="Agent network window"):
         """A switch: opens the agent network window (on this session), or closes it (them) when open."""
@@ -81,10 +82,10 @@ class AgentWindows:
         """Default appearance for the agent network windows (one window or one per session stays as it is), and every
         open one centred on the main screen."""
         app = self.app
-        opts = dict(agent_window.DEFAULT_OPTIONS,
-                    separate=agent_window.load_options(app.pet.cfg)["separate"])
-        app.pet.cfg[agent_window.OPTIONS_KEY] = opts
-        runtime_settings.save_setting(agent_window.OPTIONS_KEY, opts)
+        opts = dict(agent_common.DEFAULT_OPTIONS,
+                    separate=agent_common.load_options(app.pet.cfg)["separate"])
+        app.pet.cfg[agent_common.OPTIONS_KEY] = opts
+        runtime_settings.save_setting(agent_common.OPTIONS_KEY, opts)
         for n, w in enumerate(self.open_windows().values()):
             w.reset_appearance(opts, cascade=n)
         app.refresh_menu()
@@ -100,10 +101,10 @@ class AgentWindows:
 
     def toggle_separate(self):
         app = self.app
-        opts = agent_window.load_options(app.pet.cfg)
+        opts = agent_common.load_options(app.pet.cfg)
         opts["separate"] = not opts["separate"]
-        app.pet.cfg[agent_window.OPTIONS_KEY] = opts
-        runtime_settings.save_setting(agent_window.OPTIONS_KEY, opts)
+        app.pet.cfg[agent_common.OPTIONS_KEY] = opts
+        runtime_settings.save_setting(agent_common.OPTIONS_KEY, opts)
         self.mode_changed(None)
 
     def mode_changed(self, source):
@@ -146,7 +147,7 @@ class AgentWindows:
             else:
                 wins["*"] = new(key, False)
             return
-        keys = [key] if key else [i["key"] for i in agent_window.candidate_sessions(app.pet._last_items)][:6]
+        keys = [key] if key else [i["key"] for i in agent_common.candidate_sessions(app.pet._last_items)][:6]
         if not keys:  # no session yet: one window that waits for the first
             wins["*"] = wins.get("*") or new(None, False)
             return

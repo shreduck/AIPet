@@ -14,7 +14,7 @@ import aipetlib.agents.network as agent_network
 import aipetlib.agents.records as agent_records
 import aipetlib.agents.stats as agent_stats
 from aipetlib.runtime import preferences
-from aipetlib.ui import agent_menu, agent_prompts
+from aipetlib.ui import agent_common, agent_menu, agent_prompts
 
 
 def iso(t):
@@ -550,43 +550,43 @@ class WindowLogicTests(unittest.TestCase):
         self.assertIsNone(win.pick_session([]))
         net = {"agents": [{"id": ""}, {"id": "x1"}, {"id": "x2"}]}
         asking = {"state": "needs_input", "request": {"id": "r", "agent": "x2"}}
-        self.assertEqual(win.prompt_agent(net, asking), 2)
-        self.assertEqual(win.prompt_agent(net, {"state": "needs_input", "request": {"id": "r"}}), 0)
-        self.assertIsNone(win.prompt_agent(net, {"state": "working", "request": {}}))
+        self.assertEqual(agent_common.prompt_agent(net, asking), 2)
+        self.assertEqual(agent_common.prompt_agent(net, {"state": "needs_input", "request": {"id": "r"}}), 0)
+        self.assertIsNone(agent_common.prompt_agent(net, {"state": "working", "request": {}}))
 
 
 class WindowOptionTests(unittest.TestCase):
     def test_both_scales_default_to_100_and_preserve_explicit_preferences(self):
         import aipetlib.ui.agent_window as win
         for cfg in ({}, {"agent_window": {}}, {"agent_window": {"text_scale": "bad", "scale": False}}):
-            opts = win.load_options(cfg)
+            opts = agent_common.load_options(cfg)
             self.assertEqual((opts["scale"], opts["text_scale"]), (100, 100))
-        opts = win.load_options({"agent_window": {"scale": 75, "text_scale": 135}})
+        opts = agent_common.load_options({"agent_window": {"scale": 75, "text_scale": 135}})
         self.assertEqual((opts["scale"], opts["text_scale"]), (75, 135))
 
     def test_auto_fit_preference_is_saved_in_graph_options(self):
         import aipetlib.ui.agent_window as win
-        self.assertFalse(win.load_options({})["auto_fit"])
-        self.assertTrue(win.load_options({"agent_window": {"auto_fit": True}})["auto_fit"])
-        self.assertFalse(win.load_options({"agent_window": {"auto_fit": "yes"}})["auto_fit"])
+        self.assertFalse(agent_common.load_options({})["auto_fit"])
+        self.assertTrue(agent_common.load_options({"agent_window": {"auto_fit": True}})["auto_fit"])
+        self.assertFalse(agent_common.load_options({"agent_window": {"auto_fit": "yes"}})["auto_fit"])
 
     def test_options_load_and_snap(self):
         import aipetlib.ui.agent_window as win
-        opts = win.load_options({"agent_window": {"alpha": 73, "node_alpha": 0, "bg_alpha": 62, "on_top": "yes",
+        opts = agent_common.load_options({"agent_window": {"alpha": 73, "node_alpha": 0, "bg_alpha": 62, "on_top": "yes",
                                                   "frameless": True, "scale": 400, "separate": 1}})
         self.assertEqual((opts["alpha"], opts["node_alpha"], opts["bg_alpha"], opts["on_top"], opts["frameless"],
                           opts["scale"], opts["separate"]), (75, 30, 60, False, True, 150, False))  # opacity >= 30%
-        self.assertEqual([win.dither(v) for v in (100, 90, 75, 50, 30)], ["", "", "gray75", "gray50", "gray25"])
-        self.assertEqual(win.load_options({}), win.DEFAULT_OPTIONS)
-        self.assertEqual(win.load_options({"agent_window": {"alpha": 5, "scale": 10}})["alpha"], 30)
-        self.assertEqual(win.key_color("#fbfaf7"), "#fbfaf6")  # see-through key: one notch off the background
+        self.assertEqual([agent_common.dither(v) for v in (100, 90, 75, 50, 30)], ["", "", "gray75", "gray50", "gray25"])
+        self.assertEqual(agent_common.load_options({}), agent_common.DEFAULT_OPTIONS)
+        self.assertEqual(agent_common.load_options({"agent_window": {"alpha": 5, "scale": 10}})["alpha"], 30)
+        self.assertEqual(agent_common.key_color("#fbfaf7"), "#fbfaf6")  # see-through key: one notch off the background
 
     def test_logs_beside_the_graph_need_width_not_height(self):
         import aipetlib.ui.agent_window as win
         below, beside = win.needed_size(2, 1, 18, 16), win.needed_size(2, 1, 18, 16, side="right")
         self.assertGreater(beside[0], below[0])
         self.assertLess(beside[1], below[1])
-        self.assertEqual(win.load_options({"agent_window": {"log_side": "up"}})["log_side"], "bottom")
+        self.assertEqual(agent_common.load_options({"agent_window": {"log_side": "up"}})["log_side"], "bottom")
 
     def test_geometry_kept_when_switching_compact(self):
         import aipetlib.ui.agent_window as win
@@ -595,11 +595,11 @@ class WindowOptionTests(unittest.TestCase):
 
     def test_colour_mix_for_fading(self):
         import aipetlib.ui.agent_window as win
-        self.assertEqual(win.mix("#000000", "#ffffff", 0), "#000000")
-        self.assertEqual(win.mix("#000000", "#ffffff", 1), "#ffffff")
-        self.assertEqual(win.mix("#000000", "#ffffff", 0.5), "#808080")
-        self.assertEqual(win.mix("systemTransparent", "#ffffff", 0.5), "systemTransparent")
-        self.assertEqual(win.load_options({})["tidy"], False)
+        self.assertEqual(agent_common.mix("#000000", "#ffffff", 0), "#000000")
+        self.assertEqual(agent_common.mix("#000000", "#ffffff", 1), "#ffffff")
+        self.assertEqual(agent_common.mix("#000000", "#ffffff", 0.5), "#808080")
+        self.assertEqual(agent_common.mix("systemTransparent", "#ffffff", 0.5), "systemTransparent")
+        self.assertEqual(agent_common.load_options({})["tidy"], False)
 
     def test_needed_size_follows_scale_agents_and_compact(self):
         import aipetlib.ui.agent_window as win
@@ -612,7 +612,7 @@ class WindowOptionTests(unittest.TestCase):
 
 class FullReplyTests(unittest.TestCase):
     def test_expanded_content_formats_structures_and_decodes_only_json_escapes(self):
-        from aipetlib.ui.agent_window import formatted_log_content
+        from aipetlib.ui.agent_common import formatted_log_content
         original = "# Result\n\n- First\n- Second\n\nC:\\new\\test"
         self.assertEqual(formatted_log_content(original), original)
         self.assertEqual(formatted_log_content(json.dumps(original)), original)
