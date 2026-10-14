@@ -351,7 +351,9 @@ A live map of one session: the main agent and every subagent it started, Claude 
 - **Prompts**: when an agent needs you, a small warning shows (*Plan needs your input*). Click it (or press Space) and
   it opens over the log with the prompt or question and its answers (side by side when they fit, one per line when
   they don't); Esc folds it back. A question's answers are a pick-one list with *Your own answer:* as the last one:
-  type in its box and press Enter to send exactly that. Several questions or multi-select ones go to the full card.
+  type in its box and press Enter to send exactly that. Several questions show one at a time (*question 2/4*, with
+  ‹ › or ←→ to move between them, ● the one shown, ◉ answered): picking an answer moves on, a pick-any question
+  has check boxes and *next question ›*, and *send answers* (or answering the last one) sends them all together.
   Clicking the node of the agent that is asking opens its prompt too. Next to *allow once*, *deny* and
   *aipet: always (whitelist)* (AIPet's own auto-approve list), Claude Code prompts list Claude Code's own choices
   when it offers them, marked *claude:* (e.g. *claude: allow Bash(npm test:\*) always, in this project*, or a
