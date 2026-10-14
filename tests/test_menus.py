@@ -135,6 +135,13 @@ class MenuTests(unittest.TestCase):
         idle = app._context_menu_spec(SimpleNamespace(key='_none', data={}))[3]['submenu']
         self.assertTrue(all(not e['enabled'] for e in idle if e))
 
+    def test_countdowns_read_timed_grants_where_the_tests_isolate_them(self):
+        """A timed auto approve running on the machine that runs the tests must not reach the menus under test."""
+        app = self.make_app()
+        self.assertEqual(app._timed_countdown_items(), [])  # setUp's patch: no grants
+        with patch.object(aipet.permissions, 'timed_grants', return_value={'s1': {'title': 'live', 'until': 9e9}}):
+            self.assertEqual(len(app._timed_countdown_items()), 1)
+
     @patch.object(aipet_app.hi, 'list_backups', return_value=[])
     @patch.object(aipet.permissions, 'auto_approve_rules', return_value={})
     def test_fix_fast_cancel_marks_the_session_finished(self, *_):

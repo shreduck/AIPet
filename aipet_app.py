@@ -28,6 +28,8 @@ from aipetlib.runtime import settings as runtime_settings
 from aipetlib.agents.tracker import NetworkTracker
 import aipet_guide
 import aipet_settings
+from aipetlib import permissions
+from aipetlib import text as textfmt
 from aipetlib import update as releases
 from aipetlib.app.agent_windows import AgentWindows
 from aipetlib.app.approvals import Approvals
@@ -970,9 +972,9 @@ class TrayApp:
 
     def _timed_countdown_items(self):
         """Right-click: every running timed auto approve, with its countdown, one click to stop it."""
-        grants, now = core.timed_grants(), time.time()
+        grants, now = permissions.timed_grants(), time.time()
         return [{"label": f"⏱ Stop auto approve: {g.get('title') or 'session'} · "
-                          f"{core.fmt_left(g['until'] - now)} left",
+                          f"{textfmt.fmt_left(g['until'] - now)} left",
                  "action": lambda sid=sid: self._stop_timed(sid), "enabled": True} for sid, g in grants.items()]
 
     def settings_item(self):
