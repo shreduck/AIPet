@@ -172,11 +172,11 @@ def focus_wsl_terminal(d, others=()):
     a terminal whose title mentions the distro or project folder; for sessions run by the desktop app, that app's
     window; a terminal of this agent, else one that doesn't say; the agent's desktop app."""
     agent = "codex" if d.get("agent") == "codex" else "claude"
-    if agent == "claude" and ("desktop" in (d.get("entry") or "").lower() or d.get("app") == "cowork"):
-        # Run by the Claude desktop app (its Code tab, here in WSL): that app's window, always. Not a terminal that
+    if "desktop" in (d.get("entry") or "").lower() or d.get("app") == "cowork":
+        # Run by the desktop app: that app's window, always. Not a terminal that
         # happens to mention the distro or folder, and not "claimed": one app window hosts all of its sessions, so
         # a Cowork session having recorded it doesn't make it someone else's.
-        app = claude_app_windows("claude.exe")
+        app = claude_app_windows(agent + ".exe")
         if app:
             return focus_hwnd(app[0])
     claimed = {int(o["hwnd"]) for o in others if o.get("hwnd")}

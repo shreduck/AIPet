@@ -294,8 +294,15 @@ def read_claude_code_sessions(cfg):
             # the conversation to a new session): show it as done, so the done timeout clears it
             rec = dict(rec, state="done", message="", request={}, changed=rec.get("updated", 0))
         if rec.get("agent") == "codex":
+            from aipet_hook_runtime.codex import session_meta
             from .codex_questions import question_snapshot, reconcile_questions
-            rec = reconcile_questions(rec, question_snapshot(transcript_file(rec)))
+            rollout = transcript_file(rec)
+            originator = str(session_meta(rollout).get("originator") or "")
+            if originator.lower() == "codex desktop":
+                # Desktop also reports source=vscode; originator identifies its
+                # actual host, independently of inherited hook environment.
+                rec = dict(rec, entry=originator, ide="")
+            rec = reconcile_questions(rec, question_snapshot(rollout))
         if rec.get("state") == "working" and turn_interrupted(rec):
             # You stopped the turn (Esc / the stop button). Claude Code sends no hook event for that, only a line in
             # its transcript, so the session would look busy until your next message.

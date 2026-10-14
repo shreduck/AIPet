@@ -86,8 +86,13 @@ class _QuestionReader:
             return
         p, kind = entry["payload"], entry.get("type")
         sub = p.get("type")
-        if kind == "event_msg" and sub in ("task_started", "task_complete", "turn_aborted"):
+        if kind == "event_msg" and sub == "turn_aborted":
             self.pending.clear()
+        elif kind == "event_msg" and sub in ("task_started", "task_complete"):
+            # Async questions remain answerable after the assistant's turn ends.
+            # Only a reply, a superseding user message or an abort settles them.
+            self.pending = {call: req for call, req in self.pending.items()
+                            if req["tool"] == "request_user_input_async"}
         elif kind == "response_item" and sub == "message" and p.get("role") == "user":
             content = p.get("content")
             texts = [c["text"] for c in (content if isinstance(content, list) else [])
@@ -161,7 +166,9 @@ def reconcile_questions(rec, snapshot):
     requests = rec.get("requests") or ([rec["request"]] if rec.get("request") else [])
     requests = [r for r in requests if r.get("source") != "codex-question" or
                 str(r.get("tool_use_id") or r.get("id") or "") not in snapshot["seen"]]
-    questions = [q for q in snapshot["pending"] if rec.get("state") not in ("done", "idle", "error") or
+    questions = [q for q in snapshot["pending"] if
+                 (q.get("tool") == "request_user_input_async" and rec.get("state") in ("done", "idle")) or
+                 rec.get("state") not in ("done", "idle", "error") or
                  q["t"] > float(rec.get("updated") or 0)]
     ids = {r.get("id") for r in requests}
     requests += [q for q in questions if q["id"] not in ids]

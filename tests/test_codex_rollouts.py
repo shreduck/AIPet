@@ -111,3 +111,27 @@ class CodexRolloutTests(unittest.TestCase):
         self.assertEqual(candidate_sessions(items), items)
         self.assertTrue((sessions / 'post-turn-job.json').exists())  # filtering does not delete hook records
 
+    def test_desktop_originator_distinguishes_app_from_cli_and_vscode_source(self):
+        import copy
+        sessions = self.home / 'pet-sessions'
+        sessions.mkdir()
+        for sid, meta, ide in (
+                ('desktop', {'originator': 'Codex Desktop', 'source': 'vscode'}, 'vscode'),
+                ('cli', {'originator': 'codex_cli_rs', 'source': 'cli'}, ''),
+                ('extension', {'source': 'vscode'}, 'vscode')):
+            rollout = self.rollout(4, f'rollout-2026-10-04T12-00-00-{sid}.jsonl', dict(meta, id=sid))
+            record = {'id': sid, 'agent': 'codex', 'state': 'working', 'updated': self.now,
+                      'transcript_path': rollout, 'ide': ide}
+            (sessions / (sid + '.json')).write_text(json.dumps(record))
+        cfg = copy.deepcopy(config.DEFAULT_CONFIG)
+        cfg['claude_code']['enabled'] = True
+        cfg['claude_code']['extra_session_dirs'] = []
+        with support.paths(SESSIONS_DIR=str(sessions), LEGACY_SESSIONS_DIR=str(self.home / 'unused')):
+            items = {i['session_id']: i for i in sessions_owner.read_claude_code_sessions(cfg)}
+        self.assertEqual(items['desktop']['badges'], ['Codex App'])
+        self.assertEqual(items['desktop']['entry'], 'Codex Desktop')
+        self.assertEqual(items['desktop']['ide'], '')
+        self.assertEqual(items['cli']['badges'], ['Codex CLI'])
+        self.assertEqual(items['extension']['badges'], ['Codex VS'])
+        self.assertEqual(json.loads((sessions / 'desktop.json').read_text())['ide'], 'vscode')
+

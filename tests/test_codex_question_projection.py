@@ -55,8 +55,10 @@ class CodexQuestionProjectionTests(unittest.TestCase):
                 self.write([output(result=result)], "a")
                 self.assertEqual(self.ids(), [])
 
-    def test_async_acceptance_survives_unrelated_tool_until_reply_or_turn_closure(self):
+    def test_async_acceptance_survives_unrelated_tool_and_turn_completion_until_reply(self):
         self.write([ask(tool="request_user_input_async"), output(result={"accepted": True}),
+                    event("event_msg", {"type": "task_complete"}),
+                    event("event_msg", {"type": "task_started"}),
                     event("response_item", {"type": "function_call_output", "call_id": "unrelated", "output": "ok"})])
         self.assertEqual(self.ids(), ["q1"])
         reply = '<send_user_message_question_reply>' + json.dumps([
@@ -65,7 +67,35 @@ class CodexQuestionProjectionTests(unittest.TestCase):
                     "content": [{"type": "input_text", "text": reply}]})], "a")
         self.assertEqual(self.ids(), [])
         self.write([ask(tool="request_user_input_async"), output(result={"accepted": True}),
+                    event("event_msg", {"type": "turn_aborted"})])
+        self.assertEqual(self.ids(), [])
+
+    def test_completed_turn_keeps_async_question_waiting_over_done_hook_until_answer(self):
+        self.write([ask(tool="request_user_input_async"), output(result={"accepted": True}),
                     event("event_msg", {"type": "task_complete"})])
+        snapshot = self.reader.read(self.path)
+        for state in ("done", "idle"):
+            with self.subTest(state=state):
+                record = {"state": state, "updated": snapshot["pending"][0]["t"] + 1}
+                original = copy.deepcopy(record)
+                for _ in range(3):
+                    projected = reconcile_questions(record, self.reader.read(self.path))
+                    self.assertEqual(projected["state"], "needs_input")
+                    self.assertEqual(projected["request"]["id"], "q1")
+                self.assertEqual(record, original)
+        reply = '<send_user_message_question_reply>' + json.dumps([
+            {"questionItemId": '["request_user_input_async","q1",0]', "answer": "Local"}]) + '</send_user_message_question_reply>'
+        self.write([event("response_item", {"type": "message", "role": "user", "content": [
+            {"type": "input_text", "text": reply}]})], "a")
+        settled = reconcile_questions(record, self.reader.read(self.path))
+        self.assertEqual(settled["state"], "idle")
+        self.assertEqual(settled["requests"], [])
+
+    def test_new_user_message_supersedes_async_question_after_turn_completion(self):
+        self.write([ask(tool="request_user_input_async"), output(result={"accepted": True}),
+                    event("event_msg", {"type": "task_complete"}),
+                    event("response_item", {"type": "message", "role": "user", "content": [
+                        {"type": "input_text", "text": "Do something else"}]})])
         self.assertEqual(self.ids(), [])
 
     def test_blocking_question_clears_on_turn_end_abort_and_new_user_message(self):

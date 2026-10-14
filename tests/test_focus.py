@@ -7,6 +7,16 @@ import aipetlib.windows as windows
 
 
 class GoToWindowTests(unittest.TestCase):
+    def test_codex_desktop_prefers_app_over_matching_cli_terminal(self):
+        d = {"agent": "codex", "entry": "Codex Desktop", "cwd": "C:/projects/AIPet"}
+        with patch.object(windows, "terminal_windows", return_value=[(100, "Codex: AIPet")]) as terminals, \
+                patch.object(windows, "claude_app_windows", return_value=[500]) as apps, \
+                patch.object(windows, "focus_hwnd", return_value=True) as focus:
+            self.assertTrue(windows.focus_wsl_terminal(d, [{"hwnd": 500}]))
+        apps.assert_called_once_with("codex.exe")
+        focus.assert_called_once_with(500)
+        terminals.assert_not_called()
+
     def test_desktop_app_session_goes_to_the_app_even_with_a_matching_terminal_open(self):
         d = {"agent": "claude", "entry": "claude-desktop", "env": "wsl", "distro": "Ubuntu", "cwd": "/home/x/esign-online"}
         cowork = {"key": "cc:other", "hwnd": 500, "app": "cowork", "cwd": "C:/x"}  # recorded the same app window
