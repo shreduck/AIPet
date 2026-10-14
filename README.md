@@ -328,11 +328,14 @@ A live map of one session: the main agent and every subagent it started, Claude 
 - **Tool nodes** sit under the agent that called them, with a gear icon. Each unique tool, including MCP tools,
   gets one node per calling agent. Clicking it selects the calling agent and filters its log to that tool's inputs
   and outputs, matched by call ID. The graph settings include a **tool calls** toggle. Tool nodes do not count as subagents
-  or add model context to the stats.
+  or add model context to the stats. A tool node counts its calls for the whole session and for this task (since your
+  latest prompt): *12 calls · 2 this task*; the stats node's *tools* line and drop-down give both too.
 - Finished subagents remain visible across new messages until unused for **80% of Clear finished after**
   (3 minutes means 2 minutes 24 seconds). Reuse resets the timer; active agents and their parent branches stay
   visible, and setting the session timeout to **never** also disables subagent expiry.
-- **Logs** below the graph, or above, left or right of it (settings: *logs position*). Every other entry is shaded,
+- **Logs** below the graph, or above, left or right of it (settings: *logs position*). *[− logs]* at the end of the
+  tabs (or `l`, or *folded* in the settings) folds them down to their tabs and gives the graph the room; *[+ logs]*
+  brings them back. Every other entry is shaded,
   and each agent's final reply (its result) is tinted green with a green mark before it. Drag the line between graph and logs to
   resize them (up to 80% of the window); *tail* (settings, or `[tail ▼]` at the end of the tabs) follows the newest
   line, and unfolding an entry switches it off so what you opened stays in sight; select text and Ctrl+C to

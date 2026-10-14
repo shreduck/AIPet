@@ -197,6 +197,8 @@ class AgentNetworkWindow(agent_controls.WindowControls):
         w.bind("<Up>", key(lambda: self.prompt.step_option(-1) if self.prompt.overlay_open else self.logs.text.yview_scroll(-1, "units")))
         for k in ("a", "A"):
             w.bind(k, key(lambda: self.select(-1)))
+        for k in ("l", "L"):
+            w.bind(k, key(lambda: self.tool("fold_logs")))
         for k in ("plus", "equal", "KP_Add"):
             w.bind(f"<{k}>", key(lambda: self.graph.zoom(1.25)))
         for k in ("minus", "KP_Subtract"):

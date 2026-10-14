@@ -24,9 +24,10 @@ ZOOM_MIN, ZOOM_MAX = 0.01, 3.0
 OPTIONS_KEY = "agent_window"  # config.json
 DEFAULT_OPTIONS = {"on_top": False, "alpha": 100, "bg_alpha": 100, "node_alpha": 100, "frameless": False,
                    "separate": False, "tabbed": True, "tidy": False, "scale": 100, "text_scale": 100, "log_lines": 6,
-                   "log_cols": 60, "log_side": "bottom", "log_tail": True, "tools": True, "auto_fit": False}
+                   "log_cols": 60, "log_side": "bottom", "log_tail": True, "tools": True, "auto_fit": False,
+                   "log_collapsed": False}
 LOG_SIDES = ("bottom", "right", "top", "left")
-HINT = "tab/←→ agent · a all · pgup/pgdn session · space prompt · ctrl+wheel/+/- zoom · 0 reset · drag pan · esc close"
+HINT = "tab/←→ agent · a all · l fold logs · pgup/pgdn session · space prompt · ctrl+wheel/+/- zoom · 0 reset · drag pan · esc close"
 BG_OPACITY = IS_MAC or sys.platform == "win32"  # a see-through background needs Windows' or macOS' window support
 
 

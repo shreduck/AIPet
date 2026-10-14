@@ -122,6 +122,7 @@ class SettingsMenu:
         side.pack(fill="x", padx=pad)
         side.bind("<Button-1>", lambda e: (window.tool("logs"), "break")[1])
         toggle("tail", "log_tail", "tail (follow the newest line)")
+        toggle("fold_logs", "log_collapsed", "folded (only the tabs; l)")
         tk.Label(m, text="esc fold · click outside", font=window.f_small, bg=P["bar"], fg=P["mu"], anchor="w").pack(
             fill="x", padx=pad, pady=(window.px(6), pad // 2))
         self.place()
