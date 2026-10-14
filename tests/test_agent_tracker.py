@@ -44,14 +44,20 @@ class AgentTrackerTests(unittest.TestCase):
 
     def test_mid_session_open_recovers_old_input_and_model_for_both_providers(self):
         for provider in ("claude", "codex"):
-            with self.subTest(provider=provider), patch.object(agent_history, "MAIN_TAIL", 300):
+            with self.subTest(provider=provider), patch.object(agent_history, "MAIN_TAIL", 300), \
+                    patch.object(agent_tracker, "_ACTIVE", [False]), \
+                    patch.object(agent_tracker, "_WAKE", threading.Event()):
                 item = self.session(provider)
                 write_lines(item["transcript_path"], self.entries(provider))
                 foreground = agent_network.read_network(item, now=self.now + 2, include_tools=True)
                 self.assertFalse(any(a.get("tool") for a in foreground["agents"]))
                 tracker = agent_tracker.NetworkTracker(lambda: [item])
                 tracker.poll()  # no agent window exists
-                reopened = agent_network.read_network(item, now=self.now + 2, include_tools=True)
+                self.assertFalse(any(a.get("tool") for a in agent_tracker.latest(item["key"])["agents"]))
+                agent_tracker.set_active(True)  # opening the window requests full history
+                self.assertTrue(agent_tracker._WAKE.is_set())
+                tracker.poll()  # the background worker catches up before publishing to the window
+                reopened = agent_tracker.latest(item["key"])
                 tool = next(a for a in reopened["agents"] if a.get("tool"))
                 self.assertEqual(tool["name"], "Read")
                 self.assertEqual([row[1] for row in tool["lines"]], ["input", "output"])
