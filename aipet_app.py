@@ -31,6 +31,7 @@ import aipet_settings
 from aipetlib import update as releases
 from aipetlib.app.agent_windows import AgentWindows
 from aipetlib.app.approvals import Approvals
+from aipetlib.app.config_watch import ConfigWatcher
 from aipetlib.app.updates import UpdateFlow
 import hooks_installer as hi
 import legacy  # LEGACY: moving over from Claude Pet
@@ -45,16 +46,6 @@ except ImportError:  # still runs, just without a tray icon
     pystray = None
 
 APP_NAME = "AIPet"
-CONFIG_WATCH_MS = 1500  # how often config.json is checked for hand edits
-RESTART_KEYS = {"workbench", "claude_code", "click_through", "max_pets"}  # read once at start
-
-
-def config_stamp():
-    try:
-        st = os.stat(paths.CONFIG_PATH)
-        return st.st_mtime_ns, st.st_size
-    except OSError:
-        return None
 
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -352,8 +343,8 @@ class TrayApp:
                 diagnostics.log_error(f"menu bar icon: {e!r}")
 
         threading.Thread(target=self._startup_jobs, daemon=True).start()
-        self._config_stamp = config_stamp()
-        self.root.after(CONFIG_WATCH_MS, self.watch_config)
+        self.config_watch = ConfigWatcher(self)  # config.json edited by hand: applied live
+        self.config_watch.start()
         self.pump()
 
     # ---- threading
@@ -740,32 +731,10 @@ class TrayApp:
 
     # ---- new version check (GitHub releases; tells you and opens the page, never installs anything)
     # ---- config.json edited by hand: apply it live
-    def watch_config(self):
-        try:
-            stamp = config_stamp()
-            if stamp != self._config_stamp:
-                self._config_stamp = stamp
-                self.apply_config_file()
-        except Exception as e:
-            diagnostics.log_error(f"config watch: {e!r}")
-        self.root.after(CONFIG_WATCH_MS, self.watch_config)
-
-    def apply_config_file(self):
-        """Apply what changed in config.json since the app last saw it. A file that isn't valid JSON (an editor
-        mid-save, a typo) is skipped until it is. Returns the keys that only apply after a restart."""
-        try:
-            with open(paths.CONFIG_PATH, encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, ValueError):
-            return []
-        if not isinstance(data, dict):
-            return []
-        cfg, pet = self.pet.cfg, self.pet
-        merged = core.deep_merge(core.DEFAULT_CONFIG, data)  # nested sections (workbench...) as the app holds them
-        changed = {k: merged[k] for k in data if cfg.get(k) != merged[k]}
-        if not changed:
-            return []
-        handlers = {
+    def config_handlers(self):
+        """config.json key -> the setter that applies it now (the config watcher calls them with saving paused)."""
+        pet = self.pet
+        return {
             "theme": lambda v: (pet.apply_theme(v), hasattr(self, "theme_var") and self.theme_var.set(v == "dark")),
             "size": lambda v: pet.set_size(float(v)),
             "tooltip_text_scale": pet.set_tooltip_text_scale,
@@ -786,26 +755,6 @@ class TrayApp:
             "usage_tooltips": lambda v: pet.set_tooltip("usage", v),
             "card_scale": pet.set_card_scale,
         }
-        restart = []
-        runtime_settings.SAVE_PAUSED["v"] = True  # the setters save; the file already says so
-        try:
-            for key, value in changed.items():
-                if key in RESTART_KEYS:
-                    restart.append(key)
-                    continue
-                try:
-                    if key in handlers:
-                        handlers[key](value)
-                    cfg[key] = value  # everything else is read where it's used (sound_style, update_check...)
-                except Exception as e:
-                    diagnostics.log_error(f"config.json {key}={value!r}: {e!r}")
-        finally:
-            runtime_settings.SAVE_PAUSED["v"] = False
-        self.refresh_menu()  # menus and the settings window show the new values
-        if restart:
-            self.info("config.json changed. Applied what could be applied now; these take effect after AIPet "
-                      "restarts: " + ", ".join(sorted(restart)))
-        return restart
 
     def _recheck_setup(self):
         self._close_setup()

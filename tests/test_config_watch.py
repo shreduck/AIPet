@@ -18,6 +18,7 @@ class ConfigWatchTests(unittest.TestCase):
         app = self.app = object.__new__(aipet_app.TrayApp)
         app.pet = MagicMock(cfg=aipet.load_config())
         app.refresh_menu, app.info, app.set_style, app._set_notify = MagicMock(), MagicMock(), MagicMock(), MagicMock()
+        app.config_watch = aipet_app.ConfigWatcher(app)
 
     def tearDown(self):
         self.p.stop()
@@ -31,7 +32,7 @@ class ConfigWatchTests(unittest.TestCase):
         self.write({"theme": "dark", "compact": True, "done_timeout_minutes": 9, "sound_style": "system"})
         saved = []
         with patch.object(aipet, "save_setting", side_effect=lambda k, v: saved.append(k)):
-            self.assertEqual(self.app.apply_config_file(), [])
+            self.assertEqual(self.app.config_watch.apply(), [])
         self.app.pet.apply_theme.assert_called_once_with("dark")
         self.app.pet.toggle_compact.assert_called_once_with(True)
         self.app.pet.set_done_timeout.assert_called_once_with(9)
@@ -41,19 +42,19 @@ class ConfigWatchTests(unittest.TestCase):
 
     def test_unchanged_file_and_nested_defaults_do_nothing(self):
         self.write({"theme": self.app.pet.cfg["theme"], "workbench": {}})  # the app's own save, say
-        self.assertEqual(self.app.apply_config_file(), [])
+        self.assertEqual(self.app.config_watch.apply(), [])
         self.app.pet.apply_theme.assert_not_called()
         self.app.info.assert_not_called()
 
     def test_broken_json_waits_for_a_valid_file(self):
         with open(self.path, "w") as f:
             f.write('{"theme": "dark",')  # an editor mid-save
-        self.assertEqual(self.app.apply_config_file(), [])
+        self.assertEqual(self.app.config_watch.apply(), [])
         self.app.pet.apply_theme.assert_not_called()
 
     def test_restart_only_keys_are_reported(self):
         self.write({"workbench": {"enabled": True, "mcp_url": "http://x"}})
-        self.assertEqual(self.app.apply_config_file(), ["workbench"])
+        self.assertEqual(self.app.config_watch.apply(), ["workbench"])
         self.app.info.assert_called_once()
 
     def test_paused_save_writes_nothing(self):
