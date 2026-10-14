@@ -11,6 +11,7 @@ import time
 from .. import permissions
 from .. import sessions as session_text
 from .. import text as textfmt
+from ..app import diagnostics as app_diagnostics
 from ..runtime import paths
 from ..runtime import preferences
 from . import pet_style
@@ -260,7 +261,7 @@ def _mac_menu_spec(app, settings=False):
             ]),
             None,
             item("Diagnostics", icon="wrench", help="For when something isn't working.", submenu=[
-                item("Save diagnostics...", app.pet.save_diagnostics,
+                item("Save diagnostics...", lambda: app_diagnostics.save(app.pet),
                      help="Saves a report you can attach to a bug report."),
                 item("Open config folder", app.open_config, help="Where AIPet keeps its settings and logs."),
                 item("Log hook events (debug)", app.toggle_debug, checked=os.path.exists(paths.DEBUG_FLAG),

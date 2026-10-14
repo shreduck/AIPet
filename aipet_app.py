@@ -32,6 +32,7 @@ from aipetlib import update as releases
 from aipetlib.app.agent_windows import AgentWindows
 from aipetlib.app.approvals import Approvals
 from aipetlib.app.config_watch import ConfigWatcher
+import aipetlib.app.diagnostics as app_diagnostics
 from aipetlib.app.updates import UpdateFlow
 import hooks_installer as hi
 import legacy  # LEGACY: moving over from Claude Pet
@@ -1298,7 +1299,7 @@ def main():
         runtime_settings.ensure_home()
         mark_setup_done()
         app = TrayApp()
-        app.root.after(12000, app.pet.write_diagnostics)
+        app.root.after(12000, lambda: app_diagnostics.write(app.pet))
         app.root.after(20000, app.quit)
         app.root.mainloop()
         return
