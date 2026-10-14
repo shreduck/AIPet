@@ -29,6 +29,7 @@ class GraphView:
         self.sig = None  # what the graph last drew
         self.edges, self.dots = [], []
         self.content, self.center_next, self.panned = None, True, False
+        self._pan_active = False
         self.bands, self.leaving, self.titles, self.animating = {}, {}, [], False
         self.robots = {}  # robot images by (state, height, theme)
 
@@ -47,6 +48,7 @@ class GraphView:
         self.canvas.bind("<ButtonPress-1>", self.pan_start)
         self.canvas.bind("<B1-Motion>", self.pan_move)
         self.canvas.bind("<ButtonRelease-1>", self.pan_end, add="+")
+        w.bind("<FocusOut>", lambda e: self.cancel_pan(), add="+")
         for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
             self.canvas.bind(seq, self.wheel)
         # zoom controls (top left of the graph) and the stats node (bottom right): fixed, outside the zoom
@@ -602,6 +604,7 @@ class GraphView:
         c.yview_moveto((top - y0) / max(1, y1 - y0))
 
     def pan_start(self, e):
+        self._pan_active = True
         self.gesture_remainder = (0.0, 0.0)
         self.panned = False
         self.pan_from = (e.x, e.y)
@@ -625,6 +628,11 @@ class GraphView:
         return "break"
 
     def pan_move(self, e):
+        if not getattr(self, "_pan_active", False):
+            return
+        if not getattr(e, "state", 0x100) & 0x100:
+            self.cancel_pan()
+            return
         window = self.window
         fx, fy = getattr(self, "pan_from", (e.x, e.y))
         if self.panned or abs(e.x - fx) + abs(e.y - fy) > 4:
@@ -659,10 +667,20 @@ class GraphView:
         return True
 
     def pan_end(self, e):
+        self._pan_active = False
         window = self.window
         if self.panned:
             self.canvas.configure(cursor="")
             window.win.after_idle(lambda: setattr(self, "panned", False))
+
+    def cancel_pan(self):
+        """Cancel a mouse drag when focus or a prompt hands input to another window."""
+        self._pan_active = False
+        self.panned = False
+        try:
+            self.canvas.configure(cursor="")
+        except tk.TclError:
+            pass  # FocusOut can arrive while the window is being destroyed.
 
     def wheel(self, e):
         """Ctrl + wheel zooms at the pointer; the wheel alone scrolls (shift: sideways)."""

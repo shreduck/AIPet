@@ -318,8 +318,8 @@ class PanelMouseBridge:
                 target.event_generate("<Motion>", **options)
                 target.event_generate(f"<ButtonPress-{button}>", **options)
             elif kind in (2, 4, 26):
-                target.event_generate(f"<ButtonRelease-{button}>", **options)
                 self._capture = None
+                target.event_generate(f"<ButtonRelease-{button}>", **options)
             elif kind in (5, 6, 7, 8, 27):
                 if kind in (6, 7, 27):
                     options["state"] |= 1 << (button + 7)

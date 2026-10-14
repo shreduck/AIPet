@@ -50,6 +50,44 @@ def graph_window():
 
 
 class GestureTests(unittest.TestCase):
+    def test_pointer_drag_requires_a_press_on_the_graph(self):
+        graph = agent_graph.GraphView(SimpleNamespace(win=Mock()))
+        graph.canvas = Mock()
+        graph.shift_into_view = Mock(return_value=False)
+        # Native Tk can report an old held-button bit after a prompt hides its
+        # clicked label. A historical graph drag must not authorize a new one.
+        graph.pan_from = (10, 10)
+        graph.pan_move(SimpleNamespace(x=80, y=90, state=256))
+        graph.canvas.scan_dragto.assert_not_called()
+        self.assertFalse(graph.panned)
+
+    def test_pointer_release_ends_drag_before_idle_callbacks(self):
+        graph = agent_graph.GraphView(SimpleNamespace(win=Mock()))
+        graph.canvas = Mock()
+        graph.shift_into_view = Mock(return_value=False)
+        graph.pan_start(SimpleNamespace(x=10, y=10))
+        graph.pan_move(SimpleNamespace(x=30, y=40, state=256))
+        graph.canvas.scan_dragto.assert_called_once_with(30, 40, gain=1)
+        graph.pan_end(SimpleNamespace(x=30, y=40))
+        # No idle callback has run: a native move queued behind the release
+        # still cannot extend the completed drag.
+        graph.canvas.scan_dragto.reset_mock()
+        graph.pan_move(SimpleNamespace(x=60, y=70, state=256))
+        graph.canvas.scan_dragto.assert_not_called()
+
+    def test_pointer_press_still_allows_drag_after_a_completed_drag(self):
+        graph = agent_graph.GraphView(SimpleNamespace(win=Mock()))
+        graph.canvas = Mock()
+        graph.shift_into_view = Mock(return_value=False)
+        graph.pan_start(SimpleNamespace(x=10, y=10))
+        graph.pan_move(SimpleNamespace(x=30, y=40, state=256))
+        graph.pan_end(SimpleNamespace(x=30, y=40))
+        graph.canvas.scan_dragto.reset_mock()
+        graph.pan_start(SimpleNamespace(x=80, y=90))
+        graph.pan_move(SimpleNamespace(x=100, y=120, state=256))
+        graph.canvas.scan_mark.assert_called_with(80, 90)
+        graph.canvas.scan_dragto.assert_called_once_with(100, 120, gain=1)
+
     def test_fractional_pan_batches_preserve_both_axes_and_order(self):
         batch = GestureBatch()
         for _ in range(100):

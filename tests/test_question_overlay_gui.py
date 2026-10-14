@@ -45,7 +45,8 @@ class QuestionOverlayGuiTests(unittest.TestCase):
         w.body.pack(fill="both", expand=True)
         canvas = tk.Canvas(w.body, bg=w.P["node"], highlightthickness=0)
         canvas.pack(fill="both", expand=True)
-        w.graph = SimpleNamespace(canvas=canvas, draw=lambda: None)  # graph rendering is outside this fixture
+        from unittest.mock import Mock
+        w.graph = SimpleNamespace(canvas=canvas, draw=lambda: None, cancel_pan=Mock())
         w.footbar = tk.Frame(self.root, height=32)
         w.footbar.pack(side="bottom", fill="x")
         w.settings = SimpleNamespace(open=False, toggle=lambda _: None)  # the settings menu stays closed
@@ -103,6 +104,42 @@ class QuestionOverlayGuiTests(unittest.TestCase):
         self.assertEqual(self.destinations, [("session", "isolated-fixture")])
         self.assertEqual(self.sent, [])
         self.assertFalse(self.window.prompt.overlay_open)
+
+    @unittest.skipUnless(sys.platform == "darwin", "requires the native panel mouse bridge")
+    def test_go_handoff_waits_for_release_and_clears_capture_before_focus(self):
+        import mac_statusbar as mac
+        self.show(self.question())
+        w = self.window
+        label = w.prompt.opt_labels[1]
+        bridge = mac.PanelMouseBridge(self.root)
+        seen = []
+
+        def focus_session(key):
+            # The focus callback can leave the application immediately. Its
+            # initiating press must already be finished before that happens.
+            seen.append((key, bridge._capture, self.root.grab_current()))
+            w.graph.cancel_pan.assert_called_once_with()
+
+        w.pet.answers.go_to_prompt = focus_session
+        x = label.winfo_rootx() + label.winfo_width() // 2
+        y = label.winfo_rooty() + label.winfo_height() // 2
+        toplevel_presses = []
+        self.root.bind("<Button-1>", lambda e: toplevel_presses.append(e.widget), add="+")
+        try:
+            bridge._dispatch(1, 1, x, y, 0)
+            self.root.update()
+            self.assertEqual(seen, [])
+            self.assertTrue(w.prompt.overlay_open)
+            self.assertIs(bridge._capture, label)
+            self.assertEqual(toplevel_presses, [])
+            bridge._dispatch(2, 1, x, y, 0)
+            self.root.update()
+            self.assertEqual(seen, [("isolated-fixture", None, None)])
+            self.assertIsNone(bridge._capture)
+            self.assertFalse(w.prompt.overlay_open)
+            self.assertEqual(self.sent, [])
+        finally:
+            bridge.close()
 
     def test_same_id_changed_question_rebuilds_visible_widgets(self):
         question = self.question()

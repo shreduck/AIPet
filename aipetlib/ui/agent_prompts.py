@@ -211,6 +211,10 @@ class PromptPanel:
                 lab.bind("<Button-1>", lambda e, n=n: self.choose(n))
                 lab._row = None
             lab._text = label
+            if self.options[n][1] == self.go:
+                # Hand off focus only after the button is up, before hiding its target.
+                lab.bind("<Button-1>", lambda e: "break")
+                lab.bind("<ButtonRelease-1>", lambda e, n=n: self.choose(n))
             lab._answer = n < n_answers
             self.opt_labels.append(lab)
         self.flow_options(window.px(560))
@@ -454,6 +458,7 @@ class PromptPanel:
         """Go to the session's window. Codex: AIPet lets go of the prompt, so Codex shows its own one there (with
         choices the pet doesn't have, like always allowing that tool)."""
         window = self.window
+        window.graph.cancel_pan()
         req = (window.item or {}).get("request") or {}
         if (window.item or {}).get("agent") == "codex" and req.get("id"):
             self.released.add(req["id"])

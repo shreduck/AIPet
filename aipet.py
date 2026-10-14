@@ -29,6 +29,7 @@ from aipetlib.ui.appearance_controls import Appearance
 from aipetlib.ui.tooltips import Tooltips
 from aipetlib.app.preferences import PetPreferences
 import copy
+from contextlib import nullcontext
 import glob
 import json
 import random
@@ -590,13 +591,18 @@ class PetApp:
             pass
 
     def open_detail(self, key):
-        d = self.details.get(key)
-        if d:
-            d.win.lift()
-            return
-        item = next((i for i in self._last_items if i["key"] == key), None)
-        if item:
-            self.details[key] = Detail(self, key, item)
+        scope = nullcontext()
+        if IS_MAC:
+            import mac_statusbar as mac
+            scope = mac.passive_window_mapping()
+        with scope:
+            d = self.details.get(key)
+            if d:
+                d.win.lift()
+                return
+            item = next((i for i in self._last_items if i["key"] == key), None)
+            if item:
+                self.details[key] = Detail(self, key, item)
 
     def focus_key(self, key):
         pet = self.pets.get(key)

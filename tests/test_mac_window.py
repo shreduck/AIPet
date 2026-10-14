@@ -595,6 +595,98 @@ class MacWindowTests(unittest.TestCase):
             mac.send(previous, "release", restype=None)
             mac.send(finder, "release", restype=None)
 
+    def test_question_bubble_only_raises_its_card_preserving_agent_stacking(self):
+        import tkinter as tk
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+        import Quartz
+        import aipet
+        import mac_statusbar as mac
+        from aipetlib.app.pointer import Pointer
+        from aipetlib.ui.agent_window import AgentNetworkWindow
+        from aipetlib.ui import sprites
+
+        workspace = mac.send(mac.cls("NSWorkspace"), "sharedWorkspace")
+        previous = mac.send(workspace, "frontmostApplication")
+        mac.send(previous, "retain")
+        apps = mac.send(mac.cls("NSRunningApplication"), "runningApplicationsWithBundleIdentifier:",
+                        mac.nsstr("com.apple.finder"), argtypes=[mac.c_void_p])
+        finder = mac.send(apps, "objectAtIndex:", 0, argtypes=[mac.c_ulong])
+        mac.send(finder, "retain")
+        finder_pid = mac.send(finder, "processIdentifier", restype=mac.c_long)
+        root = aipet.MacPetWindow()
+        root.title("AIPet isolated bubble handoff regression")
+        root.withdraw()
+        item = {"key": "bubble-fixture", "agent": "codex", "state": "needs_input",
+                "request": {"id": "bubble-question", "kind": "question", "source": "codex-question",
+                            "questions": [{"question": "Which isolated destination?",
+                                           "options": [{"label": "Here"}]}]}}
+        app = object.__new__(aipet.PetApp)
+        app.root, app.cfg, app._last_items, app.details = root, {}, [item], {}
+        app.answers = SimpleNamespace(enabled=lambda _: False, timed_minutes=lambda: 5, go_to_prompt=Mock())
+        app._acknowledge, app.focus_session = Mock(), Mock()
+        pointer = Pointer(app)
+        pet = SimpleNamespace(key=item["key"], data=item, _on_bubble=True, _on_badge=None)
+        agent = None
+
+        def settle():
+            done = tk.BooleanVar(root, False)
+            root.after(200, lambda: done.set(True))
+            root.wait_variable(done)
+
+        def foreground():
+            return mac.send(mac.send(workspace, "frontmostApplication"), "processIdentifier", restype=mac.c_long)
+
+        def above(number):
+            windows = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly,
+                                                       Quartz.kCGNullWindowID)
+            ordered = [w["kCGWindowNumber"] for w in windows if w.get("kCGWindowLayer") == 0]
+            self.assertIn(number, ordered)
+            return set(ordered[:ordered.index(number)])
+
+        try:
+            agent = AgentNetworkWindow(root, SimpleNamespace(cfg={}, _last_items=[]))
+            root.update()
+            settle()
+            settle()
+            number = mac.send(mac.window_titled(agent.win.title()), "windowNumber", restype=mac.c_long)
+            for _ in range(3):
+                mac.send(finder, "activateWithOptions:", 3, restype=mac.c_bool, argtypes=[mac.c_ulong])
+                settle()
+                if foreground() == finder_pid:
+                    break
+            self.assertEqual(foreground(), finder_pid, "requires an unlocked desktop")
+            covered_by = above(number)
+            self.assertTrue(covered_by, "fixture agent must be covered before opening its question card")
+            with patch.object(sprites, "load_sprites", return_value=None):
+                pointer.release(SimpleNamespace(state=0), pet)
+            settle()
+            card = app.details[item["key"]]
+            self.assertTrue(card.win.winfo_ismapped())
+            self.assertEqual(foreground(), finder_pid)
+            self.assertTrue(covered_by <= above(number))
+            pet._on_bubble = True
+            pointer.release(SimpleNamespace(state=0), pet)
+            settle()
+            self.assertIs(app.details[item["key"]], card)
+            self.assertEqual(foreground(), finder_pid)
+            self.assertTrue(covered_by <= above(number))
+            card.close()
+            settle()
+            self.assertEqual(foreground(), finder_pid)
+            self.assertTrue(covered_by <= above(number))
+            app.focus_session.assert_not_called()
+            app.answers.go_to_prompt.assert_not_called()
+        finally:
+            for card in list(app.details.values()):
+                card.close()
+            if agent:
+                agent.close()
+            root.destroy()
+            mac.send(previous, "activateWithOptions:", 3, restype=mac.c_bool, argtypes=[mac.c_ulong])
+            mac.send(previous, "release", restype=None)
+            mac.send(finder, "release", restype=None)
+
     def test_panel_mouse_bridge_delivers_clicks_and_drag_outside_canvas(self):
         import tkinter as tk
         import aipet

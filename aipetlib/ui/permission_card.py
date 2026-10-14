@@ -651,7 +651,12 @@ class PermissionCard:
         try:
             if self._after:
                 self.win.after_cancel(self._after)
-            self.win.destroy()
+            if IS_MAC:
+                import mac_statusbar as mac
+                with mac.passive_window_mapping():
+                    self.win.destroy()
+            else:
+                self.win.destroy()
         except tk.TclError:
             pass
 
