@@ -82,7 +82,13 @@ class PromptPanel:
         else:
             self.overlay.place_forget()
             self.sig = None  # the chip comes back on the next refresh
+            if hasattr(window, "logs"):
+                window.logs.draw()  # what arrived while the prompt covered the log
         return "break"
+
+    def covers_logs(self):
+        """The open overlay hides the whole log (logs below the graph): no need to draw what can't be seen."""
+        return self.overlay_open and self.window.opts.get("log_side", "bottom") == "bottom"
 
     def place(self):
         """Over the logs, and up over the graph as far as the prompt needs (never under the bars)."""

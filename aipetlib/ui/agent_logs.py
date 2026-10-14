@@ -22,13 +22,15 @@ class LogPanel:
     def __init__(self, window):
         self.window = window
         self.filters = log_filters.default_log_filters()
-        self.entries, self.expanded = [], set()  # log entries shown / unfolded
+        self.entries, self.expanded = {}, set()  # log entries shown (by entry number) / unfolded
+        self.drawn = None  # what the log text holds, so new lines can be appended
         self.borders = {}  # outlines of unfolded entries
         self.sig = self.tabs_sig = None  # what the log text and the tabs last showed
 
     def invalidate(self):
         """Draw the log and the tabs again next time, even if their data looks unchanged."""
         self.sig = self.tabs_sig = None
+        self.drawn = None
 
     def build(self):
         """The logs' widgets: the split line, the tabs, the filter bar and the log text (in the window's body)."""
@@ -269,16 +271,19 @@ class LogPanel:
             pass
 
     def draw(self, keep=None):
-        """keep: the scroll position to stay at (folding an entry), instead of following the newest line."""
+        """keep: the scroll position to stay at (folding an entry), instead of following the newest line.
+        New lines at the end are appended (and the oldest dropped) without rebuilding the rest: rebuilding a long
+        log on every refresh made the window sluggish while agents work."""
         window = self.window
-        P, log = window.P, self.text
+        log = self.text
         ags = window.net["agents"]
         rows = log_filters.filtered_log_rows(window.net, window.sel, self.filters)[-160:]
         filter_sig = tuple((k, tuple(sorted(v)) if isinstance(v, set) else v) for k, v in self.filters.items())
         available = max(0, log.winfo_width() - 2 * int(log.cget("padx")) - 2)
         usage = self.row_usage(rows, ags)
+        finals = self.final_rows(rows, ags)
         sig = (window.sel, window.theme, window.s, window.opts.get("text_scale", 100), available,
-               tuple(rows), len(ags), filter_sig, tuple(usage))
+               tuple(rows), len(ags), filter_sig, tuple(usage), tuple(sorted(finals)))
         if sig == self.sig:
             return
         switched = (self.sig or (None,))[0] != sig[0]
@@ -287,7 +292,41 @@ class LogPanel:
                 return  # you are selecting text: new lines wait until the selection is gone
         except tk.TclError:
             pass
+        base = (window.sel, window.theme, window.s, window.opts.get("text_scale", 100), available,
+                tuple(a["name"] for a in ags), filter_sig)
+        head = self.header(ags)
+        appendable = keep is None and self.sig is not None and not switched
         self.sig = sig
+        if appendable and self.append(base, rows, usage, finals, head):
+            return
+        self.rebuild(base, rows, usage, finals, head, keep, switched)
+
+    def header(self, ags):
+        """The selected agent's line above its log: model, effort, context, tokens, type."""
+        window = self.window
+        if not (window.sel >= 0 and ags):
+            return None
+        a = ags[window.sel]
+        info = " · ".join(v for v in (a["model_label"], a["effort"],
+                                      f"ctx {fmt_tokens(a['ctx'])}" if a["ctx"] else "",
+                                      agent_context.tokens_text(a.get("tokens"))) if v)
+        return f"$ tail {a['name']} ", "# " + info + (f" · {a['kind']}" if a["kind"] and not a["main"] else "") + "\n"
+
+    @staticmethod
+    def final_rows(rows, ags):
+        """Positions of each finished agent's final reply (its result): its last "say" row."""
+        finals = set()
+        for i, a in enumerate(ags):
+            if a["state"] not in ("working", "needs_input", "waiting"):
+                last = next((k for k in range(len(rows) - 1, -1, -1) if rows[k][1] == i and rows[k][2] == "say"), None)
+                if last is not None:
+                    finals.add(last)
+        return finals
+
+    def rebuild(self, base, rows, usage, finals, head, keep, switched):
+        window = self.window
+        P, log = window.P, self.text
+        ags = window.net["agents"]
         top = log.yview()[0]
         log.configure(state="normal")
         for edges in self.borders.values():
@@ -295,6 +334,8 @@ class LogPanel:
                 edge.destroy()
         self.borders.clear()
         log.delete("1.0", "end")
+        for n in getattr(self, "entries", {}):  # the old entries' tags (numbered on from a previous build)
+            log.tag_delete(f"entry{n}")
         for i in range(len(ags)):
             log.tag_configure(f"a{i}", foreground=window.color(i), font=window.f_bold)
         log.tag_configure("mu", foreground=P["mu"])
@@ -302,13 +343,9 @@ class LogPanel:
         log.tag_configure("you", foreground=P["hi"], font=window.f_bold)
         log.tag_configure("error", foreground=P["red"])
         log.tag_configure("spawn", foreground=P["amb"])
-        if window.sel >= 0 and ags:
-            a = ags[window.sel]
-            info = " · ".join(v for v in (a["model_label"], a["effort"],
-                                          f"ctx {fmt_tokens(a['ctx'])}" if a["ctx"] else "",
-                                          agent_context.tokens_text(a.get("tokens"))) if v)
-            log.insert("end", f"$ tail {a['name']} ", f"a{window.sel}")
-            log.insert("end", "# " + info + (f" · {a['kind']}" if a["kind"] and not a["main"] else "") + "\n", "mu")
+        if head:
+            log.insert("end", head[0], f"a{window.sel}")
+            log.insert("end", head[1], ("mu", "head"))
         if not rows:
             log.insert("end", "(nothing logged yet)", "mu")
         width = min(32, max((len(a["name"]) for a in ags), default=4))
@@ -324,68 +361,12 @@ class LogPanel:
                           rmargin=window.px(6), spacing1=window.px(3), spacing3=window.px(3), font=window.f_main)
         log.tag_configure("expanded_header", lmargin1=window.px(6), lmargin2=window.px(6),
                           rmargin=window.px(6), spacing1=window.px(4), spacing3=window.px(3), font=window.f_bold)
-        finals = set()
-        for i, a in enumerate(ags):
-            if a["state"] not in ("working", "needs_input", "waiting"):
-                last = next((k for k in range(len(rows) - 1, -1, -1) if rows[k][1] == i and rows[k][2] == "say"), None)
-                if last is not None:
-                    finals.add(last)
-        self.entries = []
-        for n, (t, i, kind, text) in enumerate(rows):
-            meta = f"  · {agent_context.line_usage(usage[n])}" if usage[n] else ""  # the request's tokens
-            # long entries show their first line with ›: click (or right-click) to unfold them, ‹ to fold again
-            key = (t, ags[i]["name"], kind, hash(text))
-            stamp = time.strftime("%H:%M:%S ", time.localtime(t)) if t else " " * 9
-            name = ags[i]["name"].ljust(width)[:width]
-            mark = common.KIND_MARK.get(kind, "")
-            mark_font = window.f_bold if kind == "you" else window.f_main
-            prefix_width = (window.f_main.measure(("▍" if n in finals else "") + stamp + " │ ") +
-                            window.f_bold.measure(name) + mark_font.measure(mark + " " if mark else ""))
-            text_font = window.f_bold if kind == "you" else window.f_main
-            shown, big = common.log_preview(text, available - prefix_width - window.f_main.measure(meta), text_font,
-                                            window.f_main.measure("  ›"))
-            expanded = key in self.expanded
-            if expanded:
-                shown = common.formatted_log_content(text)
-                big = True  # keep collapse available even after widening the pane
-            self.entries.append((key, text, ags[i]["name"], big))
-            start = log.index("end-1c")
-            if expanded:
-                title = {"you": "Query", "say": "Response", "think": "Thinking", "input": "Input",
-                         "output": "Output", "tool": "Tool", "error": "Error", "spawn": "Agent started"}.get(kind, kind)
-                log.insert("end", f"{stamp}{ags[i]['name']} · {title}{meta}  ‹\n", ("expanded_header", f"a{i}"))
-                log.insert("end", shown + "\n", "expanded_body")
-                tag = f"entry{n}"
-                edges = tuple(tk.Frame(log, bg="#244c80", bd=0, takefocus=0) for _ in range(4))
-                self.borders[tag] = edges
-                for edge in edges:
-                    edge.bind("<ButtonRelease-1>", lambda e, n=n: self.entry_click(n))
-            else:
-                if n in finals:
-                    log.insert("end", "▍", "finalmark")
-                log.insert("end", stamp, "mu")
-                log.insert("end", name, f"a{i}")
-                log.insert("end", " │ ", "mu")
-                if mark:
-                    log.insert("end", mark + " ", "mu" if kind in ("tool", "say") else kind)
-                log.insert("end", shown, (kind if kind in ("think", "you", "error", "spawn") else "say", "hang"))
-                if big:
-                    log.insert("end", "  ›", ("fold", "hang"))
-                if meta:
-                    log.insert("end", meta, ("mu", "hang"))
-                log.insert("end", "\n")
-            log.tag_add(f"entry{n}", start, "end-1c")
-            log.tag_configure(f"entry{n}", wrap="word" if expanded else "none")
-            if n % 2:
-                log.tag_add("odd", start, "end-1c")
-            if n in finals:
-                log.tag_add("final", start, "end-1c")
-            log.tag_bind(f"entry{n}", "<ButtonRelease-1>", lambda e, n=n: self.entry_click(n))
-            for b in ("<Button-3>",) + (("<Button-2>", "<Control-Button-1>") if common.IS_MAC else ()):
-                log.tag_bind(f"entry{n}", b, lambda e, n=n: self.entry_menu(e, n))
-            if expanded:
-                log.insert("end", "\n", ())  # space between outlined entries; outside the clickable entry
+        self.entries = {}
+        for n, row in enumerate(rows):
+            self.insert_row(n, row, usage[n], n in finals, width, base[4])
         log.configure(state="disabled")
+        self.drawn = {"base": base, "rows": rows, "usage": usage, "finals": finals, "offset": 0, "head": head,
+                      "width": width}
         if keep is not None:
             log.yview_moveto(keep)
         elif window.opts.get("log_tail", True) or switched:
@@ -393,6 +374,123 @@ class LogPanel:
         else:
             log.yview_moveto(top)  # stays where you are reading
         log.after_idle(self.position_borders)
+
+    def append(self, base, rows, usage, finals, head):
+        """Only new lines at the end (the oldest ones dropping off the top): add those. False: rebuild instead."""
+        window = self.window
+        log = self.text
+        drawn = getattr(self, "drawn", None)
+        if not drawn or drawn["base"] != base or not drawn["rows"] or not rows:
+            return False
+        old = drawn["rows"]
+        drop = next((k for k in range(len(old)) if old[k:] == rows[:len(old) - k]), None)
+        if drop is None:
+            return False
+        kept = len(old) - drop
+        # the rows that stay must look the same: their request tokens and final-reply marks
+        if usage[:kept] != drawn["usage"][drop:] or \
+                {p for p in finals if p < kept} != {p - drop for p in drawn["finals"] if p >= drop}:
+            return False
+        ags = window.net["agents"]
+        if any(self.row_key(row, ags) in self.expanded for row in rows[kept:]):
+            return False
+        offset = drawn["offset"]
+        log.configure(state="normal")
+        try:
+            log.mark_set("aipet_view", "@0,0")  # where you are reading, wherever the lines above it go
+            log.mark_gravity("aipet_view", "left")
+        except tk.TclError:
+            pass
+        if head != drawn["head"] and head and drawn["head"]:  # the selected agent's figures changed
+            at = log.index("head.first")
+            log.delete("head.first", "head.last")
+            log.insert(at, head[1], ("mu", "head"))
+        if drop:
+            log.delete(f"entry{offset}.first", f"entry{offset + drop}.first")
+            for n in range(offset, offset + drop):
+                log.tag_delete(f"entry{n}")
+                self.entries.pop(n, None)
+                for edge in self.borders.pop(f"entry{n}", ()):
+                    edge.destroy()
+        offset += drop
+        for p in range(kept, len(rows)):
+            self.insert_row(offset + p, rows[p], usage[p], p in finals, drawn["width"], base[4])
+        log.configure(state="disabled")
+        self.drawn = dict(drawn, rows=rows, usage=usage, finals=finals, offset=offset, head=head)
+        if window.opts.get("log_tail", True):
+            log.see("end")
+        else:
+            try:
+                log.yview("aipet_view")
+            except tk.TclError:
+                pass
+        log.after_idle(self.position_borders)
+        return True
+
+    @staticmethod
+    def row_key(row, ags):
+        t, i, kind, text = row
+        return (t, ags[i]["name"], kind, hash(text))
+
+    def insert_row(self, n, row, usage, final, width, available):
+        """One log entry at the end, tagged entry<n> (n counts on across appends, so tags stay unique)."""
+        window = self.window
+        log = self.text
+        ags = window.net["agents"]
+        t, i, kind, text = row
+        meta = f"  · {agent_context.line_usage(usage)}" if usage else ""  # the request's tokens
+        # long entries show their first line with ›: click (or right-click) to unfold them, ‹ to fold again
+        key = self.row_key(row, ags)
+        stamp = time.strftime("%H:%M:%S ", time.localtime(t)) if t else " " * 9
+        name = ags[i]["name"].ljust(width)[:width]
+        mark = common.KIND_MARK.get(kind, "")
+        mark_font = window.f_bold if kind == "you" else window.f_main
+        prefix_width = (window.f_main.measure(("▍" if final else "") + stamp + " │ ") +
+                        window.f_bold.measure(name) + mark_font.measure(mark + " " if mark else ""))
+        text_font = window.f_bold if kind == "you" else window.f_main
+        shown, big = common.log_preview(text, available - prefix_width - window.f_main.measure(meta), text_font,
+                                        window.f_main.measure("  ›"))
+        expanded = key in self.expanded
+        if expanded:
+            shown = common.formatted_log_content(text)
+            big = True  # keep collapse available even after widening the pane
+        self.entries[n] = (key, text, ags[i]["name"], big)
+        start = log.index("end-1c")
+        if expanded:
+            title = {"you": "Query", "say": "Response", "think": "Thinking", "input": "Input",
+                     "output": "Output", "tool": "Tool", "error": "Error", "spawn": "Agent started"}.get(kind, kind)
+            log.insert("end", f"{stamp}{ags[i]['name']} · {title}{meta}  ‹\n", ("expanded_header", f"a{i}"))
+            log.insert("end", shown + "\n", "expanded_body")
+            tag = f"entry{n}"
+            edges = tuple(tk.Frame(log, bg="#244c80", bd=0, takefocus=0) for _ in range(4))
+            self.borders[tag] = edges
+            for edge in edges:
+                edge.bind("<ButtonRelease-1>", lambda e, n=n: self.entry_click(n))
+        else:
+            if final:
+                log.insert("end", "▍", "finalmark")
+            log.insert("end", stamp, "mu")
+            log.insert("end", name, f"a{i}")
+            log.insert("end", " │ ", "mu")
+            if mark:
+                log.insert("end", mark + " ", "mu" if kind in ("tool", "say") else kind)
+            log.insert("end", shown, (kind if kind in ("think", "you", "error", "spawn") else "say", "hang"))
+            if big:
+                log.insert("end", "  ›", ("fold", "hang"))
+            if meta:
+                log.insert("end", meta, ("mu", "hang"))
+            log.insert("end", "\n")
+        log.tag_add(f"entry{n}", start, "end-1c")
+        log.tag_configure(f"entry{n}", wrap="word" if expanded else "none")
+        if n % 2:
+            log.tag_add("odd", start, "end-1c")
+        if final:
+            log.tag_add("final", start, "end-1c")
+        log.tag_bind(f"entry{n}", "<ButtonRelease-1>", lambda e, n=n: self.entry_click(n))
+        for b in ("<Button-3>",) + (("<Button-2>", "<Control-Button-1>") if common.IS_MAC else ()):
+            log.tag_bind(f"entry{n}", b, lambda e, n=n: self.entry_menu(e, n))
+        if expanded:
+            log.insert("end", "\n", ())  # space between outlined entries; outside the clickable entry
 
     @staticmethod
     def row_usage(rows, ags):
@@ -444,7 +542,7 @@ class LogPanel:
 
     def toggle_entry(self, n):
         window = self.window
-        if n >= len(self.entries) or not self.entries[n][3]:
+        if n not in self.entries or not self.entries[n][3]:
             return
         key = self.entries[n][0]
         try:
@@ -470,7 +568,7 @@ class LogPanel:
 
     def entry_menu(self, e, n):
         window = self.window
-        if n >= len(self.entries):
+        if n not in self.entries:
             return "break"
         key, text, who, big = self.entries[n]
         P = window.P

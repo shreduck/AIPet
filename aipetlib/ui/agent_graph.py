@@ -809,7 +809,8 @@ class GraphView:
         try:
             t = time.time() - window.t0
             r = max(2, self.gpx(2.2))
-            for k, (pts, state, col) in enumerate(self.edges):
+            # while you answer a prompt the dots rest: on Windows each frame also repaints the overlay over the graph
+            for k, (pts, state, col) in enumerate([] if window.prompt.overlay_open else self.edges):
                 for j in range(2):
                     if 2 * k + j >= len(self.dots):
                         break
