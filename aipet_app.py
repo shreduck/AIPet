@@ -29,7 +29,8 @@ import aipet_agents_window
 from aipetlib.agents.tracker import NetworkTracker
 import aipet_guide
 import aipet_settings
-import aipet_update as upd
+from aipetlib import update as releases
+from aipetlib.app.updates import UpdateFlow
 import hooks_installer as hi
 import legacy  # LEGACY: moving over from Claude Pet
 
@@ -326,11 +327,8 @@ class TrayApp:
         self.c_agent_open = False  # whether an agent network window is open, for the tray menu (see agent_network_open)
         self._tk_thread = threading.current_thread()
         self.c_auto = core.auto_approve_targets()  # hook configs with auto-approval on (all off by default)
-        self.version = upd.current_version()
-        self.update_state = upd.State(paths.HOME_DIR)
-        found = self.update_state.load().get("latest") or {}
-        self.update_info = found if upd.is_newer(found.get("tag"), self.version) else None  # a newer release, if any
-        self._update_busy = False
+        self.version = releases.current_version()
+        self.updates = UpdateFlow(self)  # new releases: daily check, menu entries, the dialog
         self._icon_key = None
 
         self.pet.on_alert = self.on_alert
@@ -403,8 +401,8 @@ class TrayApp:
             except Exception as e:
                 diagnostics.log_error(f"restore legacy status line for {key}: {e!r}")
         self.ui(lambda: self.root.after(20000, self.legacy_tick))  # LEGACY: daily reminder about old-name hooks
-        self.ui(lambda: self.root.after(30000, self.update_tick))
-        self.ui(self._show_update_in_menus)
+        self.ui(lambda: self.root.after(30000, self.updates.tick))
+        self.ui(self.updates.show_in_menus)
         stale = [k for k, v in self.status.items() if v == hi.STALE]
         if not setup_is_done():
             self.ui(self.show_setup)  # first run: shows what is installed / up to date / outdated per target
@@ -948,74 +946,6 @@ class TrayApp:
         self.refresh_menu()
 
     # ---- new version check (GitHub releases; tells you and opens the page, never installs anything)
-    def update_tick(self):
-        """Tk thread: check once a day while automatic checks are on (looked at every hour)."""
-        if self.pet.cfg.get("update_check", True) and self.update_state.due():
-            self.check_updates(False)
-        self.root.after(3600 * 1000, self.update_tick)
-
-    def check_updates(self, manual=False):
-        if self._update_busy:
-            return
-        self._update_busy = True
-
-        def job():
-            try:
-                latest = upd.latest_release()
-            except Exception as e:
-                self.update_state.save(last_check=time.time(), error=repr(e)[:200])
-                if manual:
-                    err = f"Couldn't check for a new version:\n{e}\n\nReleases: {upd.RELEASES_URL}"
-                    self.ui(lambda: self.info(err, error=True))
-                return
-            finally:
-                self._update_busy = False
-            state = self.update_state.save(last_check=time.time(), latest=latest, error="")
-            newer = upd.is_newer(latest["tag"], self.version)
-            self.update_info = latest if newer else None
-            self.ui(self._show_update_in_menus)
-            if manual:
-                self.ui(lambda: self._update_dialog(latest, newer, manual=True))
-            elif newer and latest["tag"] not in (state.get("skipped"), state.get("notified")):
-                self.update_state.save(notified=latest["tag"])
-                self.ui(lambda: self._update_dialog(latest, True))
-        threading.Thread(target=job, daemon=True).start()
-
-    def _update_dialog(self, latest, newer, manual=False):
-        if not newer:
-            known = upd.parse(self.version)
-            text = (f"You have the newest version, {upd.short(self.version)}." if known else
-                    f"This copy has no version number (built from source). The newest release is {latest['tag']}.")
-            choice = core.themed_dialog(self.root, f"{APP_NAME} - updates", text, kind="info", heading="No new version",
-                                        buttons=(("Open releases page", "open", "secondary"), ("OK", "ok", "primary")),
-                                        cancel="ok")
-            if choice == "open":
-                webbrowser.open(latest.get("url") or upd.RELEASES_URL)
-            return
-        choice = core.themed_dialog(
-            self.root, f"{APP_NAME} - update", kind="info", heading=f"AIPet {latest['tag']} is available",
-            text=(f"You have {upd.short(self.version)}. The new version is on the release page: download "
-                  f"{'AIPet-mac-arm64.zip' if IS_MAC else 'AIPet-windows-x64.zip'}, quit AIPet (tray > Quit) and "
-                  f"{'replace your copy with the app inside' if IS_MAC else 'unzip it over your AIPet folder'}. "
-                  "Your settings, hooks and backups in ~/.aipet are kept.\n\n"
-                  "The menus show the update until you install it."),
-            buttons=(("Skip this version", "skip", "secondary"), ("Later", "later", "secondary"),
-                     ("Open release page", "open", "primary")), cancel="later")
-        if choice == "open":
-            webbrowser.open(latest.get("url") or upd.RELEASES_URL)
-        elif choice == "skip":
-            self.update_state.save(skipped=latest["tag"])
-
-    def open_update(self):
-        if self.update_info:
-            self._update_dialog(self.update_info, True, manual=True)
-        else:
-            self.check_updates(True)
-
-    def _show_update_in_menus(self):
-        """The update entries live in the tray / menu-bar menu only (rebuilt when they open)."""
-        self.refresh_menu()
-
     # ---- config.json edited by hand: apply it live
     def watch_config(self):
         try:
@@ -1083,12 +1013,6 @@ class TrayApp:
             self.info("config.json changed. Applied what could be applied now; these take effect after AIPet "
                       "restarts: " + ", ".join(sorted(restart)))
         return restart
-
-    def toggle_update_check(self):
-        on = not self.pet.cfg.get("update_check", True)
-        self.pet.cfg["update_check"] = on
-        runtime_settings.save_setting("update_check", on)
-        self.refresh_menu()
 
     def _recheck_setup(self):
         self._close_setup()

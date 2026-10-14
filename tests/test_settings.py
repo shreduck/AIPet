@@ -131,7 +131,7 @@ class SettingsSpecTests(unittest.TestCase):
         app = object.__new__(aipet_app.TrayApp)
         app.pet = MagicMock(cfg=dict(aipet.DEFAULT_CONFIG))
         app.status, app.distros, app.codex_targets = {}, [], [('Local Codex', 'codex:local')]
-        app.c_auto, app.update_info = [], None
+        app.c_auto, app.updates = [], MagicMock(info=None)
         app.hidden = app.c_muted = app.c_notify = app.c_autostart = False
         app.c_wb, app.version = 'off', 'test'
         pages = settings.pages_from_spec(app._mac_menu_spec())

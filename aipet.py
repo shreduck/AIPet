@@ -256,7 +256,7 @@ def diagnostics_report(app=None):
             add(name, "FAILED\n    " + traceback.format_exc(limit=3).strip().replace("\n", "\n    "))
 
     add("time", time.strftime("%Y-%m-%d %H:%M:%S"))
-    attempt("version", lambda: __import__("aipet_update").current_version())
+    attempt("version", lambda: __import__("aipetlib.update", fromlist=["update"]).current_version())
     add("platform", f"{platform.platform()} ({platform.machine()})")
     add("python", f"{sys.version.split()[0]} frozen={getattr(sys, 'frozen', False)} exe={sys.executable}")
     add("meipass", getattr(sys, "_MEIPASS", "-"))

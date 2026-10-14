@@ -546,6 +546,8 @@ From source, the Windows hook runs via `pythonw` and the script, so no exe is ne
 | `aipetlib/vscode.py`, `workbench.py`, `hook_events.py` | Editor routing, MCP polling and hook event transitions |
 | `aipetlib/ui/` | Pet rendering (`pet_style`, `pet_view`, `sprites`, `theme`), permission cards, tooltips, size sliders, menu definitions, the chimes (`sounds`), and the agent-window components (`agent_logs`, `agent_graph`, `agent_prompts`, `agent_menu`, `agent_controls`) with their shared values (`agent_common`) |
 | `aipetlib/text.py` | Plain-text helpers: phrases, "3m ago", countdowns |
+| `aipetlib/update.py` | Releases: this build's version and the newest one on GitHub |
+| `aipetlib/app/` | The apps' controllers, each owning one part: `updates` (the daily check, its menu entries and dialog) |
 | `aipet_settings.py` | The AIPet menu window (built from the same menu definition) |
 | `aipet_agents.py` | Temporary facade over `aipetlib/agents/` (to be removed) |
 | `aipet_agents_window.py` | Agent-window lifecycle and state; delegates graph, logs, prompts, controls and widget construction |
@@ -553,7 +555,6 @@ From source, the Windows hook runs via `pythonw` and the script, so no exe is ne
 | `aipet_hook.py` | The hook Claude Code and Codex run on each event |
 | `hooks_installer.py` | settings.json / hooks.json merge and remove, backups and restore, the Cowork plugin |
 | `aipet_usage.py`, `aipet_claude_usage.py` | Usage-limit readings |
-| `aipet_update.py` | The daily update check |
 | `mac_statusbar.py` | The macOS menu-bar icon and native panels |
 | `legacy.py` | Moving over from Claude Pet (removable later) |
 | `build.bat`, `build_mac.sh`, `.github/workflows/` | Builds and the macOS self-test |

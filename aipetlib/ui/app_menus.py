@@ -100,8 +100,8 @@ def _mac_menu_spec(app, settings=False):
         ] or [item("Not found", enabled=False)]))
     auto += [None, item("Turn all off", app.auto_all_off, enabled=bool(app.c_auto),
                         help="Switches auto approve off everywhere at once.")]
-    top = [item(f"Update available: {app.update_info['tag']}...", app.open_update, icon="refresh",
-                help="A newer AIPet is out. See what changed and update."), None] if app.update_info else []
+    top = [item(f"Update available: {app.updates.info['tag']}...", app.updates.open, icon="refresh",
+                help="A newer AIPet is out. See what changed and update."), None] if app.updates.info else []
     return [app.settings_item(), None] + top + [
         item("Show pet" if app.hidden else "Hide pet", app.toggle, default=True,
              help="Hides the pet from the screen. AIPet keeps watching your sessions in the background."),
@@ -253,8 +253,8 @@ def _mac_menu_spec(app, settings=False):
             item("About AIPet...", app.show_about),
             item(f"Version: {app.version}", enabled=False),
             item("Updates", icon="refresh", submenu=[
-                item("Check for updates...", lambda: app.check_updates(True)),
-                item("Check for updates automatically", app.toggle_update_check,
+                item("Check for updates...", lambda: app.updates.check(True)),
+                item("Check for updates automatically", app.updates.toggle_auto,
                      checked=bool(cfg.get("update_check", True)),
                      help="Look for a new AIPet now and then. Nothing is installed without asking."),
             ]),

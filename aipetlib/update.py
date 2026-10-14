@@ -30,7 +30,8 @@ def current_version():
         pass
     try:  # running from source
         out = subprocess.run(["git", "describe", "--tags", "--match", "v[0-9]*"],
-                             cwd=os.path.dirname(os.path.abspath(__file__)), capture_output=True, text=True, timeout=10,
+                             cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))), capture_output=True,
+                             text=True, timeout=10,
                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if out.returncode == 0 and out.stdout.strip():
             return out.stdout.strip()

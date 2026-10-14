@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import aipet
 import aipet_hook
-import aipet_update
+import aipetlib.update as aipet_update
 import aipet_selftest
 import aipet_claude_usage as claude_usage
 import aipet_usage as usage

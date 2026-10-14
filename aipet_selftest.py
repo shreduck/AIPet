@@ -34,7 +34,7 @@ def check_assets(output):
 
 
 def check_update(token=None):
-    import aipet_update as updates
+    import aipetlib.update as updates
     import aipet_usage
     try:
         return {"release": updates.latest_release(token=token), "tls_verified": True}
