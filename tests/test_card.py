@@ -6,6 +6,9 @@ import unittest
 from unittest.mock import patch
 
 import aipet
+import aipetlib.app.answers as app_answers
+import aipetlib.permissions as permissions
+import aipetlib.runtime.preferences as preferences
 import support
 import aipet_hook as hook
 from aipet_hook_runtime import approvals as hook_approvals
@@ -15,13 +18,13 @@ from aipet_hook_runtime import requests as hook_requests
 class WhitelistButtonTests(unittest.TestCase):
     def app(self):
         app = object.__new__(aipet.PetApp)
-        app.answers = aipet.Answers(app)
+        app.answers = app_answers.Answers(app)
         return app
 
     def test_hook_config_key_matches_the_hooks(self):
-        self.assertEqual(aipet.auto_approve_key_for({"env": "wsl", "distro": "dev-esign-mcp"}), "wsl:dev-esign-mcp")
-        self.assertEqual(aipet.auto_approve_key_for({"app": "cowork", "env": "windows"}), "cowork")
-        self.assertEqual(aipet.auto_approve_key_for({"agent": "codex", "env": "wsl", "distro": "U"}), "codex:wsl:U")
+        self.assertEqual(permissions.auto_approve_key_for({"env": "wsl", "distro": "dev-esign-mcp"}), "wsl:dev-esign-mcp")
+        self.assertEqual(permissions.auto_approve_key_for({"app": "cowork", "env": "windows"}), "cowork")
+        self.assertEqual(permissions.auto_approve_key_for({"agent": "codex", "env": "wsl", "distro": "U"}), "codex:wsl:U")
 
     def test_exact_command_is_whitelisted_and_matches_only_itself(self):
         cmd = 'cd /x && python3 -m py_compile a.py | grep -n "Exit 0\\\\|warn"'
@@ -46,13 +49,13 @@ class WhitelistButtonTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home, support.paths(AUTO_APPROVE_PATH=
                                                                  os.path.join(home, "auto-approve.json")):
             self.assertIn("every mcp__wb__search", self.app().answers.whitelist(item))
-            rules = aipet.auto_approve_rules()[aipet.auto_approve_key_for(item)]
+            rules = permissions.auto_approve_rules()[permissions.auto_approve_key_for(item)]
             self.assertEqual(hook_approvals.auto_decision(rules, data), "whitelist")
 
     def test_card_scale_is_clamped(self):
-        self.assertEqual(aipet.clamp_card_scale(3), 1.5)
-        self.assertEqual(aipet.clamp_card_scale(0.1), 0.5)
-        self.assertEqual(aipet.clamp_card_scale("x"), 1.0)
+        self.assertEqual(preferences.clamp_card_scale(3), 1.5)
+        self.assertEqual(preferences.clamp_card_scale(0.1), 0.5)
+        self.assertEqual(preferences.clamp_card_scale("x"), 1.0)
 
 
 if __name__ == "__main__":

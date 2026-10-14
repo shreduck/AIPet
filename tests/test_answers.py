@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import aipet
+import aipetlib.config as config
 import aipetlib.app.answers as answers_module
 from aipetlib.app.answers import Answers
 import support
@@ -69,7 +70,7 @@ class AnswerToggleTests(unittest.TestCase):
 
     def test_claude_setting_persists_and_does_not_change_codex(self):
         app = object.__new__(aipet.PetApp)
-        app.cfg = dict(aipet.DEFAULT_CONFIG)
+        app.cfg = dict(config.DEFAULT_CONFIG)
         app.claude_answer_var = MagicMock()
         app.sync_bubbles, app._last_items = MagicMock(), []
         app.answers = Answers(app)

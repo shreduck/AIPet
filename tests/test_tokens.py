@@ -7,6 +7,11 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 import aipet
+import aipetlib.app.preferences as app_preferences
+import aipetlib.config as config
+import aipetlib.permissions as permissions
+import aipetlib.ui.appearance_controls as appearance_controls
+import aipetlib.ui.tooltips as tooltips
 import aipet_app
 from aipetlib.app.agent_windows import AgentWindows
 import aipetlib.agents.context as context
@@ -118,7 +123,7 @@ class MenuSwitchTests(unittest.TestCase):
         app.cowork = aipet_app.CoworkFlow(app, MagicMock())
         app.legacy = aipet_app.LegacyFlow(app)
         app.hooks = aipet_app.HookJobs(app, MagicMock())
-        app.pet = MagicMock(cfg=dict(aipet.DEFAULT_CONFIG))
+        app.pet = MagicMock(cfg=dict(config.DEFAULT_CONFIG))
         app.status, app.distros, app.codex_targets = {}, [], []
         app.approvals, app.updates = aipet_app.Approvals(app), MagicMock(info=None)
         app.approvals.targets_on = []
@@ -126,8 +131,8 @@ class MenuSwitchTests(unittest.TestCase):
         app.c_wb, app.version = 'off', 'test'
         app.agent_windows = AgentWindows(app)
         with patch.object(aipet_app.app_menus.hook_backups, 'list_backups', return_value=[]), \
-                patch.object(aipet.permissions, 'auto_approve_rules', return_value={}), \
-                patch.object(aipet.permissions, 'timed_grants', return_value={}):
+                patch.object(permissions, 'auto_approve_rules', return_value={}), \
+                patch.object(permissions, 'timed_grants', return_value={}):
             looks = next(e for e in app._mac_menu_spec() if e and e['label'] == 'Appearance')['submenu']
             switch = next(e for e in looks if e and e['label'] == 'Context beside the pet')
             self.assertTrue(switch['checked'])
@@ -136,9 +141,9 @@ class MenuSwitchTests(unittest.TestCase):
 
     def test_setting_saves_and_follows_the_menu(self):
         pet = object.__new__(aipet.PetApp)
-        pet.appearance = aipet.Appearance(pet)
-        pet.tooltips = aipet.Tooltips(pet)
-        pet.preferences = aipet.PetPreferences(pet)
+        pet.appearance = appearance_controls.Appearance(pet)
+        pet.tooltips = tooltips.Tooltips(pet)
+        pet.preferences = app_preferences.PetPreferences(pet)
         pet.cfg = {}
         pet.context_banner_var = MagicMock(get=MagicMock(return_value=True))
         with patch('aipetlib.app.preferences.save_setting') as save:

@@ -22,6 +22,7 @@ import webbrowser
 from tkinter import messagebox
 
 import aipet as core
+import aipetlib.ui.theme as theme
 from aipetlib.runtime import diagnostics, paths, preferences
 from aipetlib.runtime import settings as runtime_settings
 from aipetlib.agents.tracker import NetworkTracker
@@ -52,7 +53,7 @@ RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 LAUNCH_AGENT = os.path.expanduser("~/Library/LaunchAgents/com.aipet.app.plist")
 _mutex = None
 from aipetlib.runtime.paths import DEBUG_FLAG  # noqa: E402
-from aipetlib.ui.pet_style import BETA_STYLES, PET_STYLES  # noqa: E402
+from aipetlib.ui.pet_style import PET_STYLES  # noqa: E402
 
 
 # --------------------------------------------------------------------------- helpers
@@ -348,10 +349,10 @@ class TrayApp:
                   "pets bigger\").")
 
     def settings_zoom(self):
-        return aipet_settings.clamp_zoom(self.pet.cfg.get("settings_zoom", 1.0))
+        return preferences.clamp_zoom(self.pet.cfg.get("settings_zoom", 1.0))
 
     def set_settings_zoom(self, value):
-        value = aipet_settings.clamp_zoom(value)
+        value = preferences.clamp_zoom(value)
         self.pet.cfg["settings_zoom"] = value
         runtime_settings.save_setting("settings_zoom", value)
         self.refresh_menu()
@@ -366,9 +367,9 @@ class TrayApp:
         win.title("About AIPet")
         win.attributes("-topmost", True)
         win.resizable(False, False)
-        bg, fg = core.T["tag_bg"], core.T["tag_fg"]
+        bg, fg = theme.T["tag_bg"], theme.T["tag_fg"]
         win.configure(bg=bg)
-        tk.Label(win, text=f"AIPet {self.version}", font=(core.UI_FONT, 18, "bold"), bg=bg, fg=fg).pack(padx=28, pady=(24, 8))
+        tk.Label(win, text=f"AIPet {self.version}", font=(theme.UI_FONT, 18, "bold"), bg=bg, fg=fg).pack(padx=28, pady=(24, 8))
         tk.Label(win, text="A little companion for your AI sessions.\nCreated by shreduck.", bg=bg, fg=fg).pack(padx=28, pady=(0, 16))
         for label, url in (("AIPet app page", "https://shreduck.github.io/duck-software/apps/aipet/"),
                            ("Duck Software · creator's page", "https://shreduck.github.io/duck-software/"),
@@ -376,9 +377,9 @@ class TrayApp:
             link = tk.Label(win, text=label, fg="#5b8def", bg=bg, cursor="hand2", padx=12, pady=6)
             link.pack()
             link.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
-        tk.Button(win, text="Close", command=win.destroy, **core.button_style("secondary")).pack(pady=(16, 24))
+        tk.Button(win, text="Close", command=win.destroy, **theme.button_style("secondary")).pack(pady=(16, 24))
         win.bind("<Escape>", lambda e: win.destroy())
-        core.theme_window(win)
+        theme.theme_window(win)
 
     def _dialog_parent(self):
         top = tk.Toplevel(self.root)
@@ -389,7 +390,7 @@ class TrayApp:
     def ask(self, text):
         """Yes / No question in the pet's style (follows the light / dark theme)."""
         try:
-            return bool(core.themed_dialog(self.root, APP_NAME, text, kind="question",
+            return bool(theme.themed_dialog(self.root, APP_NAME, text, kind="question",
                                            buttons=(("No", False, "secondary"), ("Yes", True, "primary")), cancel=False))
         except tk.TclError:
             p = self._dialog_parent()
@@ -400,7 +401,7 @@ class TrayApp:
 
     def info(self, text, error=False):
         try:
-            core.themed_dialog(self.root, APP_NAME, text, kind="error" if error else "info")
+            theme.themed_dialog(self.root, APP_NAME, text, kind="error" if error else "info")
         except tk.TclError:
             p = self._dialog_parent()
             try:
@@ -473,7 +474,7 @@ class TrayApp:
         self.refresh_menu()
 
     def toggle_theme(self):
-        name = "light" if core.T.get("name") == "dark" else "dark"
+        name = "light" if theme.T.get("name") == "dark" else "dark"
         self.pet.preferences.apply_theme(name)
         if not runtime_settings.save_setting("theme", name):
             self.info("Couldn't save the theme (config.json isn't valid JSON?). It applies until you quit.", error=True)

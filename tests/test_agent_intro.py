@@ -2,8 +2,7 @@ import os
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
-
-import aipet
+import aipetlib.runtime.settings as runtime_settings
 import support
 import aipet_app
 from aipetlib.app import agent_windows
@@ -37,7 +36,7 @@ class AgentIntroTests(unittest.TestCase):
                                   side_effect=lambda *args, **kw: kw["on_result"](result)) as dialog:
                     app.agent_windows.offer_intro()
                     app.agent_windows.offer_intro()
-                    restarted = self.app(aipet.load_config())
+                    restarted = self.app(runtime_settings.load_config())
                     restarted.agent_windows.offer_intro()
                 dialog.assert_called_once()
                 self.assertTrue(restarted.pet.cfg["agent_network_intro_seen"])

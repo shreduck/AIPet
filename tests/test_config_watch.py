@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 import aipet
+import aipetlib.runtime.settings as runtime_settings
 import support
 import aipet_app
 
@@ -16,7 +17,7 @@ class ConfigWatchTests(unittest.TestCase):
         self.p = support.paths(CONFIG_PATH=self.path)
         self.p.start()
         app = self.app = object.__new__(aipet_app.TrayApp)
-        app.pet = MagicMock(cfg=aipet.load_config())
+        app.pet = MagicMock(cfg=runtime_settings.load_config())
         app.refresh_menu, app.info, app.set_style, app._set_notify = MagicMock(), MagicMock(), MagicMock(), MagicMock()
         app.config_watch = aipet_app.ConfigWatcher(app)
 
@@ -38,7 +39,7 @@ class ConfigWatchTests(unittest.TestCase):
         self.app.pet.preferences.set_done_timeout.assert_called_once_with(9)
         self.assertEqual(self.app.pet.cfg["sound_style"], "system")  # read where it's used
         self.app.refresh_menu.assert_called_once()
-        self.assertFalse(aipet.SAVE_PAUSED["v"])
+        self.assertFalse(runtime_settings.SAVE_PAUSED["v"])
 
     def test_unchanged_file_and_nested_defaults_do_nothing(self):
         self.write({"theme": self.app.pet.cfg["theme"], "workbench": {}})  # the app's own save, say
@@ -58,11 +59,11 @@ class ConfigWatchTests(unittest.TestCase):
         self.app.info.assert_called_once()
 
     def test_paused_save_writes_nothing(self):
-        aipet.SAVE_PAUSED["v"] = True
+        runtime_settings.SAVE_PAUSED["v"] = True
         try:
-            self.assertTrue(aipet.save_setting("theme", "dark"))
+            self.assertTrue(runtime_settings.save_setting("theme", "dark"))
         finally:
-            aipet.SAVE_PAUSED["v"] = False
+            runtime_settings.SAVE_PAUSED["v"] = False
         self.assertFalse(os.path.exists(self.path))
 
 

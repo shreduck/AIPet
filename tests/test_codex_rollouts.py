@@ -5,8 +5,8 @@ import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-
-import aipet
+import aipetlib.config as config
+import aipetlib.sessions as sessions_owner
 import support
 import aipetlib.agents.codex as agent_codex
 import aipetlib.agents.network as agent_network
@@ -45,7 +45,7 @@ class CodexRolloutTests(unittest.TestCase):
         self.assertEqual(codex.root_rollout('root', resumed), resumed)
         self.assertEqual(hook_transcripts.codex_session_transcript('root', child, resumed), resumed)
         self.assertEqual(hook_transcripts.codex_session_transcript('root', child), resumed)
-        self.assertEqual(aipet.transcript_file({'agent': 'codex', 'id': 'root', 'transcript_path': ''}), resumed)
+        self.assertEqual(sessions_owner.transcript_file({'agent': 'codex', 'id': 'root', 'transcript_path': ''}), resumed)
         self.assertEqual(codex.root_rollout('root', original), original)  # ordinary Windows/CLI filenames still work
         misleading = self.rollout(4, 'rollout-2026-10-04T12-02-00-root_wrong.jsonl', {'id': 'unrelated'})
         self.assertEqual(codex.root_rollout('root', misleading), resumed)
@@ -101,12 +101,12 @@ class CodexRolloutTests(unittest.TestCase):
         for rec in records:
             rec.update(updated=self.now, changed=self.now)
             (sessions / (rec['id'] + '.json')).write_text(json.dumps(rec))
-        cfg = copy.deepcopy(aipet.DEFAULT_CONFIG)
+        cfg = copy.deepcopy(config.DEFAULT_CONFIG)
         cfg['claude_code']['enabled'] = True
         cfg['claude_code']['extra_session_dirs'] = []
         with support.paths(SESSIONS_DIR=str(sessions)), \
                 support.paths(LEGACY_SESSIONS_DIR=str(self.home / 'unused')):
-            items = aipet.read_claude_code_sessions(cfg)
+            items = sessions_owner.read_claude_code_sessions(cfg)
         self.assertEqual({i['session_id'] for i in items}, {'root', 'approval', 'failure', 'claude'})
         self.assertEqual(candidate_sessions(items), items)
         self.assertTrue((sessions / 'post-turn-job.json').exists())  # filtering does not delete hook records

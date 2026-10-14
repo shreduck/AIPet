@@ -129,10 +129,10 @@ class QuestionTests(unittest.TestCase):
             self.assertEqual((rec["state"], rec["requests"]), ("working", []))
 
     def test_questions_are_never_hidden_as_ghost_prompts(self):
-        import aipet
+        import aipetlib.permissions as permissions
         hook_sessions._update_session(self.path, self.target, "PermissionRequest", self.data, False)
         rec = dict(self.record(), notifies=True)
-        self.assertFalse(aipet.unconfirmed_prompts(rec, now=rec["request"]["t"] + 600))
+        self.assertFalse(permissions.unconfirmed_prompts(rec, now=rec["request"]["t"] + 600))
 
     def test_question_answered_in_claude_settles_it(self):
         hook_sessions._update_session(self.path, self.target, "PermissionRequest", self.data, False)

@@ -24,196 +24,44 @@ from aipetlib.app.pointer import Pointer
 from aipetlib.app.answers import Answers
 from aipetlib.app.session_reader import SessionReader
 import aipetlib.housekeeping as housekeeping
+import aipetlib.ui.native_menu as native_menu
 import aipetlib.ui.sounds as sounds
 from aipetlib.ui.appearance_controls import Appearance
 from aipetlib.ui.tooltips import Tooltips
 from aipetlib.app.preferences import PetPreferences
-import copy
 from contextlib import nullcontext
-import glob
 import json
-import random
-import re
 import os
 import shutil
 import subprocess
 import sys
-import threading
 import time
-import urllib.error
-import urllib.request
 import tkinter as tk
 import aipet_usage as usage
 from aipetlib.ui.permission_card import PermissionCard
 from aipetlib.ui.pet_view import PetView
 from aipetlib.ui import font_metrics
-from aipetlib.mac_panels import MacOverlayWindow, MacPetWindow
+from aipetlib.mac_panels import MacPetWindow
 from aipetlib.click_through import ClickThroughController
 import aipetlib.windows as windows
-import aipetlib.geometry as geometry
-import aipetlib.permissions as permissions
-from aipetlib.permissions import (  # noqa: E402,F401
-    DEFAULT_BLACKLIST, PROMPT_CONFIRM_SECONDS, TIMED_DEFAULT, TIMED_MAX, TIMED_MIN, _search, _write_auto_approve,
-    answer_name, answers_dir, answers_enabled, auto_approve_key_for, auto_approve_rules, auto_approve_targets,
-    bad_patterns, default_auto_rules, hook_waiting, save_auto_approve, set_timed_grant, stop_timed_grant,
-    timed_grants, unconfirmed_prompts, write_answer_wait,
-)
-import aipetlib.sessions as sessions
-from aipetlib.sessions import (  # noqa: E402,F401
-    _active_agents, COWORK_QUIET_SECONDS, INTERRUPT_MARKERS, _PID_CACHE, _TRANSCRIPT_TAILS, _phrase, _scan_tail,
-    _transcript_message, disambiguate_titles, last_said, pid_alive, place_name, read_claude_code_sessions,
-    session_badge, session_title, transcript_file, transcript_tail, turn_interrupted, visible_hook_session,
-)
+from aipetlib.permissions import write_answer_wait
+from aipetlib.sessions import disambiguate_titles, read_claude_code_sessions
 import aipetlib.agents.context as agent_context
-from aipetlib.records import STATE_ORDER, first
-from aipetlib.ui.theme import (
-    INK, THEMES, DARK_TEXT, T, THEMED, _DEFAULT_FG, MUTED_FG, DIALOG_ACCENTS, UI_FONT, set_theme, _fg_role,
-    themed_color, button_style, style_menu, _ttk_scale_style, theme_widget, titlebar_theme, native_menu_theme,
-    use_console_font, theme_window, retheme_all, themed_dialog,
-)
-from aipetlib.ui.sprites import (
-    SPRITE_DIR, _SPR, _PHOTOS, CYAN_LIGHT, LIGHT_COLORS, STATE_FACE, FACE_PARTS, EYE_PIXELS, QUESTION_PIXELS,
-    MOUTH_PIXELS, TALK_FRAMES, _PNG_PHOTOS, _RUNS, MONO_FAMILY, BUBBLE_TAIL, _BUBBLE_INSET, _IMG_CACHE, MARKS,
-    MARK_COLORS, load_sprites, _rgb, robot_image, state_image, light_cycle, _to_photo, sprite_photo, pixel_rects,
-    mono, bubble_image, mark_image, _solid_shadow, _sine_mouth,
-)
+from aipetlib.records import first
+from aipetlib.ui.theme import set_theme, style_menu, native_menu_theme, use_console_font
 
-from aipetlib.runtime.paths import AUTO_APPROVE_PATH, CONFIG_PATH, HOME_DIR, LEGACY_SESSIONS_DIR, SESSIONS_DIR
+from aipetlib.runtime.paths import CONFIG_PATH, HOME_DIR
 from aipetlib.runtime.preferences import (
-    ANSWER_WAIT, CARD_SCALE, CARD_SCALE_MAX, CARD_SCALE_MIN, CARD_SCALE_STEP, DONE_TIMEOUT, HEALTH, MAX_HEALTH, MAX_WAIT,
-    SCALE, SCALE_UNIT, STYLE, clamp_card_scale, clamp_done, clamp_health, clamp_scale, clamp_wait,
+    ANSWER_WAIT, CARD_SCALE, DONE_TIMEOUT, HEALTH, SCALE, SCALE_UNIT, STYLE, clamp_card_scale, clamp_done,
+    clamp_health, clamp_scale, clamp_wait,
 )
 from aipetlib.runtime import diagnostics
 from aipetlib.runtime import perf
-from aipetlib.runtime.settings import SAVE_PAUSED, ensure_home, load_config, save_setting
-from aipetlib.text import ago, fmt_left, fmt_wait
+from aipetlib.runtime.settings import ensure_home, load_config, save_setting
 
-from aipetlib.config import DEFAULT_CONFIG, ConfigStore, deep_merge
 
 IS_MAC = sys.platform == "darwin"
-from aipetlib.ui.pet_style import (  # noqa: E402,F401
-    TRANSPARENT, COLORS, DARK, LABELS, BADGE_DOTS, BADGE_DOT_COWORK, BADGE_ATTENTION_BG, merge_badges, badge_dot,
-    BADGE_NAMES, SOURCE_NAMES, BADGE_COLORS, PET_W, PET_H, BADGE_GUTTER, TAG_H, TOP_TRIM, CANVAS_W, CANVAS_H,
-    USAGE_GUTTER, USAGE_EDGE_ROOM, MOUND, MOUND_DARK, EMERGE_SECONDS, EMERGE_DEPTH, EMERGE_STAGGER,
-    DONE_FLASH_SECONDS, BUBBLE_W, px, fnt, MOLE_BODY, MOLE_EDGE, MOLE_LIGHT, MOLE_NOSE, MOLE_NOSE_EDGE, MOLE_HILL,
-    MOLE_HILL_EDGE, HEAD_LAYOUTS, TERMINAL_CHARS, BLINK_RATIO, BLINK_SECONDS, BLINK_THRESHOLD, RECT_SPRITES,
-    _CARD_FONTS, card_font, rescale_card_fonts, NO_CHOICE, OWN_CHOICE,
-)
-
-
-def fill_menu(menu, entries):
-    """Render the shared app menu spec in Tk, including native macOS menus."""
-    menu.delete(0, "end")
-    for child in menu.winfo_children():
-        child.destroy()
-    menu._check_vars = []
-    for entry in entries:
-        if entry is None:
-            menu.add_separator()
-            continue
-        options = dict(label=entry["label"], state="normal" if entry.get("enabled", True) else "disabled")
-        if entry.get("submenu") is not None:
-            sub = tk.Menu(menu, tearoff=0)
-            fill_menu(sub, entry["submenu"])
-            menu.add_cascade(menu=sub, **options)
-        elif "checked" in entry:
-            var = tk.BooleanVar(master=menu, value=entry["checked"])
-            menu._check_vars.append(var)
-            menu.add_checkbutton(variable=var, command=entry.get("action"), **options)
-        else:
-            menu.add_command(command=entry.get("action"), **options)
-    style_menu(menu)
-
-
-def popup_menu(menu, x, y):
-    """Move a context menu up when it would otherwise scroll at the screen edge."""
-    menu.update_idletasks()
-    ref = (x, y)
-    height = menu.winfo_reqheight()
-    bounds = geometry.work_area(x, y, menu)
-    if bounds and y + height + 8 > bounds[3]:
-        y -= height + 8
-    x, y = geometry.fit_on_screen(x, y, menu.winfo_reqwidth(), height, ref, menu, margin=8)
-    menu.tk_popup(x, y)
-
-
-# --------------------------------------------------------------------------- native context menu (Windows)
-# Tk draws its Windows menu items itself (classic look). Building a real Win32 menu instead lets Windows draw it, so the
-# pet's right-click menu looks like the tray menu and every other Windows 11 menu (rounded corners, shadow, spacing).
-NATIVE_WIN_MENU = os.name == "nt"
-MF_GRAYED, MF_CHECKED, MF_POPUP, MF_SEPARATOR = 0x1, 0x8, 0x10, 0x800
-TPM_RIGHTBUTTON, TPM_RETURNCMD, GA_ROOT, WM_NULL = 0x2, 0x100, 2, 0
-_WIN_MENU_API = None
-
-
-def _win_menu_api():
-    """A private user32 handle, so these prototypes never clash with pystray's or _user32()'s."""
-    global _WIN_MENU_API
-    if _WIN_MENU_API is None:
-        import ctypes
-        from ctypes import wintypes
-        u = ctypes.WinDLL("user32", use_last_error=True)
-        u.CreatePopupMenu.argtypes = []
-        u.CreatePopupMenu.restype = wintypes.HMENU
-        u.AppendMenuW.argtypes = [wintypes.HMENU, wintypes.UINT, ctypes.c_size_t, wintypes.LPCWSTR]
-        u.AppendMenuW.restype = wintypes.BOOL
-        u.SetMenuDefaultItem.argtypes = [wintypes.HMENU, wintypes.UINT, wintypes.UINT]
-        u.TrackPopupMenuEx.argtypes = [wintypes.HMENU, wintypes.UINT, ctypes.c_int, ctypes.c_int, wintypes.HWND,
-                                       ctypes.c_void_p]
-        u.TrackPopupMenuEx.restype = ctypes.c_int  # with TPM_RETURNCMD: the chosen id, 0 when dismissed
-        u.DestroyMenu.argtypes = [wintypes.HMENU]
-        u.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
-        u.GetAncestor.restype = wintypes.HWND
-        u.SetForegroundWindow.argtypes = [wintypes.HWND]
-        u.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
-        _WIN_MENU_API = u
-    return _WIN_MENU_API
-
-
-def build_win_menu(u, entries, actions):
-    """Turn the shared menu spec into an HMENU. Command id N runs actions[N - 1]."""
-    hmenu = u.CreatePopupMenu()
-    if not hmenu:
-        raise OSError("CreatePopupMenu failed")
-    try:
-        for entry in entries:
-            if entry is None:
-                u.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
-                continue
-            label = str(entry["label"]).replace("&", "&&")  # a single & would underline the next letter
-            flags = 0 if entry.get("enabled", True) else MF_GRAYED
-            if entry.get("submenu") is not None:
-                sub = build_win_menu(u, entry["submenu"], actions)
-                if not u.AppendMenuW(hmenu, flags | MF_POPUP, sub, label):
-                    u.DestroyMenu(sub)
-                    raise OSError("AppendMenuW failed")
-                continue
-            if entry.get("checked"):
-                flags |= MF_CHECKED
-            actions.append(entry.get("action"))
-            if not u.AppendMenuW(hmenu, flags, len(actions), label):
-                raise OSError("AppendMenuW failed")
-            if entry.get("default"):
-                u.SetMenuDefaultItem(hmenu, len(actions), 0)
-    except Exception:
-        u.DestroyMenu(hmenu)  # also frees the submenus already attached
-        raise
-    return hmenu
-
-
-def popup_native_menu(widget, entries, x, y, api=None):
-    """Show the menu spec as a Win32 menu at (x, y). Returns the chosen action, or None when dismissed."""
-    u = api or _win_menu_api()
-    actions = []
-    hmenu = build_win_menu(u, entries, actions)
-    try:
-        hwnd = u.GetAncestor(widget.winfo_id(), GA_ROOT) or widget.winfo_id()
-        u.SetForegroundWindow(hwnd)  # without this, clicking elsewhere does not close the menu
-        chosen = u.TrackPopupMenuEx(hmenu, TPM_RETURNCMD | TPM_RIGHTBUTTON, int(x), int(y), hwnd, None)
-        u.PostMessageW(hwnd, WM_NULL, 0, 0)  # documented fix: lets the next menu open on the first click
-    finally:
-        u.DestroyMenu(hmenu)
-    return actions[chosen - 1] if 0 < chosen <= len(actions) else None
+from aipetlib.ui.pet_style import TRANSPARENT, COLORS, EMERGE_STAGGER, DONE_FLASH_SECONDS
 
 
 AUTO_FLASH_SECONDS = 10  # how long a pet celebrates a whitelist auto-approval
@@ -223,7 +71,7 @@ AUTO_FLASH_SECONDS = 10  # how long a pet celebrates a whitelist auto-approval
 
 
 # --------------------------------------------------------------------------- Workbench source
-from aipetlib.workbench import ID_KEYS, McpHttpClient, WorkbenchPoller, tool_result_to_obj, find_chat_list, normalize_state, normalize_chat
+from aipetlib.workbench import McpHttpClient, WorkbenchPoller, tool_result_to_obj, find_chat_list, normalize_chat
 
 
 # --------------------------------------------------------------------------- the pet
@@ -248,24 +96,15 @@ class Pet(PetView):
 
 
 # --------------------------------------------------------------------------- multi-monitor placement
-from aipetlib.geometry import _MAC_SCREENS, fit_on_screen, geo, mac_screen_at, work_area  # noqa: E402,F401
 
 
 # --------------------------------------------------------------------------- VS Code: which open window holds a folder
-from aipetlib.vscode import (  # noqa: E402,F401
-    VSCODE_FLAVOURS, _backup_uris, _uri_parts, _workspace_roots, open_uri, vscode_conversation_uri, vscode_open_folders,
-    vscode_target, vscode_user_dirs,
-)
 
 
 ClickThrough = ClickThroughController  # the name the app and tests use
 
 
 # --------------------------------------------------------------------------- window focus (Windows)
-from aipetlib.windows import (  # noqa: E402,F401
-    _folder, _go_to_desktop_of, _user32, claude_app_windows, focus_hwnd, focus_wsl_terminal, terminal_agent,
-    terminal_windows,
-)
 
 
 # --------------------------------------------------------------------------- app
@@ -774,21 +613,21 @@ class PetApp:
                     self.pointer.passing = False
                 entries = self.context_menu_spec(pet)
                 native = False
-                if NATIVE_WIN_MENU:
+                if native_menu.NATIVE_WIN_MENU:
                     try:
                         widget = e.widget if isinstance(getattr(e, "widget", None), tk.Misc) else self.root
                         self._context_menu_shown = True
-                        chosen = popup_native_menu(widget, entries, e.x_root, e.y_root)
+                        chosen = native_menu.popup_native_menu(widget, entries, e.x_root, e.y_root)
                         native = True
                     except Exception:
-                        globals()["NATIVE_WIN_MENU"] = False  # Win32 menu unavailable: use the Tk menu from now on
+                        native_menu.NATIVE_WIN_MENU = False  # Win32 menu unavailable: use the Tk menu from now on
                 if not native:
-                    fill_menu(self.menu, entries)
+                    native_menu.fill_menu(self.menu, entries)
                     self._context_menu_shown = True
                     try:
                         # Tk posts an AppKit menu on macOS and safely manages its
                         # nested event loop; no focus/Space switch is needed.
-                        popup_menu(self.menu, e.x_root, e.y_root)
+                        native_menu.popup_menu(self.menu, e.x_root, e.y_root)
                     finally:
                         self.menu.grab_release()
             finally:
@@ -817,10 +656,10 @@ class PetApp:
                 self.root.focus_force()  # Tk on macOS: also activates the application
             except tk.TclError:
                 pass
-            self.root.after(60, lambda: popup_menu(self.menu, x, y))
+            self.root.after(60, lambda: native_menu.popup_menu(self.menu, x, y))
             return
         style_menu(self.menu)  # submenus added since (hooks, auto approve) pick up the theme too
-        popup_menu(self.menu, x, y)
+        native_menu.popup_menu(self.menu, x, y)
 
     def open_in_vscode(self, pet=None):
         """Open/focus the session's folder in VS Code (Remote-WSL for WSL sessions)."""

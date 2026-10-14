@@ -17,10 +17,16 @@ class MacWindowTests(unittest.TestCase):
         from types import SimpleNamespace
         from unittest.mock import patch
         import aipet
+        import aipetlib.app.preferences as app_preferences
+        import aipetlib.mac_panels as mac_panels
+        import aipetlib.permissions as permissions
+        import aipetlib.ui.appearance_controls as appearance_controls
+        import aipetlib.ui.theme as theme
+        import aipetlib.ui.tooltips as tooltips
         import aipetlib.agents.log_filters as agent_log_filters
         from aipetlib.ui.agent_window import AgentNetworkWindow
 
-        root = aipet.MacPetWindow()
+        root = mac_panels.MacPetWindow()
         root.withdraw()
         window = None
         text = json.dumps({"command": "echo first\necho second", "output": "first\nsecond"}, indent=2)
@@ -72,7 +78,7 @@ class MacWindowTests(unittest.TestCase):
         import aipetlib.agents.log_filters as agent_log_filters
         from aipetlib.ui.agent_window import AgentNetworkWindow
 
-        root = aipet.MacPetWindow()
+        root = mac_panels.MacPetWindow()
         root.withdraw()
         window = None
         texts = ["A short preview that still needs folding in a narrow pane. " * 3,
@@ -122,7 +128,7 @@ class MacWindowTests(unittest.TestCase):
         import aipet
         from aipetlib.ui.agent_window import AgentNetworkWindow, DEFAULT_OPTIONS
 
-        root = aipet.MacPetWindow()
+        root = mac_panels.MacPetWindow()
         root.withdraw()
         window = None
         try:
@@ -169,7 +175,7 @@ class MacWindowTests(unittest.TestCase):
         import aipet
         from aipetlib.ui.agent_window import AgentNetworkWindow
 
-        root = aipet.MacPetWindow()
+        root = mac_panels.MacPetWindow()
         root.withdraw()
         window = None
         try:
@@ -213,7 +219,7 @@ class MacWindowTests(unittest.TestCase):
         import aipet
         from aipetlib.ui.agent_window import AgentNetworkWindow
 
-        root = aipet.MacPetWindow()
+        root = mac_panels.MacPetWindow()
         root.withdraw()
         callbacks = []
         root.report_callback_exception = lambda *error: callbacks.append(error)
@@ -241,7 +247,7 @@ class MacWindowTests(unittest.TestCase):
         import aipet
         from aipetlib.ui.agent_window import AgentNetworkWindow
 
-        root = aipet.MacPetWindow()
+        root = mac_panels.MacPetWindow()
         root.withdraw()
         pet = SimpleNamespace(cfg={}, _last_items=[])
         window = None
@@ -268,7 +274,7 @@ class MacWindowTests(unittest.TestCase):
         import aipet
         import aipet_app
 
-        root = aipet.MacPetWindow()
+        root = mac_panels.MacPetWindow()
         root.title("AIPet isolated persistence regression")
         key = "codex:test-persistence"
 
@@ -327,7 +333,7 @@ class MacWindowTests(unittest.TestCase):
                     self.assertFalse(settings.winfo_exists())
                     app.approvals.changed.assert_called_once()
                     self.assertEqual(json.loads(path.read_text()), {"targets": {key: expected}, "timed": {}})
-                    self.assertEqual(aipet.auto_approve_rules()[key], expected)
+                    self.assertEqual(permissions.auto_approve_rules()[key], expected)
                     self.assertFalse(Path(str(path) + ".tmp").exists())
 
                     # A fresh controller must populate the form from the saved file.
@@ -353,7 +359,7 @@ class MacWindowTests(unittest.TestCase):
         import aipet
         import aipet_app
 
-        root = aipet.MacPetWindow()
+        root = mac_panels.MacPetWindow()
         root.title("AIPet modal regression")
         root.update()
         app = object.__new__(aipet_app.TrayApp)
@@ -377,8 +383,8 @@ class MacWindowTests(unittest.TestCase):
             bridge._dispatch(2, 1, x, y, 0)
 
         try:
-            with patch.object(aipet.permissions, "auto_approve_rules", return_value={}), \
-                    patch.object(aipet.permissions, "save_auto_approve", return_value=True) as save:
+            with patch.object(permissions, "auto_approve_rules", return_value={}), \
+                    patch.object(permissions, "save_auto_approve", return_value=True) as save:
                 for accept, saved in ((False, True), (None, True), (True, False), (True, True)):
                     save.reset_mock()
                     save.return_value = saved
@@ -423,7 +429,7 @@ class MacWindowTests(unittest.TestCase):
         import aipetlib.ui.sprites as aipet_sprites
         import mac_statusbar as mac
 
-        root = aipet.MacPetWindow()
+        root = mac_panels.MacPetWindow()
         root.title("AIPet permission regression")
         root.update()
         native_app = mac.send(mac.cls("NSApplication"), "sharedApplication")
@@ -435,7 +441,7 @@ class MacWindowTests(unittest.TestCase):
                                   enabled=lambda _: True, send=MagicMock(return_value=False)))
         detail = None
         try:
-            with patch.object(aipet_sprites, "load_sprites", return_value=None), patch.object(aipet.permissions, "hook_waiting", return_value=True):
+            with patch.object(aipet_sprites, "load_sprites", return_value=None), patch.object(permissions, "hook_waiting", return_value=True):
                 detail = aipet.Detail(app, item["key"], item)
                 root.update()
                 window = mac.window_titled(detail.win.title())
@@ -466,16 +472,16 @@ class MacWindowTests(unittest.TestCase):
         import aipet
         import mac_statusbar as mac
 
-        root = aipet.MacPetWindow()
+        root = mac_panels.MacPetWindow()
         root.title("AIPet hover regression")
         root.geometry("100x100+400+600")
         canvas = tk.Canvas(root, width=100, height=100)
         canvas.pack()
         root.update()
         app = object.__new__(aipet.PetApp)
-        app.appearance = aipet.Appearance(app)
-        app.tooltips = aipet.Tooltips(app)
-        app.preferences = aipet.PetPreferences(app)
+        app.appearance = appearance_controls.Appearance(app)
+        app.tooltips = tooltips.Tooltips(app)
+        app.preferences = app_preferences.PetPreferences(app)
         app.root, app.tooltips.tip, app._menu_open = root, None, False
         app.cfg = {"all_spaces": True}
         pet = SimpleNamespace(canvas=canvas, gutter=0)
@@ -531,14 +537,14 @@ class MacWindowTests(unittest.TestCase):
         finder = mac.send(apps, "objectAtIndex:", 0, argtypes=[mac.c_ulong])
         mac.send(finder, "retain")
         finder_pid = mac.send(finder, "processIdentifier", restype=mac.c_long)
-        root = aipet.MacPetWindow()
+        root = mac_panels.MacPetWindow()
         root.title("AIPet hover stacking regression")
         canvas = tk.Canvas(root, width=100, height=100)
         canvas.pack()
         app = object.__new__(aipet.PetApp)
-        app.appearance = aipet.Appearance(app)
-        app.tooltips = aipet.Tooltips(app)
-        app.preferences = aipet.PetPreferences(app)
+        app.appearance = appearance_controls.Appearance(app)
+        app.tooltips = tooltips.Tooltips(app)
+        app.preferences = app_preferences.PetPreferences(app)
         app.root, app.tooltips.tip, app._menu_open = root, None, False
         app.cfg = {"all_spaces": True}
         pet = SimpleNamespace(canvas=canvas, gutter=0, data={})
@@ -614,7 +620,7 @@ class MacWindowTests(unittest.TestCase):
         finder = mac.send(apps, "objectAtIndex:", 0, argtypes=[mac.c_ulong])
         mac.send(finder, "retain")
         finder_pid = mac.send(finder, "processIdentifier", restype=mac.c_long)
-        root = aipet.MacPetWindow()
+        root = mac_panels.MacPetWindow()
         root.title("AIPet isolated bubble handoff regression")
         root.withdraw()
         item = {"key": "bubble-fixture", "agent": "codex", "state": "needs_input",
@@ -692,7 +698,7 @@ class MacWindowTests(unittest.TestCase):
         import aipet
         import mac_statusbar as mac
 
-        root = aipet.MacPetWindow()
+        root = mac_panels.MacPetWindow()
         root.title("AIPet mouse bridge regression")
         canvas = tk.Canvas(root, width=100, height=80)
         canvas.create_rectangle(10, 10, 60, 60, fill="blue", tags=("badge",))
@@ -726,7 +732,7 @@ class MacWindowTests(unittest.TestCase):
         import aipet
         import mac_statusbar as mac
 
-        root = aipet.MacPetWindow()
+        root = mac_panels.MacPetWindow()
         parent = tk.Toplevel(root)
         parent.title("AIPet test settings")
         parent.attributes("-topmost", True)
@@ -752,7 +758,7 @@ class MacWindowTests(unittest.TestCase):
                 self.assertGreater((dialog_level, -order.index(native_dialog)),
                                    (parent_level, -order.index(native_parent)))
                 for kind in ("primary", "danger", "secondary"):
-                    b = tk.Button(parent, **aipet.button_style(kind))
+                    b = tk.Button(parent, **theme.button_style(kind))
                     self.assertEqual(b.winfo_rgb(b.cget("fg")), b.winfo_rgb("systemButtonText"))
                     b.destroy()
             except Exception as error:
@@ -763,7 +769,7 @@ class MacWindowTests(unittest.TestCase):
 
         try:
             parent.after(200, inspect_and_cancel)
-            result = aipet.themed_dialog(parent, "AIPet test warning", "Test only; no settings are changed.",
+            result = theme.themed_dialog(parent, "AIPet test warning", "Test only; no settings are changed.",
                                          kind="warning", buttons=(("Cancel", False, "secondary"),
                                                                   ("Auto approve", True, "danger")),
                                          cancel=False, enter_confirms=False)
@@ -777,7 +783,7 @@ class MacWindowTests(unittest.TestCase):
         import aipet
         import mac_statusbar as mac
 
-        root = aipet.MacPetWindow()
+        root = mac_panels.MacPetWindow()
         owner = root._owner
         try:
             root.title("AIPet native regression test")

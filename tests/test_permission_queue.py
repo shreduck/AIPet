@@ -171,19 +171,19 @@ class PermissionQueueTests(unittest.TestCase):
         self.assertEqual((self.record()["state"], self.record()["error_kind"]), ("working", ""))
 
     def test_prompts_never_announced_stop_showing_after_a_while(self):
-        import aipet
+        import aipetlib.permissions as permissions
         self.event("PermissionRequest", call(1, "ls"))
         self.event("Notification", {"session_id": "s", "notification_type": "permission_prompt",
                                     "message": "Claude needs your permission to use Bash"})
         rec = self.record()
         self.assertTrue(rec["notifies"] and rec["requests"][0]["shown"])
-        self.assertFalse(aipet.unconfirmed_prompts(rec, now=rec["requests"][0]["t"] + 60))  # shown: really waiting
+        self.assertFalse(permissions.unconfirmed_prompts(rec, now=rec["requests"][0]["t"] + 60))  # shown: really waiting
         self.event("PostToolUse", call(1, "ls"))
         self.event("PermissionRequest", call(2, "cat x"))  # settled by auto mode: never announced
         rec = self.record()
         t = rec["requests"][0]["t"]
-        self.assertFalse(aipet.unconfirmed_prompts(rec, now=t + 3))  # give the Notification time
-        self.assertTrue(aipet.unconfirmed_prompts(rec, now=t + 30))
+        self.assertFalse(permissions.unconfirmed_prompts(rec, now=t + 3))  # give the Notification time
+        self.assertTrue(permissions.unconfirmed_prompts(rec, now=t + 30))
 
 
 if __name__ == "__main__":

@@ -6,14 +6,15 @@ window reads: "help" (an explanation under the label), "icon" (a pixel icon name
 are a pick-one list). The window rebuilds itself whenever the spec's state changes (a toggle flipped here, in a menu, or
 by the app itself) and when the theme switches.
 """
-import os
 import sys
 import tkinter as tk
 
-import aipet as core
+import aipetlib.ui.native_menu as native_menu
+import aipetlib.geometry as geometry
+import aipetlib.ui.theme as theme
 
 IS_MAC = sys.platform == "darwin"
-UI_FONT = core.UI_FONT  # the console font all of AIPet's windows use
+UI_FONT = theme.UI_FONT  # the console font all of AIPet's windows use
 POLL_MS = 1200
 
 # 9x9 pixel icons, drawn in the pet's pixel style ('#' = filled)
@@ -75,7 +76,7 @@ def signature(spec, zoom=1.0):
             out.append((e.get("label"), e.get("checked"), e.get("enabled", True), (e.get("slider") or {}).get("value"),
                          walk(e.get("submenu")) if e.get("submenu") is not None else None))
         return tuple(out)
-    return (core.T.get("name"), zoom, walk(spec))
+    return (theme.T.get("name"), zoom, walk(spec))
 
 
 def pages_from_spec(spec):
@@ -125,8 +126,8 @@ def draw_icon(canvas, name, color=None, x=0, y=0, px=2, tile=True, bright=False)
     off = 0
     if tile:
         # dark: a grey rim, or the dark screen would melt into the dark sidebar
-        outline = core.T.get("border", "#374151") if core.T.get("name") == "dark" else core.T.get("tag_outline", "#111827")
-        screen, glyph, glyph_bright = ICON_COLORS["dark" if core.T.get("name") == "dark" else "light"]
+        outline = theme.T.get("border", "#374151") if theme.T.get("name") == "dark" else theme.T.get("tag_outline", "#111827")
+        screen, glyph, glyph_bright = ICON_COLORS["dark" if theme.T.get("name") == "dark" else "light"]
         last = TILE - 1
         for r in range(TILE):
             for c in range(TILE):
@@ -143,7 +144,7 @@ def draw_icon(canvas, name, color=None, x=0, y=0, px=2, tile=True, bright=False)
                 dot(c + off, r + off, color)
 
 
-from aipetlib.runtime.preferences import ZOOM_MAX, ZOOM_MIN, ZOOM_STEP, clamp_zoom  # noqa: E402,F401
+from aipetlib.runtime.preferences import ZOOM_STEP, clamp_zoom  # noqa: E402
 from aipetlib.runtime import diagnostics  # noqa: E402
 BASE_SCALE = 1.5  # "100%" is drawn half again as big as the pet's other windows: easier to read
 
@@ -205,7 +206,7 @@ class SettingsWindow:
         w, h = int(840 * self.scale), int(600 * self.scale)
         try:
             ref = (self.root.winfo_x() + self.root.winfo_width() // 2, self.root.winfo_y() + self.root.winfo_height() // 2)
-            left, top, right, bottom = core.work_area(*ref, self.win) or (
+            left, top, right, bottom = geometry.work_area(*ref, self.win) or (
                 0, 0, self.win.winfo_screenwidth(), self.win.winfo_screenheight())
         except Exception:
             left, top, right, bottom = 0, 0, self.win.winfo_screenwidth(), self.win.winfo_screenheight()
@@ -276,12 +277,12 @@ class SettingsWindow:
 
     # ---- frame: sidebar + scrolling content
     def _build_frame(self):
-        T, w = core.T, self.win
+        T, w = theme.T, self.win
         for child in w.winfo_children():
             child.destroy()
         self.bg, self.side_bg = T["win_bg"], T["code_bg"]
         w.configure(bg=self.bg)
-        core.titlebar_theme(w)
+        theme.titlebar_theme(w)
 
         side = self.side = tk.Frame(w, bg=self.side_bg, width=int(220 * self.scale))
         side.pack(side="left", fill="y")
@@ -391,11 +392,11 @@ class SettingsWindow:
         for name, icon, _help, _entries, label in pages:
             self._nav_item(name, icon, label, selected=(name == self.page and not query))
         if query:
-            self.strip.configure(bg=core.T["primary"])
+            self.strip.configure(bg=theme.T["primary"])
             self._render_search(pages, query)
         else:
             name, icon, help_text, entries, label = next(p for p in pages if p[0] == self.page)
-            self.strip.configure(bg=SECTION_ACCENTS.get(icon, core.T["primary"]))
+            self.strip.configure(bg=SECTION_ACCENTS.get(icon, theme.T["primary"]))
             self._page_header(name, icon, help_text, label)
             self._entries(self.body, entries, 0)
         tk.Frame(self.body, bg=self.bg, height=24).pack(fill="x")
@@ -407,7 +408,7 @@ class SettingsWindow:
         self._on_resize(type("E", (), {"width": self.canvas.winfo_width()})())
 
     def _nav_item(self, name, icon, label, selected):
-        T = core.T
+        T = theme.T
         bg = T["select_bg"] if selected else self.side_bg
         row = tk.Frame(self.nav, bg=bg, cursor="hand2")
         row.pack(fill="x", pady=1)
@@ -429,7 +430,7 @@ class SettingsWindow:
         self._clickable(row, pick, hover=None if selected else T["btn_active"])
 
     def _page_header(self, name, icon, help_text, label):
-        T = core.T
+        T = theme.T
         top = tk.Frame(self.header, bg=self.bg)
         top.pack(fill="x")
         c = tk.Canvas(top, width=icon_size(self.px_big), height=icon_size(self.px_big), bg=self.bg, highlightthickness=0, bd=0)
@@ -444,7 +445,7 @@ class SettingsWindow:
                      justify="left").pack(fill="x", pady=(4, 0))
 
     def _render_search(self, pages, query):
-        T = core.T
+        T = theme.T
         tk.Label(self.header, text="Search", bg=self.bg, fg=T["win_fg"], font=self.font(18, "bold"), anchor="w"
                  ).pack(fill="x")
         found = 0
@@ -490,7 +491,7 @@ class SettingsWindow:
                 self._row(card, e)
 
     def _section_heading(self, parent, e):
-        T = core.T
+        T = theme.T
         f = tk.Frame(parent, bg=self.bg)
         f.pack(fill="x", padx=28, pady=(18, 6))
         if e.get("icon"):
@@ -508,7 +509,7 @@ class SettingsWindow:
             self._wrap.append((lab, 60))
 
     def _card(self, parent):
-        T = core.T
+        T = theme.T
         card = tk.Frame(parent, bg=self.bg, highlightthickness=1, highlightbackground=T["border"],
                         highlightcolor=T["border"])
         card.pack(fill="x", padx=28, pady=6)
@@ -516,7 +517,7 @@ class SettingsWindow:
         return card
 
     def _group_header(self, card, e):
-        T = core.T
+        T = theme.T
         row = tk.Frame(card, bg=T["code_bg"])
         row.pack(fill="x")
         if e.get("icon"):
@@ -537,7 +538,7 @@ class SettingsWindow:
     def _row(self, card, e, where=None):
         """One setting: a switch (checked items), a pick-one list (choice), a drop-down (deeper submenus),
         a button row (actions) or plain info (disabled items without an action)."""
-        T = core.T
+        T = theme.T
         if card._rows:
             tk.Frame(card, bg=T["border"], height=2 if card._gap else 1).pack(fill="x", padx=0 if card._gap else 14)
         card._rows += 1
@@ -555,7 +556,7 @@ class SettingsWindow:
         text = tk.Frame(row, bg=self.bg)
         text.pack(side="left", fill="x", expand=True, padx=14, pady=10)
         fg = (T["menu_disabled"] if not enabled else
-              core.themed_color(T["danger"]) if e["label"] in DANGER_LABELS else T["win_fg"])
+              theme.themed_color(T["danger"]) if e["label"] in DANGER_LABELS else T["win_fg"])
         tk.Label(text, text=clean(e["label"]), bg=self.bg, fg=fg, font=self.font(10), anchor="w",
                  justify="left").pack(fill="x")
         detail = " — ".join(x for x in (where, e.get("help")) if x)
@@ -594,7 +595,7 @@ class SettingsWindow:
             self._clickable(row, lambda _e=None: self.run(e.get("action")), hover=T["btn_active"])
 
     def _switch(self, parent, on, enabled):
-        T = core.T
+        T = theme.T
         z = self.scale
         c = tk.Canvas(parent, width=int(38 * z), height=int(20 * z), bg=self.bg, highlightthickness=0, bd=0)
         track = (T["primary"] if on else T["border"]) if enabled else T["menu_disabled"]
@@ -611,7 +612,7 @@ class SettingsWindow:
     def _slider(self, parent, spec):
         """A slider row: {"value", "min", "max", "step", "set": fn(value), "format": fn(value) -> text}. The value
         is applied when the slider is let go (applying it rebuilds the window, which would end the drag)."""
-        T = core.T
+        T = theme.T
         fmt = spec.get("format") or (lambda v: f"{v:g}")
         line = tk.Frame(parent, bg=self.bg)
         line.pack(fill="x", pady=(8, 0))
@@ -634,16 +635,16 @@ class SettingsWindow:
 
     def _dropdown(self, widget, entries):
         x, y = widget.winfo_rootx() + widget.winfo_width() - 220, widget.winfo_rooty() + widget.winfo_height()
-        if core.NATIVE_WIN_MENU:
+        if native_menu.NATIVE_WIN_MENU:
             try:
-                self.run(core.popup_native_menu(widget, entries, x, y))
+                self.run(native_menu.popup_native_menu(widget, entries, x, y))
                 return
             except Exception:
                 pass
         menu = tk.Menu(self.win, tearoff=0)
-        core.fill_menu(menu, entries)
+        native_menu.fill_menu(menu, entries)
         try:
-            core.popup_menu(menu, x, y)
+            native_menu.popup_menu(menu, x, y)
         finally:
             menu.grab_release()
             self.win.after(150, self.refresh)

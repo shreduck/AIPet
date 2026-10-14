@@ -13,6 +13,12 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 import aipet
+import aipetlib.app.placement as app_placement
+import aipetlib.app.preferences as app_preferences
+import aipetlib.config as config_owner
+import aipetlib.ui.appearance_controls as appearance_controls
+import aipetlib.ui.pet_style as pet_style
+import aipetlib.ui.tooltips as tooltips
 import aipet_hook
 from aipet_hook_runtime import approvals as hook_approvals
 from aipet_hook_runtime import capture as hook_capture
@@ -98,23 +104,23 @@ class UsageTests(unittest.TestCase):
         idle_width = pet._draw_usage()
         pet.data = {"agent": "claude", "usage": [{"window": "5h", "percent": 100}]}
         self.assertGreater(pet._draw_usage(), idle_width)
-        self.assertEqual(idle_width, aipet.USAGE_GUTTER)
+        self.assertEqual(idle_width, pet_style.USAGE_GUTTER)
         self.assertEqual(idle_width, 0)
 
     def test_shared_margin_keeps_rightmost_position_stable(self):
         app = aipet.PetApp.__new__(aipet.PetApp)
-        app.appearance = aipet.Appearance(app)
-        app.tooltips = aipet.Tooltips(app)
-        app.preferences = aipet.PetPreferences(app)
+        app.appearance = appearance_controls.Appearance(app)
+        app.tooltips = tooltips.Tooltips(app)
+        app.preferences = app_preferences.PetPreferences(app)
         pet = MagicMock()
         pet.usage_extra = 0
         app.pets, app.order = {"pet": pet}, ["pet"]
         app.frame = MagicMock()
-        app.placement = aipet.Placement(app)
-        app.placement.usage_frame_pad = aipet.px(aipet.USAGE_EDGE_ROOM)
+        app.placement = app_placement.Placement(app)
+        app.placement.usage_frame_pad = pet_style.px(pet_style.USAGE_EDGE_ROOM)
         pet.usage_extra = 12
         adjustment = app.placement.sync_usage_padding()
-        self.assertEqual(adjustment + aipet.px(12), 0)
+        self.assertEqual(adjustment + pet_style.px(12), 0)
 
     def test_usage_badge_sits_beside_lower_body(self):
         pet = aipet.Pet.__new__(aipet.Pet)
@@ -143,9 +149,9 @@ class UsageTests(unittest.TestCase):
 
     def test_tooltip_types_can_be_disabled_independently(self):
         app = aipet.PetApp.__new__(aipet.PetApp)
-        app.appearance = aipet.Appearance(app)
-        app.tooltips = aipet.Tooltips(app)
-        app.preferences = aipet.PetPreferences(app)
+        app.appearance = appearance_controls.Appearance(app)
+        app.tooltips = tooltips.Tooltips(app)
+        app.preferences = app_preferences.PetPreferences(app)
         app.cfg = {"session_tooltips": False, "usage_tooltips": True}
         app.tooltips.hide_tip = MagicMock()
         app.tooltips._show_tooltip = MagicMock()
@@ -162,9 +168,9 @@ class UsageTests(unittest.TestCase):
 
     def test_tooltip_settings_are_persisted(self):
         app = aipet.PetApp.__new__(aipet.PetApp)
-        app.appearance = aipet.Appearance(app)
-        app.tooltips = aipet.Tooltips(app)
-        app.preferences = aipet.PetPreferences(app)
+        app.appearance = appearance_controls.Appearance(app)
+        app.tooltips = tooltips.Tooltips(app)
+        app.preferences = app_preferences.PetPreferences(app)
         app.cfg, app.pets = {}, {"pet": MagicMock()}
         app.tooltips.hide_tip = MagicMock()
         app.tooltip_vars = {"usage": MagicMock()}
@@ -236,7 +242,7 @@ class UsageTests(unittest.TestCase):
             self.assertFalse(Path(lock).exists())
 
     def test_oauth_is_off_without_explicit_consent(self):
-        self.assertFalse(aipet.DEFAULT_CONFIG["claude_oauth_usage"])
+        self.assertFalse(config_owner.DEFAULT_CONFIG["claude_oauth_usage"])
         with tempfile.TemporaryDirectory() as folder:
             target = str(Path(folder) / "sessions")
             with patch.object(claude_usage, "access_token") as credentials, patch.object(claude_usage.subprocess, "Popen") as spawn:

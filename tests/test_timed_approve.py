@@ -8,6 +8,9 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import aipet
+import aipetlib.config as config
+import aipetlib.permissions as permissions
+import aipetlib.text as textfmt
 import aipetlib.app.answers as answers_module
 import support
 import aipet_app
@@ -29,21 +32,21 @@ class TimedApproveTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_grant_is_stored_beside_the_rules_and_expires(self):
-        aipet.save_auto_approve("windows", dict(aipet.default_auto_rules(), enabled=True, whitelist=["ls"]))
-        self.assertTrue(aipet.set_timed_grant("s-1", 10, "esign"))
-        aipet.save_auto_approve("wsl:U", aipet.default_auto_rules())  # saving rules keeps the grant
+        permissions.save_auto_approve("windows", dict(permissions.default_auto_rules(), enabled=True, whitelist=["ls"]))
+        self.assertTrue(permissions.set_timed_grant("s-1", 10, "esign"))
+        permissions.save_auto_approve("wsl:U", permissions.default_auto_rules())  # saving rules keeps the grant
         with open(self.path) as f:
             data = json.load(f)
         self.assertEqual(data["targets"]["windows"]["whitelist"], ["ls"])
-        grant = aipet.timed_grants()["s-1"]
+        grant = permissions.timed_grants()["s-1"]
         self.assertAlmostEqual(grant["until"], time.time() + 600, delta=5)
-        self.assertEqual(aipet.timed_grants(now=time.time() + 601), {})  # expired
-        aipet.stop_timed_grant("s-1")
-        self.assertEqual(aipet.timed_grants(), {})
-        self.assertEqual(aipet.fmt_left(65), "1:05")
+        self.assertEqual(permissions.timed_grants(now=time.time() + 601), {})  # expired
+        permissions.stop_timed_grant("s-1")
+        self.assertEqual(permissions.timed_grants(), {})
+        self.assertEqual(textfmt.fmt_left(65), "1:05")
 
     def test_hook_approves_only_that_session_only_while_running(self):
-        aipet.set_timed_grant("s-1", 10)
+        permissions.set_timed_grant("s-1", 10)
         base = self.tmp.name
         with patch.object(hook_waiting, "pet_alive", return_value=True):
             self.assertEqual(hook_approvals.timed_decision(base, "s-1"), "timed")
@@ -55,26 +58,26 @@ class TimedApproveTests(unittest.TestCase):
     def test_start_asks_first(self):
         app = object.__new__(aipet.PetApp)
         app.cfg, app.root = {"timed_approve_minutes": 15}, MagicMock()
-        app.answers = aipet.Answers(app)
+        app.answers = answers_module.Answers(app)
         item = {"session_id": "s-1", "title": "esign", "conv": "PdfBox"}
         with patch.object(answers_module.theme, "themed_dialog", return_value=False) as ask:
             self.assertFalse(app.answers.start_timed(item))
         self.assertIn("15 min", ask.call_args.kwargs["heading"])
         self.assertFalse(ask.call_args.kwargs["enter_confirms"])  # Enter must not start it
-        self.assertEqual(aipet.timed_grants(), {})
+        self.assertEqual(permissions.timed_grants(), {})
         with patch.object(answers_module.theme, "themed_dialog", return_value=True):
             self.assertTrue(app.answers.start_timed(item))
-        self.assertIn("s-1", aipet.timed_grants())
+        self.assertIn("s-1", permissions.timed_grants())
 
     @patch.object(aipet_app.app_menus.hook_backups, "list_backups", return_value=[])
-    @patch.object(aipet.permissions, "auto_approve_rules", return_value={})
+    @patch.object(permissions, "auto_approve_rules", return_value={})
     def test_live_management_and_right_click_countdowns(self, *_):
         app = object.__new__(aipet_app.TrayApp)
         app.setup = aipet_app.SetupFlow(app)
         app.cowork = aipet_app.CoworkFlow(app, MagicMock())
         app.legacy = aipet_app.LegacyFlow(app)
         app.hooks = aipet_app.HookJobs(app, MagicMock())
-        app.pet = MagicMock(cfg=dict(aipet.DEFAULT_CONFIG))
+        app.pet = MagicMock(cfg=dict(config.DEFAULT_CONFIG))
         app.pet.answers.timed_minutes.return_value = 10
         app.status, app.distros, app.codex_targets = {}, [], []
         app.approvals, app.updates = aipet_app.Approvals(app), MagicMock(info=None)
@@ -85,7 +88,7 @@ class TimedApproveTests(unittest.TestCase):
         app.pet._last_items = [
             {"source": "CC", "session_id": "s-1", "title": "esign", "state": "working", "agent_types": ["tester"]},
             {"source": "CC", "session_id": "s-2", "title": "notes", "state": "idle", "agent_types": []}]
-        aipet.set_timed_grant("s-1", 10, "esign")
+        permissions.set_timed_grant("s-1", 10, "esign")
         live = next(e for e in app._mac_menu_spec() if e and e["label"] == "Live Management")["submenu"]
         esign = next(e for e in live if e and e["label"].startswith("esign"))
         self.assertIn("⏱", esign["label"])  # countdown on the session's entry

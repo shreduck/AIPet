@@ -11,13 +11,15 @@ def check_assets(output):
     import io
     result = {"ok": False}
     try:
-        import aipet as core
+        import aipetlib.runtime.paths as paths
+        import aipetlib.ui.pet_style as pet_style
+        import aipetlib.ui.sprites as sprites_owner
         from PIL import Image, PngImagePlugin  # expose plugin import failures instead of Pillow hiding them
-        sprites = core.load_sprites(core.SPRITE_DIR)
+        sprites = sprites_owner.load_sprites(sprites_owner.SPRITE_DIR)
         if not sprites:
             raise RuntimeError("Robot sprites could not be loaded")
-        for face in core.FACE_PARTS:
-            robot = core.robot_image(face, ("green", "amber", "red"), sprites)
+        for face in sprites_owner.FACE_PARTS:
+            robot = sprites_owner.robot_image(face, ("green", "amber", "red"), sprites)
             data = io.BytesIO()
             robot.save(data, format="PNG")
             data.seek(0)
@@ -25,7 +27,7 @@ def check_assets(output):
                 decoded.load()
                 if decoded.size != sprites["img"]["robot"].size:
                     raise RuntimeError("Robot PNG round-trip changed dimensions")
-        result.update(ok=True, faces=len(core.FACE_PARTS), robot_size=sprites["img"]["robot"].size,
+        result.update(ok=True, faces=len(sprites_owner.FACE_PARTS), robot_size=sprites["img"]["robot"].size,
                       shadow_size=sprites["img"]["shadow"].size)
     except Exception as e:
         result["error"] = repr(e)
@@ -95,7 +97,6 @@ def start_spaces_probe(app, output):
                     "visible": bool(mac.send(w, "isVisible", restype=mac.c_bool)),
                     "tk_window_style": str(app.root.tk.call("::tk::unsupported::MacWindowStyle", "style", app.root._w)),
                     "canvas_sizes": [(p.canvas.winfo_width(), p.canvas.winfo_height()) for p in app.pet.pets.values()]}
-            import aipet as core
             if request.get("agent_network"):
                 data["agent_windows"] = [{"visible": bool(win.win.winfo_viewable()),
                                           "ui_scale": win.opts["scale"],
@@ -108,8 +109,8 @@ def start_spaces_probe(app, output):
                                                         for a in win.net["agents"]
                                                         if not a.get("main") and not a.get("tool")]}
                                          for win in app.agent_windows.open_windows().values()]
-            data["pet_positions"] = {key: [p.canvas.winfo_rootx() + core.px(core.BADGE_GUTTER + getattr(p, "gutter", 0) + core.PET_W / 2),
-                                            p.canvas.winfo_rooty() + core.px(90 - core.TOP_TRIM)]
+            data["pet_positions"] = {key: [p.canvas.winfo_rootx() + pet_style.px(pet_style.BADGE_GUTTER + getattr(p, "gutter", 0) + pet_style.PET_W / 2),
+                                            p.canvas.winfo_rooty() + pet_style.px(90 - pet_style.TOP_TRIM)]
                                      for key, p in app.pet.pets.items()}
             publish(data)
         except Exception as e:
@@ -133,8 +134,7 @@ def start_spaces_probe(app, output):
                     threading.Thread(target=update_probe, args=(request,), daemon=True).start()
                 else:
                     if request.get("scenario"):
-                        import aipet as core
-                        folder = Path(core.SESSIONS_DIR)
+                        folder = Path(paths.SESSIONS_DIR)
                         # Only seeded CI fixtures are moved; restore after each scenario.
                         for path in folder.glob("selftest-*.json.disabled"):
                             path.rename(path.with_suffix(""))

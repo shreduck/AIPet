@@ -3,6 +3,13 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import aipet
+import aipetlib.ui.native_menu as native_menu
+import aipetlib.app.preferences as app_preferences
+import aipetlib.config as config
+import aipetlib.geometry as geometry
+import aipetlib.permissions as permissions_owner
+import aipetlib.ui.appearance_controls as appearance_controls
+import aipetlib.ui.tooltips as tooltips
 import aipet_app
 from aipetlib.app.pointer import Pointer
 from aipetlib.app.agent_windows import AgentWindows
@@ -11,12 +18,12 @@ from aipetlib.app.agent_windows import AgentWindows
 class MenuTests(unittest.TestCase):
     def setUp(self):
         # Menus list live timed auto-approvals from ~/.aipet: never let the machine running the tests change them
-        grants = patch.object(aipet.permissions, 'timed_grants', return_value={})
+        grants = patch.object(permissions_owner, 'timed_grants', return_value={})
         grants.start()
         self.addCleanup(grants.stop)
 
     @patch.object(aipet_app.app_menus.hook_backups, 'list_backups', return_value=[])
-    @patch.object(aipet.permissions, 'auto_approve_rules', return_value={})
+    @patch.object(permissions_owner, 'auto_approve_rules', return_value={})
     def test_tooltip_text_slider_is_beside_pet_size_in_both_menus(self, *_):
         app = self.make_app()
         for spec in (app._context_menu_spec(SimpleNamespace(key='_none', data={})),
@@ -32,7 +39,7 @@ class MenuTests(unittest.TestCase):
             app.pet.tooltips.set_tooltip_text_scale.assert_called_with(1.5)
 
     @patch.object(aipet_app.app_menus.hook_backups, 'list_backups', return_value=[])
-    @patch.object(aipet.permissions, 'auto_approve_rules', return_value={})
+    @patch.object(permissions_owner, 'auto_approve_rules', return_value={})
     def test_sound_choices_on_mac_and_windows(self, *_):
         app = self.make_app()
         for mac, name, system_label in ((True, 'posix', 'macOS sounds'), (False, 'nt', 'Windows sounds')):
@@ -49,7 +56,7 @@ class MenuTests(unittest.TestCase):
                         app.pet.preferences.set_sound_style.assert_called_with(value)
 
     @patch.object(aipet_app.app_menus.hook_backups, 'list_backups', return_value=[])
-    @patch.object(aipet.permissions, 'auto_approve_rules', return_value={})
+    @patch.object(permissions_owner, 'auto_approve_rules', return_value={})
     def test_tray_menu_built_off_the_tk_thread_never_calls_tk(self, *_):
         """The Windows tray builds its menu on pystray's thread. A Tk call from there (an agent window's
         winfo_exists) waits for the Tk thread, and after Quit forever: the process and its tray icon stayed alive."""
@@ -92,7 +99,7 @@ class MenuTests(unittest.TestCase):
         app.cowork = aipet_app.CoworkFlow(app, MagicMock())
         app.legacy = aipet_app.LegacyFlow(app)
         app.hooks = aipet_app.HookJobs(app, MagicMock())
-        app.pet = MagicMock(cfg=dict(aipet.DEFAULT_CONFIG))
+        app.pet = MagicMock(cfg=dict(config.DEFAULT_CONFIG))
         app.status, app.distros, app.codex_targets = {}, [], [('Local Codex', 'codex:local')]
         app.approvals, app.updates = aipet_app.Approvals(app), MagicMock(info=None)
         app.approvals.targets_on = []
@@ -102,7 +109,7 @@ class MenuTests(unittest.TestCase):
         return app
 
     @patch.object(aipet_app.app_menus.hook_backups, 'list_backups', return_value=[])
-    @patch.object(aipet.permissions, 'auto_approve_rules', return_value={})
+    @patch.object(permissions_owner, 'auto_approve_rules', return_value={})
     def test_context_and_status_menus_share_groups_and_current_values(self, *_):
         app = self.make_app()
         pet = SimpleNamespace(key='session', data={'source': 'CC', 'cwd': '/tmp', 'state': 'working'})
@@ -143,11 +150,11 @@ class MenuTests(unittest.TestCase):
         """A timed auto approve running on the machine that runs the tests must not reach the menus under test."""
         app = self.make_app()
         self.assertEqual(app._timed_countdown_items(), [])  # setUp's patch: no grants
-        with patch.object(aipet.permissions, 'timed_grants', return_value={'s1': {'title': 'live', 'until': 9e9}}):
+        with patch.object(permissions_owner, 'timed_grants', return_value={'s1': {'title': 'live', 'until': 9e9}}):
             self.assertEqual(len(app._timed_countdown_items()), 1)
 
     @patch.object(aipet_app.app_menus.hook_backups, 'list_backups', return_value=[])
-    @patch.object(aipet.permissions, 'auto_approve_rules', return_value={})
+    @patch.object(permissions_owner, 'auto_approve_rules', return_value={})
     def test_fix_fast_cancel_marks_the_session_finished(self, *_):
         app = self.make_app()
         working = {'key': 'cc:a', 'source': 'CC', 'state': 'working', 'title': 'ai-pet', 'conv': 'Fix bug', 'path': 'a'}
@@ -171,9 +178,9 @@ class MenuTests(unittest.TestCase):
 
     def test_context_menu_keeps_click_handling_and_recovers_on_error(self):
         app = object.__new__(aipet.PetApp)
-        app.appearance = aipet.Appearance(app)
-        app.tooltips = aipet.Tooltips(app)
-        app.preferences = aipet.PetPreferences(app)
+        app.appearance = appearance_controls.Appearance(app)
+        app.tooltips = tooltips.Tooltips(app)
+        app.preferences = app_preferences.PetPreferences(app)
         app.pointer = Pointer(app)
         app._menu_open, app.pointer.drag = False, ['old drag']
         app.tooltips.hide_tip, app.root, app.clickthru = MagicMock(), MagicMock(), MagicMock()
@@ -185,8 +192,8 @@ class MenuTests(unittest.TestCase):
             raise RuntimeError('menu test failure')
         app.menu.tk_popup.side_effect = popup
         pet = SimpleNamespace(_on_badge='old badge', _on_bubble=True)
-        with patch.object(aipet, 'fill_menu'), patch.object(aipet.geometry, 'work_area', return_value=None), \
-                patch.object(aipet, 'NATIVE_WIN_MENU', False):
+        with patch.object(native_menu, 'fill_menu'), patch.object(geometry, 'work_area', return_value=None), \
+                patch.object(native_menu, 'NATIVE_WIN_MENU', False):
             with self.assertRaisesRegex(RuntimeError, 'menu test failure'):
                 app.on_menu(SimpleNamespace(x_root=100, y_root=100), pet)
         self.assertFalse(app._menu_open)
@@ -204,8 +211,8 @@ class MenuTests(unittest.TestCase):
             ((0, 25, 1920, 1080), (100, 100), (100, 100)),
         ]:
             with self.subTest(bounds=bounds, click=click):
-                with patch.object(aipet.geometry, 'work_area', return_value=bounds):
-                    aipet.popup_menu(menu, *click)
+                with patch.object(geometry, 'work_area', return_value=bounds):
+                    native_menu.popup_menu(menu, *click)
                 menu.tk_popup.assert_called_with(*expected)
 
     def fake_user32(self, chosen=0):
@@ -223,15 +230,15 @@ class MenuTests(unittest.TestCase):
         spec = [{'label': 'Hide pet', 'action': hide, 'default': True}, None,
                 {'label': 'Behavior', 'submenu': [{'label': 'Mute', 'action': mute, 'checked': True},
                                                   {'label': 'Q&A', 'action': None, 'enabled': False}]}]
-        root = aipet.build_win_menu(u, spec, actions)
+        root = native_menu.build_win_menu(u, spec, actions)
         self.assertEqual(root, 100)
         self.assertEqual(actions, [hide, mute, None])
         calls = [c.args for c in u.AppendMenuW.call_args_list]
         self.assertIn((100, 0, 1, 'Hide pet'), calls)
-        self.assertIn((100, aipet.MF_SEPARATOR, 0, None), calls)
-        self.assertIn((101, aipet.MF_CHECKED, 2, 'Mute'), calls)
-        self.assertIn((101, aipet.MF_GRAYED, 3, 'Q&&A'), calls)
-        self.assertIn((100, aipet.MF_POPUP, 101, 'Behavior'), calls)
+        self.assertIn((100, native_menu.MF_SEPARATOR, 0, None), calls)
+        self.assertIn((101, native_menu.MF_CHECKED, 2, 'Mute'), calls)
+        self.assertIn((101, native_menu.MF_GRAYED, 3, 'Q&&A'), calls)
+        self.assertIn((100, native_menu.MF_POPUP, 101, 'Behavior'), calls)
         u.SetMenuDefaultItem.assert_called_once_with(100, 1, 0)
 
     def test_native_popup_returns_choice_and_cleans_up(self):
@@ -240,24 +247,24 @@ class MenuTests(unittest.TestCase):
         widget = MagicMock()
         widget.winfo_id.return_value = 7
         u = self.fake_user32(chosen=2)
-        self.assertIs(aipet.popup_native_menu(widget, spec, 10, 20, api=u), mute)
+        self.assertIs(native_menu.popup_native_menu(widget, spec, 10, 20, api=u), mute)
         u.SetForegroundWindow.assert_called_once_with(42)
         self.assertEqual(u.TrackPopupMenuEx.call_args.args[2:5], (10, 20, 42))
         u.DestroyMenu.assert_called_once_with(100)
-        self.assertIsNone(aipet.popup_native_menu(widget, spec, 10, 20, api=self.fake_user32(chosen=0)))
+        self.assertIsNone(native_menu.popup_native_menu(widget, spec, 10, 20, api=self.fake_user32(chosen=0)))
 
     def test_context_menu_runs_native_choice_after_closing(self):
         app = object.__new__(aipet.PetApp)
-        app.appearance = aipet.Appearance(app)
-        app.tooltips = aipet.Tooltips(app)
-        app.preferences = aipet.PetPreferences(app)
+        app.appearance = appearance_controls.Appearance(app)
+        app.tooltips = tooltips.Tooltips(app)
+        app.preferences = app_preferences.PetPreferences(app)
         app.pointer = Pointer(app)
         app._menu_open, app.pointer.drag = False, None
         app.tooltips.hide_tip, app.root, app.clickthru = MagicMock(), MagicMock(), None
         app.context_menu_spec, app.menu = MagicMock(return_value=[]), MagicMock()
         action = MagicMock(side_effect=lambda: self.assertFalse(app._menu_open))
-        with patch.object(aipet, 'NATIVE_WIN_MENU', True), \
-                patch.object(aipet, 'popup_native_menu', return_value=action) as native:
+        with patch.object(native_menu, 'NATIVE_WIN_MENU', True), \
+                patch.object(native_menu, 'popup_native_menu', return_value=action) as native:
             self.assertEqual(app.on_menu(SimpleNamespace(x_root=5, y_root=6)), 'break')
         native.assert_called_once_with(app.root, [], 5, 6)
         action.assert_called_once_with()
@@ -265,25 +272,25 @@ class MenuTests(unittest.TestCase):
 
     def test_context_menu_falls_back_to_tk_when_native_fails(self):
         app = object.__new__(aipet.PetApp)
-        app.appearance = aipet.Appearance(app)
-        app.tooltips = aipet.Tooltips(app)
-        app.preferences = aipet.PetPreferences(app)
+        app.appearance = appearance_controls.Appearance(app)
+        app.tooltips = tooltips.Tooltips(app)
+        app.preferences = app_preferences.PetPreferences(app)
         app.pointer = Pointer(app)
         app._menu_open, app.pointer.drag = False, None
         app.tooltips.hide_tip, app.root, app.clickthru = MagicMock(), MagicMock(), None
         app.context_menu_spec, app.menu = MagicMock(return_value=[]), MagicMock()
-        with patch.object(aipet, 'NATIVE_WIN_MENU', True), \
-                patch.object(aipet, 'popup_native_menu', side_effect=OSError('no user32')), \
-                patch.object(aipet, 'fill_menu'), patch.object(aipet, 'popup_menu') as tk_popup:
+        with patch.object(native_menu, 'NATIVE_WIN_MENU', True), \
+                patch.object(native_menu, 'popup_native_menu', side_effect=OSError('no user32')), \
+                patch.object(native_menu, 'fill_menu'), patch.object(native_menu, 'popup_menu') as tk_popup:
             app.on_menu(SimpleNamespace(x_root=5, y_root=6))
-            self.assertFalse(aipet.NATIVE_WIN_MENU)
+            self.assertFalse(native_menu.NATIVE_WIN_MENU)
         tk_popup.assert_called_once_with(app.menu, 5, 6)
 
     def test_details_opened_from_menu_stay_open_until_session_goes(self):
         app = object.__new__(aipet.PetApp)
-        app.appearance = aipet.Appearance(app)
-        app.tooltips = aipet.Tooltips(app)
-        app.preferences = aipet.PetPreferences(app)
+        app.appearance = appearance_controls.Appearance(app)
+        app.tooltips = tooltips.Tooltips(app)
+        app.preferences = app_preferences.PetPreferences(app)
         pinned, prompt = MagicMock(pinned=True), MagicMock(pinned=False)
         app.details = {'done-session': pinned, 'answered': prompt}
         items = [{'key': 'done-session', 'state': 'done'}, {'key': 'answered', 'state': 'working'}]
@@ -296,9 +303,9 @@ class MenuTests(unittest.TestCase):
 
     def test_control_click_does_not_focus_or_acknowledge_session(self):
         app = object.__new__(aipet.PetApp)
-        app.appearance = aipet.Appearance(app)
-        app.tooltips = aipet.Tooltips(app)
-        app.preferences = aipet.PetPreferences(app)
+        app.appearance = appearance_controls.Appearance(app)
+        app.tooltips = tooltips.Tooltips(app)
+        app.preferences = app_preferences.PetPreferences(app)
         app.pointer = Pointer(app)
         app.focus_session, app._acknowledge = MagicMock(), MagicMock()
         pet = SimpleNamespace(_on_badge='session', _on_bubble=True)

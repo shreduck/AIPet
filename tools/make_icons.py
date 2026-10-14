@@ -19,15 +19,14 @@ except ImportError:  # aipet imports tkinter at module level; the sprite code do
     sys.modules["tkinter"] = stub
 
 from PIL import Image  # noqa: E402
-
-import aipet as core  # noqa: E402
+import aipetlib.ui.sprites as sprites
 
 FACE, LIGHTS = "happy", ("amber", "green", "off")  # the mascot as it looks while working
 FILL = 0.92  # share of the icon's height the robot uses
 
 
 def icon(size):
-    robot = core.robot_image(FACE, LIGHTS)
+    robot = sprites.robot_image(FACE, LIGHTS)
     k = int(size * FILL // robot.height)  # whole-pixel scale for crisp pixel art
     big = robot.resize((robot.width * max(1, k), robot.height * max(1, k)), Image.NEAREST)
     if k < 1 or big.height < size * FILL * 0.75:  # no integer scale fits well: shrink a large crisp version instead

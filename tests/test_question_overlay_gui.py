@@ -17,7 +17,8 @@ class QuestionOverlayGuiTests(unittest.TestCase):
         from aipetlib.ui import agent_prompts as component
         if sys.platform == "darwin":
             import aipet
-            self.root = aipet.MacPetWindow()
+            import aipetlib.mac_panels as mac_panels
+            self.root = mac_panels.MacPetWindow()
         else:
             self.root = tk.Tk()
         self.root.title("AIPet isolated question parity fixture")

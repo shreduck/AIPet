@@ -6,6 +6,15 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import aipet
+import aipetlib.app.preferences as app_preferences
+import aipetlib.config as config
+import aipetlib.permissions as permissions
+import aipetlib.runtime.paths as paths
+import aipetlib.runtime.preferences as preferences
+import aipetlib.runtime.settings as runtime_settings
+import aipetlib.ui.appearance_controls as appearance_controls
+import aipetlib.ui.theme as theme
+import aipetlib.ui.tooltips as tooltips
 import support
 import aipet_app
 from aipetlib.app.agent_windows import AgentWindows
@@ -35,9 +44,9 @@ def spec():
 class SettingsSpecTests(unittest.TestCase):
     def test_tooltip_text_scale_is_independent_and_saved(self):
         pet = object.__new__(aipet.PetApp)
-        pet.appearance = aipet.Appearance(pet)
-        pet.tooltips = aipet.Tooltips(pet)
-        pet.preferences = aipet.PetPreferences(pet)
+        pet.appearance = appearance_controls.Appearance(pet)
+        pet.tooltips = tooltips.Tooltips(pet)
+        pet.preferences = app_preferences.PetPreferences(pet)
         pet.cfg, pet.tooltips.tip = {"size": 1.35}, None
         with tempfile.TemporaryDirectory() as directory, \
                 support.paths(HOME_DIR=directory), \
@@ -45,10 +54,10 @@ class SettingsSpecTests(unittest.TestCase):
             self.assertEqual(pet.tooltips.tooltip_text_scale(), 1.0)
             pet.tooltips.set_tooltip_text_scale(1.75)
             self.assertEqual(pet.cfg['size'], 1.35)
-            self.assertEqual(aipet.load_config()['tooltip_text_scale'], 1.75)
+            self.assertEqual(runtime_settings.load_config()['tooltip_text_scale'], 1.75)
             self.assertEqual(pet.tooltips.tooltip_text_scale(), 1.75)
             pet.tooltips.set_tooltip_text_scale(1.0)
-            self.assertEqual(aipet.load_config()['tooltip_text_scale'], 1.0)
+            self.assertEqual(runtime_settings.load_config()['tooltip_text_scale'], 1.0)
 
     def test_wheel_stops_at_edges_and_consumes_events(self):
         window = object.__new__(settings.SettingsWindow)
@@ -75,16 +84,16 @@ class SettingsSpecTests(unittest.TestCase):
 
     def test_inline_slider_changes_update_and_persist_settings(self):
         pet = object.__new__(aipet.PetApp)
-        pet.appearance = aipet.Appearance(pet)
-        pet.tooltips = aipet.Tooltips(pet)
-        pet.preferences = aipet.PetPreferences(pet)
+        pet.appearance = appearance_controls.Appearance(pet)
+        pet.tooltips = tooltips.Tooltips(pet)
+        pet.preferences = app_preferences.PetPreferences(pet)
         pet.cfg, pet.pets = {}, {}
         pet.placement = MagicMock()  # where the window sits: not what this test is about
         with tempfile.TemporaryDirectory() as directory, \
                 support.paths(HOME_DIR=directory), \
                 support.paths(CONFIG_PATH=str(Path(directory) / 'config.json')), \
-                patch.dict(aipet.SCALE), patch.dict(aipet.ANSWER_WAIT), \
-                patch.dict(aipet.DONE_TIMEOUT), patch.dict(aipet.HEALTH):
+                patch.dict(preferences.SCALE), patch.dict(preferences.ANSWER_WAIT), \
+                patch.dict(preferences.DONE_TIMEOUT), patch.dict(preferences.HEALTH):
             pet.appearance.set_size(1.35)
             pet.preferences.set_answer_wait(75)
             pet.preferences.set_done_timeout(8)
@@ -92,16 +101,16 @@ class SettingsSpecTests(unittest.TestCase):
             expected = {'size': 1.35, 'answer_wait_seconds': 75,
                         'done_timeout_minutes': 8, 'health_check_seconds': 25}
             self.assertEqual(pet.cfg, expected)
-            self.assertEqual(json.loads(Path(aipet.CONFIG_PATH).read_text()), expected)
+            self.assertEqual(json.loads(Path(paths.CONFIG_PATH).read_text()), expected)
             self.assertEqual((Path(directory) / 'answer-wait').read_text(), '75')
-            self.assertEqual(aipet.SCALE['v'], 1.35 * aipet.SCALE_UNIT)
-            self.assertEqual([aipet.ANSWER_WAIT['v'], aipet.DONE_TIMEOUT['v'], aipet.HEALTH['v']], [75, 8, 25])
+            self.assertEqual(preferences.SCALE['v'], 1.35 * preferences.SCALE_UNIT)
+            self.assertEqual([preferences.ANSWER_WAIT['v'], preferences.DONE_TIMEOUT['v'], preferences.HEALTH['v']], [75, 8, 25])
             pet.placement.reposition.assert_called_once()
             pet.preferences.set_answer_wait(0)
             pet.preferences.set_done_timeout(0)
             pet.preferences.set_health_interval(0)
             self.assertEqual((Path(directory) / 'answer-wait').read_text(), '0')
-            self.assertEqual([aipet.ANSWER_WAIT['v'], aipet.DONE_TIMEOUT['v'], aipet.HEALTH['v']], [0, 0, 0])
+            self.assertEqual([preferences.ANSWER_WAIT['v'], preferences.DONE_TIMEOUT['v'], preferences.HEALTH['v']], [0, 0, 0])
 
     def test_pages_follow_the_menu(self):
         pages = settings.pages_from_spec(spec())
@@ -122,7 +131,7 @@ class SettingsSpecTests(unittest.TestCase):
         b[4]["submenu"][1]["checked"] = True
         self.assertNotEqual(settings.signature(a), settings.signature(b))
         light = settings.signature(a)
-        with patch.dict(aipet.T, name="dark"):
+        with patch.dict(theme.T, name="dark"):
             self.assertNotEqual(light, settings.signature(a))
 
     def test_labels(self):
@@ -133,14 +142,14 @@ class SettingsSpecTests(unittest.TestCase):
             self.assertTrue(all(len(r) == 9 for r in rows), name)
 
     @patch.object(aipet_app.app_menus.hook_backups, 'list_backups', return_value=[])
-    @patch.object(aipet.permissions, 'auto_approve_rules', return_value={})
+    @patch.object(permissions, 'auto_approve_rules', return_value={})
     def test_real_spec_has_icons_and_help_for_every_page(self, *_):
         app = object.__new__(aipet_app.TrayApp)
         app.setup = aipet_app.SetupFlow(app)
         app.cowork = aipet_app.CoworkFlow(app, MagicMock())
         app.legacy = aipet_app.LegacyFlow(app)
         app.hooks = aipet_app.HookJobs(app, MagicMock())
-        app.pet = MagicMock(cfg=dict(aipet.DEFAULT_CONFIG))
+        app.pet = MagicMock(cfg=dict(config.DEFAULT_CONFIG))
         app.status, app.distros, app.codex_targets = {}, [], [('Local Codex', 'codex:local')]
         app.approvals, app.updates = aipet_app.Approvals(app), MagicMock(info=None)
         app.approvals.targets_on = []

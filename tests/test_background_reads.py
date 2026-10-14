@@ -6,6 +6,8 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 import aipet
+import aipetlib.app.answers as app_answers
+import aipetlib.config as config
 import aipetlib.agents.tracker as agent_tracker
 from aipetlib.app.session_reader import SessionReader
 
@@ -53,11 +55,11 @@ class SessionReaderTests(unittest.TestCase):
 class PollUsesTheReaderTests(unittest.TestCase):
     def app(self, items):
         app = object.__new__(aipet.PetApp)
-        app.cfg = dict(aipet.DEFAULT_CONFIG)
+        app.cfg = dict(config.DEFAULT_CONFIG)
         app.reader = MagicMock(latest=MagicMock(return_value=items))
         app.read_items = MagicMock(side_effect=AssertionError("read on the UI thread"))
         app._slots, app._slot_n = {}, 0
-        app.answers = aipet.Answers(app)
+        app.answers = app_answers.Answers(app)
         return app
 
     def test_the_poll_takes_the_readers_list_and_never_changes_it(self):

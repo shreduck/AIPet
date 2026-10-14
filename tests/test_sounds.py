@@ -6,6 +6,10 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import aipet
+import aipetlib.app.preferences as app_preferences
+import aipetlib.config as config_owner
+import aipetlib.ui.appearance_controls as appearance_controls
+import aipetlib.ui.tooltips as tooltips
 import aipetlib.ui.sounds as sounds
 import support
 
@@ -13,9 +17,9 @@ import support
 class ChimeTests(unittest.TestCase):
     def test_mac_plays_custom_by_default_and_honors_system_choice(self):
         app = object.__new__(aipet.PetApp)
-        app.appearance = aipet.Appearance(app)
-        app.tooltips = aipet.Tooltips(app)
-        app.preferences = aipet.PetPreferences(app)
+        app.appearance = appearance_controls.Appearance(app)
+        app.tooltips = tooltips.Tooltips(app)
+        app.preferences = app_preferences.PetPreferences(app)
         app.muted = MagicMock(get=MagicMock(return_value=False))
         app.root = MagicMock()
         with patch.object(sounds, 'IS_MAC', True), patch.object(sounds, 'winsound', None), \
@@ -39,9 +43,9 @@ class ChimeTests(unittest.TestCase):
 
     def test_mac_falls_back_to_system_when_chime_is_unavailable(self):
         app = object.__new__(aipet.PetApp)
-        app.appearance = aipet.Appearance(app)
-        app.tooltips = aipet.Tooltips(app)
-        app.preferences = aipet.PetPreferences(app)
+        app.appearance = appearance_controls.Appearance(app)
+        app.tooltips = tooltips.Tooltips(app)
+        app.preferences = app_preferences.PetPreferences(app)
         app.cfg, app.root = {}, MagicMock()
         app.muted = MagicMock(get=MagicMock(return_value=False))
         with patch.object(sounds, 'IS_MAC', True), patch.object(sounds, 'winsound', None), \
@@ -52,11 +56,11 @@ class ChimeTests(unittest.TestCase):
 
     def test_sound_choice_is_saved_and_previewed(self):
         app = object.__new__(aipet.PetApp)
-        app.appearance = aipet.Appearance(app)
-        app.tooltips = aipet.Tooltips(app)
-        app.preferences = aipet.PetPreferences(app)
+        app.appearance = appearance_controls.Appearance(app)
+        app.tooltips = tooltips.Tooltips(app)
+        app.preferences = app_preferences.PetPreferences(app)
         app.cfg, app.beep = {}, MagicMock()
-        self.assertEqual(aipet.DEFAULT_CONFIG['sound_style'], 'chimes')
+        self.assertEqual(config_owner.DEFAULT_CONFIG['sound_style'], 'chimes')
         with patch('aipetlib.app.preferences.save_setting') as save:
             for style in ('system', 'chimes'):
                 app.preferences.set_sound_style(style)
@@ -81,9 +85,9 @@ class ChimeTests(unittest.TestCase):
 
     def test_windows_plays_chimes_unless_system_sounds_are_chosen(self):
         app = object.__new__(aipet.PetApp)
-        app.appearance = aipet.Appearance(app)
-        app.tooltips = aipet.Tooltips(app)
-        app.preferences = aipet.PetPreferences(app)
+        app.appearance = appearance_controls.Appearance(app)
+        app.tooltips = tooltips.Tooltips(app)
+        app.preferences = app_preferences.PetPreferences(app)
         app.muted = MagicMock(get=MagicMock(return_value=False))
         ws = SimpleNamespace(PlaySound=MagicMock(), MessageBeep=MagicMock(), SND_FILENAME=1, SND_ASYNC=2,
                              SND_NODEFAULT=4, MB_ICONEXCLAMATION=48, MB_ICONASTERISK=64, MB_ICONHAND=16)

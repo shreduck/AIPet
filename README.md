@@ -543,14 +543,14 @@ From source, the Windows hook runs via `pythonw` and the script, so no exe is ne
 | File | Purpose |
 |---|---|
 | `aipet_app.py` | Entry point: tray, application actions, autostart; wires the controllers in `aipetlib/app/` |
-| `aipet.py` | Pet runtime coordination, shared state and compatibility entry points |
+| `aipet.py` | The pet app (`PetApp`: pets, polling, alerts) and its standalone entry point; it imports only what it uses (no re-exports) |
 | `aipetlib/runtime/` | Paths, live preference holders, reading and saving `config.json`, and the error log, shared by the app and background workers |
 | `aipetlib/agents/` | The agent network backend: Claude/Codex transcript adapters, incremental history, tool calls, network assembly, log filters, stats and the background tracker (no Tk) |
 | `aipetlib/config.py`, `records.py`, `sessions.py`, `permissions.py` | Configuration persistence, session interpretation and permission rules |
 | `aipetlib/housekeeping.py` | Sweeping leftovers (half-written files, dead hooks' answers, old debug logs) |
 | `aipetlib/geometry.py`, `windows.py`, `mac_panels.py`, `click_through.py` | Monitor geometry and native window behavior |
 | `aipetlib/vscode.py`, `workbench.py`, `hook_events.py` | Editor routing, MCP polling and hook event transitions |
-| `aipetlib/ui/` | Pet rendering (`pet_style`, `pet_view`, `sprites`, `theme`), permission cards, hover panels (`Tooltips` in `tooltips`), slider windows (`Appearance` in `appearance_controls`), tray and Dock artwork (`tray_icons`), menu definitions, the chimes (`sounds`), the agent network window (`agent_window`) and its components (`agent_logs`, `agent_graph`, `agent_prompts`, `agent_menu`, `agent_controls`) with their shared values (`agent_common`) |
+| `aipetlib/ui/` | Pet rendering (`pet_style`, `pet_view`, `sprites`, `theme`), menus drawn from the shared spec (`native_menu`: Tk and native Windows), permission cards, hover panels (`Tooltips` in `tooltips`), slider windows (`Appearance` in `appearance_controls`), tray and Dock artwork (`tray_icons`), menu definitions, the chimes (`sounds`), the agent network window (`agent_window`) and its components (`agent_logs`, `agent_graph`, `agent_prompts`, `agent_menu`, `agent_controls`) with their shared values (`agent_common`) |
 | `aipetlib/text.py` | Plain-text helpers: phrases, "3m ago", countdowns |
 | `aipetlib/update.py` | Releases: this build's version and the newest one on GitHub |
 | `aipetlib/app/` | The apps' controllers: `updates` (release checks and dialog), `agent_windows` (network windows), `approvals` (rules editor), `config_watch` (config.json applied live), `diagnostics`, `placement`, `pointer`, `answers`, `preferences`, `session_reader`, `presentation` (tray/Dock/notifications), `setup` (first-run setup and runtime choices), `cowork` (plugin instructions), `legacy` (old-hook reminders), and `hooks` (installation jobs, confirmations and target snapshots) |

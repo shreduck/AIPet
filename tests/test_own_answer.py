@@ -1,6 +1,7 @@
 import unittest
 
 import aipet
+import aipetlib.ui.pet_style as pet_style
 
 
 class Var:
@@ -25,7 +26,7 @@ class OwnAnswerTests(unittest.TestCase):
         choice, own = Var("No, push now"), Var("what was fixed first")
         card = self.card((q, False, choice, {}, own, Var(False)))
         self.assertEqual(card.question_answers(), {"Push now?": "No, push now"})  # typed, but an option is picked
-        choice.set(aipet.OWN_CHOICE)
+        choice.set(pet_style.OWN_CHOICE)
         self.assertEqual(card.question_answers(), {"Push now?": "what was fixed first"})
         own.set("  ")
         self.assertIsNone(card.question_answers())  # own answer picked but empty: nothing to send
@@ -33,7 +34,7 @@ class OwnAnswerTests(unittest.TestCase):
     def test_multi_select_adds_own_answer_only_when_ticked(self):
         q = {"question": "Which?"}
         own_on = Var(False)
-        card = self.card((q, True, Var(aipet.NO_CHOICE), {"A": Var(True), "B": Var(False)}, Var("C"), own_on))
+        card = self.card((q, True, Var(pet_style.NO_CHOICE), {"A": Var(True), "B": Var(False)}, Var("C"), own_on))
         self.assertEqual(card.question_answers(), {"Which?": ["A"]})
         own_on.set(True)
         self.assertEqual(card.question_answers(), {"Which?": ["A", "C"]})

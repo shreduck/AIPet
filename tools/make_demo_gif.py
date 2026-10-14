@@ -24,8 +24,9 @@ except ImportError:  # aipet imports tkinter at module level; the sprite code do
     sys.modules["tkinter"] = stub
 
 from PIL import Image, ImageDraw, ImageFont  # noqa: E402
-
-import aipet as core  # noqa: E402
+import aipetlib.ui.pet_style as pet_style
+import aipetlib.ui.sprites as sprites
+import aipetlib.ui.theme as theme
 
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
 OUT = args[0] if args else os.path.join(ROOT, "demo.gif")
@@ -33,11 +34,11 @@ BG = sys.argv[sys.argv.index("--bg") + 1] if "--bg" in sys.argv else "#eef3f4"
 U = int(sys.argv[sys.argv.index("--unit") + 1]) if "--unit" in sys.argv else 2  # pixels per drawing unit
 FRAMES, FPS = 96, 12  # 8 s: the compact pet's queue moves on halfway; long enough for a working pet's blink
 
-core.set_theme("light")
-T = core.T
-SPR = core.load_sprites()
-W, H = core.CANVAS_W, core.CANVAS_H
-G, TRIM = core.BADGE_GUTTER, core.TOP_TRIM
+theme.set_theme("light")
+T = theme.T
+SPR = sprites.load_sprites()
+W, H = pet_style.CANVAS_W, pet_style.CANVAS_H
+G, TRIM = pet_style.BADGE_GUTTER, pet_style.TOP_TRIM
 
 PETS = [  # (title, state, badges); "question" = needs you with a question (a single "?" bubble)
     ("duck-software", "working", ["Claude CLI"]),
@@ -91,21 +92,21 @@ def draw_pet(title, st, badges, t, rnd, heads=None, hot=None, collapse=False):
     d = ImageDraw.Draw(im)
     X = lambda v: (v + G) * U  # noqa: E731  - drawing units -> px (x shifted right by the badge column)
     Y = lambda v: (v - TRIM) * U  # noqa: E731
-    cx0, ground = core.PET_W / 2, 90
+    cx0, ground = pet_style.PET_W / 2, 90
     rw0, rh0 = SPR["meta"]["robot"]["size"]
     states = heads[1:] + heads[:1] if heads else [st]  # drawn back to front: the session in front last
-    layout = core.HEAD_LAYOUTS[len(states)]
+    layout = pet_style.HEAD_LAYOUTS[len(states)]
     top_main = ground
     for i, ((dx, k), hst) in enumerate(zip(layout, states)):
         main = i == len(states) - 1
         ph = t + i * 1.7
-        dy, squash, face = 0.0, 1.0, core.STATE_FACE.get(hst, "sleep")
+        dy, squash, face = 0.0, 1.0, sprites.STATE_FACE.get(hst, "sleep")
         cx_shift = 0.0
         if hst == "working":  # as PetApp: a travelling wavy mouth and a slow cosine blink
             dy = -abs(math.sin(ph * (5 if main else 4.2))) * 3 * k
-            frame = int(ph * 8) % core.TALK_FRAMES
-            blink = math.cos(2 * math.pi * core.BLINK_RATIO * (8 / core.TALK_FRAMES) * (ph + BLINK_PHASE)) \
-                > core.BLINK_THRESHOLD
+            frame = int(ph * 8) % sprites.TALK_FRAMES
+            blink = math.cos(2 * math.pi * pet_style.BLINK_RATIO * (8 / sprites.TALK_FRAMES) * (ph + BLINK_PHASE)) \
+                > pet_style.BLINK_THRESHOLD
             face = f"talkblink{frame}" if blink else f"talk{frame}"
         elif hst == "error":
             cx_shift = 2 * math.sin(ph * 25)
@@ -116,7 +117,7 @@ def draw_pet(title, st, badges, t, rnd, heads=None, hot=None, collapse=False):
             squash = 1 + 0.025 * math.sin(ph * 2)
         sw = rw0 * k * 1.1
         paste(im, SPR["img"]["shadow"], sw * U, max(2, int(sw * 0.25)) * U, X(cx0 + dx), Y(ground + 2), "center")
-        paste(im, core.robot_image(face, core.light_cycle(hst, ph)), rw0 * k * U, rh0 * k * squash * U,
+        paste(im, sprites.robot_image(face, sprites.light_cycle(hst, ph)), rw0 * k * U, rh0 * k * squash * U,
               X(cx0 + dx + cx_shift), Y(ground + dy), "s")
         if main:
             top_main = ground + dy - rh0 * k * squash
@@ -128,11 +129,11 @@ def draw_pet(title, st, badges, t, rnd, heads=None, hot=None, collapse=False):
     def bubble(x1, y1, x2, y2, fill, outline):
         w, h = max(14, int(round(x2 - x1))), max(9, int(round(y2 - y1)))
         tcx = max(5, min(w - 6, int(round(tail - x1))))
-        b = core.bubble_image(w, h, fill, outline, tcx)
+        b = sprites.bubble_image(w, h, fill, outline, tcx)
         paste(im, b, b.width * U, b.height * U, X(int(round(x1))), Y(int(round(y1))))
 
     def mark(kind, x, y):
-        m = core.mark_image(kind)
+        m = sprites.mark_image(kind)
         paste(im, m, m.width * U, m.height * U, X(round(x)), Y(round(y)), "center")
 
     if st == "working":
@@ -164,26 +165,26 @@ def draw_pet(title, st, badges, t, rnd, heads=None, hot=None, collapse=False):
             d.text((X(cx0 + 14 + ph * 14), Y(top_main + 4 - ph * 22)), "z", font=zf, fill="#9ca3af", anchor="mm")
 
     # name tag: short, at the bottom
-    tw, th = core.PET_W - 6, core.TAG_H
-    tag = core.bubble_image(tw, th, T["tag_bg"], T["tag_outline"], None)
-    paste(im, tag, tw * U, th * U, X(3), Y(core.PET_H - 2 - th))
-    name, room = title, (core.PET_W - 14) * U
+    tw, th = pet_style.PET_W - 6, pet_style.TAG_H
+    tag = sprites.bubble_image(tw, th, T["tag_bg"], T["tag_outline"], None)
+    paste(im, tag, tw * U, th * U, X(3), Y(pet_style.PET_H - 2 - th))
+    name, room = title, (pet_style.PET_W - 14) * U
     while name and text_w(SANS, name) > room:
         name = name[:-2] + "\u2026"
-    d.text((X(core.PET_W / 2), Y(core.PET_H - 2 - th / 2 + 1.5)), name, font=SANS, fill=T["tag_fg"], anchor="mm")
+    d.text((X(pet_style.PET_W / 2), Y(pet_style.PET_H - 2 - th / 2 + 1.5)), name, font=SANS, fill=T["tag_fg"], anchor="mm")
 
     # badges: one per session, tabs on the tag's top edge (faint red while it needs you), wrapping upwards
     h, gap = 11, 2
     hot = hot or [st == "needs_input"] * len(badges)
-    x, rowy = G + 6, core.PET_H - 2 - th - TRIM - h + 4
+    x, rowy = G + 6, pet_style.PET_H - 2 - th - TRIM - h + 4
     for label, red in zip(badges + (["\u25be"] if collapse else []), hot + [False]):
         w = int(round(12 + text_w(SANS_SMALL, label) / U))
-        if (x + w > G + core.PET_W - 6 and x > G + 6) or label == "\u25be":  # the collapse tab: its own top row
+        if (x + w > G + pet_style.PET_W - 6 and x > G + 6) or label == "\u25be":  # the collapse tab: its own top row
             x, rowy = G + 6, rowy - (h + gap)
-        bg = core.BADGE_ATTENTION_BG if red else T["tag_bg"]
-        b = core.bubble_image(w, h, bg, T["tag_outline"], None)
+        bg = pet_style.BADGE_ATTENTION_BG if red else T["tag_bg"]
+        b = sprites.bubble_image(w, h, bg, T["tag_outline"], None)
         paste(im, b, w * U, h * U, x * U, rowy * U)
-        d.rectangle(((x + 3) * U, (rowy + 4) * U, (x + 6) * U - 1, (rowy + 7) * U - 1), fill=core.badge_dot(label))
+        d.rectangle(((x + 3) * U, (rowy + 4) * U, (x + 6) * U - 1, (rowy + 7) * U - 1), fill=pet_style.badge_dot(label))
         d.text(((x + 8) * U, (rowy + h / 2) * U), label, font=SANS_SMALL, fill="#111827" if red else T["tag_fg"], anchor="lm")
         x += w + gap
     return im
@@ -191,14 +192,14 @@ def draw_pet(title, st, badges, t, rnd, heads=None, hot=None, collapse=False):
 
 def main():
     random.seed(7)
-    rows = ["".join(random.choice(core.TERMINAL_CHARS) for _ in range(15)) for _ in range(3)]
+    rows = ["".join(random.choice(pet_style.TERMINAL_CHARS) for _ in range(15)) for _ in range(3)]
     cols, pad = 3, 6 * U
     frames = []
     for f in range(FRAMES):
         t = f / FPS
         for i in range(3):  # scroll the terminal rows a little each frame
             if random.random() < (0.55, 0.85, 0.4)[i]:
-                rows[i] = rows[i][1:] + random.choice(core.TERMINAL_CHARS)
+                rows[i] = rows[i][1:] + random.choice(pet_style.TERMINAL_CHARS)
         sheet = Image.new("RGBA", (cols * W * U + pad * (cols + 1), 3 * H * U + pad * 5), BG)
         for n, (title, st, badges) in enumerate(PETS):
             pet = draw_pet(title, st, badges, t + n * 0.37, rows)
