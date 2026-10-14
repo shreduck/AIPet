@@ -64,7 +64,7 @@ class TimedApproveTests(unittest.TestCase):
             self.assertTrue(app.answers.start_timed(item))
         self.assertIn("s-1", aipet.timed_grants())
 
-    @patch.object(aipet_app.hi, "list_backups", return_value=[])
+    @patch.object(aipet_app.hook_backups, "list_backups", return_value=[])
     @patch.object(aipet.permissions, "auto_approve_rules", return_value={})
     def test_live_management_and_right_click_countdowns(self, *_):
         app = object.__new__(aipet_app.TrayApp)

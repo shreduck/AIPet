@@ -18,10 +18,21 @@ import aipetlib.update as aipet_update
 import aipet_selftest
 import aipet_claude_usage as claude_usage
 import aipet_usage as usage
-import hooks_installer as installer
+from aipetlib.integrations import backups as hook_backups
+from aipetlib.integrations import commands as hook_commands
+from aipetlib.integrations import deployment as hook_deployment
+from aipetlib.integrations import installer as hook_installer
+from aipetlib.integrations import locations as hook_locations
+from aipetlib.integrations import protocol as hook_protocol
+from aipetlib.integrations import settings as hook_settings
+from aipetlib.integrations import targets as hook_targets
 
 
 class UsageTests(unittest.TestCase):
+    def setUp(self):
+        import support
+        self.enterContext(support.installation())
+
     def test_reported_limits_only(self):
         self.assertEqual(usage.normalize({"info": {"total_tokens": 100000}}), [])
         self.assertEqual(usage.normalize({"primary": {"used_percent": None}}), [])
@@ -241,34 +252,34 @@ class UsageTests(unittest.TestCase):
     def test_legacy_statusline_migration_restores_previous(self):
         original = {"type": "command", "command": "echo original", "padding": 2}
         legacy = {"statusLine": {"type": "command", "command": "aipet-hook --usage", "aipet_previous": original}}
-        self.assertEqual(installer.remove_usage(legacy)["statusLine"], original)
+        self.assertEqual(hook_settings.remove_usage(legacy)["statusLine"], original)
 
     def test_usage_restore_preserves_manual_edits(self):
         settings = {"statusLine": {"type": "command", "command": "aipet-hook --usage --manual-edit"}}
-        self.assertEqual(installer.remove_usage(settings, previous={"type": "command", "command": "old"},
+        self.assertEqual(hook_settings.remove_usage(settings, previous={"type": "command", "command": "old"},
                                                installed={"type": "command", "command": "aipet-hook --usage"}), settings)
 
     def test_opt_in_statusline_restore_metadata_lives_outside_settings(self):
-        before = installer.merge_hooks({"statusLine": {"type": "command", "command": "printf original", "padding": 2}}, "aipet-hook")
+        before = hook_settings.merge_hooks({"statusLine": {"type": "command", "command": "printf original", "padding": 2}}, "aipet-hook")
         state = {"text": json.dumps(before)}
         def write(key, text):
             state["text"] = text
-        with tempfile.TemporaryDirectory() as folder, patch.object(installer, "PET_DIR", folder), patch.object(installer, "read_raw", side_effect=lambda key: (True, state["text"])), patch.object(installer, "write_raw", side_effect=write), patch.object(installer, "_save_backup") as backup, patch.object(installer, "deploy_files"), patch.object(installer, "windows_hook_command", return_value="aipet-hook"), patch.object(aipet_hook, "find_statusline_bash", return_value="bash"):
-            installer.set_usage("windows", True)
+        with tempfile.TemporaryDirectory() as folder, patch.object(hook_locations, "PET_DIR", folder), patch.object(hook_targets, "read_raw", side_effect=lambda key: (True, state["text"])), patch.object(hook_targets, "write_raw", side_effect=write), patch.object(hook_backups, "_save_backup") as backup, patch.object(hook_deployment, "deploy_files"), patch.object(hook_commands, "windows_hook_command", return_value="aipet-hook"), patch.object(aipet_hook, "find_statusline_bash", return_value="bash"):
+            hook_installer.set_usage("windows", True)
             installed = json.loads(state["text"])
             self.assertNotIn("aipet_previous", installed["statusLine"])
-            record = installer.usage_record("windows")
+            record = hook_installer.usage_record("windows")
             self.assertEqual(record["previous"], before["statusLine"])
-            self.assertIn("statuslines", installer.usage_record_path("windows"))
-            installer.set_usage("windows", False)
+            self.assertIn("statuslines", hook_installer.usage_record_path("windows"))
+            hook_installer.set_usage("windows", False)
             self.assertEqual(json.loads(state["text"]), before)
             self.assertEqual(backup.call_count, 2)
 
     def test_hook_install_keeps_statusline_unchanged(self):
         before = {"statusLine": {"type": "command", "command": "printf original"}}
         state = {"text": json.dumps(before)}
-        with patch.object(installer, "read_raw", side_effect=lambda key: (True, state["text"])), patch.object(installer, "write_raw", side_effect=lambda key, text: state.update(text=text)), patch.object(installer, "_save_backup"), patch.object(installer, "deploy_files"), patch.object(installer, "windows_hook_command", return_value="aipet-hook"):
-            installer.install("windows")
+        with patch.object(hook_targets, "read_raw", side_effect=lambda key: (True, state["text"])), patch.object(hook_targets, "write_raw", side_effect=lambda key, text: state.update(text=text)), patch.object(hook_backups, "_save_backup"), patch.object(hook_deployment, "deploy_files"), patch.object(hook_commands, "windows_hook_command", return_value="aipet-hook"):
+            hook_installer.install("windows")
         self.assertEqual(json.loads(state["text"])["statusLine"], before["statusLine"])
 
     def test_usage_failure_does_not_skip_permission_hook(self):
@@ -324,30 +335,30 @@ class UsageTests(unittest.TestCase):
 
     def test_statusline_preserved_and_restored(self):
         before = {"statusLine": {"type": "command", "command": "echo original", "padding": 3}, "other": "keep"}
-        installed = installer.merge_usage(installer.merge_hooks(before, "aipet-hook"), "aipet-hook")
+        installed = hook_settings.merge_usage(hook_settings.merge_hooks(before, "aipet-hook"), "aipet-hook")
         encoded = installed["statusLine"]["command"].split("--usage-forward=", 1)[1]
         self.assertEqual(base64.urlsafe_b64decode(encoded).decode(), "echo original")
         self.assertEqual(installed["statusLine"]["padding"], 3)
         self.assertNotIn("aipet_previous", installed["statusLine"])
-        self.assertEqual(installer.remove_hooks(installed, previous=before["statusLine"], installed=installed["statusLine"]), before)
-        self.assertEqual(installer.merge_usage(installed, "aipet-hook", previous=before["statusLine"]), installed)
+        self.assertEqual(hook_settings.remove_hooks(installed, previous=before["statusLine"], installed=installed["statusLine"]), before)
+        self.assertEqual(hook_settings.merge_usage(installed, "aipet-hook", previous=before["statusLine"]), installed)
 
     def test_statusline_removal_when_previously_absent(self):
-        installed = installer.merge_usage(installer.merge_hooks({}, "aipet-hook"), "aipet-hook")
-        self.assertEqual(installer.remove_hooks(installed), {})
+        installed = hook_settings.merge_usage(hook_settings.merge_hooks({}, "aipet-hook"), "aipet-hook")
+        self.assertEqual(hook_settings.remove_hooks(installed), {})
 
     def test_user_statusline_change_is_kept_on_uninstall(self):
-        installed = installer.merge_usage(installer.merge_hooks({}, "aipet-hook"), "aipet-hook")
+        installed = hook_settings.merge_usage(hook_settings.merge_hooks({}, "aipet-hook"), "aipet-hook")
         installed["statusLine"] = {"type": "command", "command": "echo changed"}
-        self.assertEqual(installer.remove_hooks(installed)["statusLine"], installed["statusLine"])
+        self.assertEqual(hook_settings.remove_hooks(installed)["statusLine"], installed["statusLine"])
 
     def test_hook_status_does_not_require_a_usage_collector(self):
-        settings = installer.merge_hooks({}, "aipet-hook")
-        self.assertEqual(installer.hooks_state(settings, "aipet-hook"), "current")
-        settings = installer.merge_usage(settings, "aipet-hook")
-        self.assertEqual(installer.hooks_state(settings, "aipet-hook"), "current")
-        codex = installer.merge_hooks({}, "aipet-hook --codex", installer.CODEX_HOOK_EVENTS, installer.CODEX_HOOK_TIMEOUTS)
-        self.assertEqual(installer.hooks_state(codex, "aipet-hook --codex", installer.CODEX_HOOK_EVENTS, installer.CODEX_HOOK_TIMEOUTS), "current")
+        settings = hook_settings.merge_hooks({}, "aipet-hook")
+        self.assertEqual(hook_settings.hooks_state(settings, "aipet-hook"), "current")
+        settings = hook_settings.merge_usage(settings, "aipet-hook")
+        self.assertEqual(hook_settings.hooks_state(settings, "aipet-hook"), "current")
+        codex = hook_settings.merge_hooks({}, "aipet-hook --codex", hook_protocol.CODEX_HOOK_EVENTS, hook_protocol.CODEX_HOOK_TIMEOUTS)
+        self.assertEqual(hook_settings.hooks_state(codex, "aipet-hook --codex", hook_protocol.CODEX_HOOK_EVENTS, hook_protocol.CODEX_HOOK_TIMEOUTS), "current")
 
     def test_claude_collector_subprocess(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -484,15 +495,15 @@ class UsageTests(unittest.TestCase):
 
     def test_windows_statusline_command_runs_in_bash_and_powershell(self):
         import ntpath
-        with patch.object(installer.os, "path", ntpath), \
-                patch.object(installer, "_short_path", lambda p: p.replace("John Smith", "JOHNSM~1")):
-            self.assertEqual(installer._shell_neutral(r"C:\Users\rafae\.aipet\bin\hook\aipet-hook.exe"),
+        with patch.object(hook_commands.os, "path", ntpath), \
+                patch.object(hook_commands, "_short_path", lambda p: p.replace("John Smith", "JOHNSM~1")):
+            self.assertEqual(hook_commands._shell_neutral(r"C:\Users\rafae\.aipet\bin\hook\aipet-hook.exe"),
                              "C:/Users/rafae/.aipet/bin/hook/aipet-hook.exe")
-            short = installer._shell_neutral(r"C:\Users\John Smith\.aipet\bin\hook\aipet-hook.exe")
+            short = hook_commands._shell_neutral(r"C:\Users\John Smith\.aipet\bin\hook\aipet-hook.exe")
             self.assertEqual(short, "C:/Users/JOHNSM~1/.aipet/bin/hook/aipet-hook.exe")
-            self.assertTrue(installer.MARKER.search(short))  # still recognised as AIPet's command
-        with patch.object(installer.os, "path", ntpath), patch.object(installer, "_short_path", lambda p: p):
-            self.assertIsNone(installer._shell_neutral(r"C:\Users\John Smith\.aipet\bin\hook\aipet-hook.exe"))
+            self.assertTrue(hook_protocol.MARKER.search(short))  # still recognised as AIPet's command
+        with patch.object(hook_commands.os, "path", ntpath), patch.object(hook_commands, "_short_path", lambda p: p):
+            self.assertIsNone(hook_commands._shell_neutral(r"C:\Users\John Smith\.aipet\bin\hook\aipet-hook.exe"))
 
 
 if __name__ == "__main__":

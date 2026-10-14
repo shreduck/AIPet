@@ -9,7 +9,8 @@ import tempfile
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import hooks_installer as hi
+from aipetlib.integrations import deployment as hook_deployment
+from aipetlib.integrations import locations as hook_locations
 
 
 def check_hook(executable, base):
@@ -86,9 +87,9 @@ def check_bundle(bundle):
         resources = restored / 'Contents/Resources'
         check_hook(resources / 'hook/aipet-hook', root / 'bundled-check')
         deployed = root / 'standalone-hook'
-        with patch.object(hi, 'resource_path', lambda *p: str(resources.joinpath(*p))), \
-                patch.object(hi, 'INSTALL_DIR', str(deployed)), patch.object(hi, 'PET_DIR', str(root / 'config')):
-            hi.deploy_files()
+        with patch.object(hook_locations, 'resource_path', lambda *p: str(resources.joinpath(*p))), \
+                patch.object(hook_locations, 'INSTALL_DIR', str(deployed)), patch.object(hook_locations, 'PET_DIR', str(root / 'config')):
+            hook_deployment.deploy_files()
         assert not any(p.is_symlink() for p in deployed.rglob('*')), 'Deployment still depends on bundle links'
         # Make every original bundle path unavailable before exercising the installed copy.
         restored.rename(relocated / 'moved.app')

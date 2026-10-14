@@ -38,7 +38,14 @@ import aipetlib.app.diagnostics as app_diagnostics
 from aipetlib.app.updates import UpdateFlow
 from aipetlib.app.presentation import APP_NAME, TrayPresenter
 from aipetlib.ui.tray_icons import set_window_icon
-import hooks_installer as hi
+from aipetlib.integrations import backups as hook_backups
+from aipetlib.integrations import cowork as hook_cowork
+from aipetlib.integrations import deployment as hook_deployment
+from aipetlib.integrations import discovery as hook_discovery
+from aipetlib.integrations import installer as hook_installer
+from aipetlib.integrations import locations as hook_locations
+from aipetlib.integrations import protocol as hook_protocol
+from aipetlib.integrations import targets as hook_targets
 import legacy  # LEGACY: moving over from Claude Pet
 
 IS_MAC = sys.platform == "darwin"
@@ -195,7 +202,7 @@ class TrayApp:
         self.distros = []          # [(name, state)]
         self.codex_targets = []    # [(label, key)] where Codex was found (this machine, running WSL distros)
         self.probed = False
-        self.status = {hi.LOCAL: "checking…"}
+        self.status = {hook_targets.LOCAL: "checking…"}
         # caches read by the tray thread (never touch Tk from there)
         self.c_muted = self.pet.muted.get()
         self.c_autostart = autostart_enabled()
@@ -252,25 +259,25 @@ class TrayApp:
         refresh_autostart_path()
         self._check_autostart()
         try:
-            hi.migrate_legacy_backups()  # pull backups over from the old %LOCALAPPDATA% location
+            hook_backups.migrate_legacy_backups()  # pull backups over from the old %LOCALAPPDATA% location
         except Exception as e:
             print(f"[aipet] backup migration failed: {e}", file=sys.stderr)
         try:
-            hi.deploy_files(only_if_deployed=True)  # refresh an existing install only; never create one
-            if os.path.isdir(hi.INSTALL_DIR) and (os.name == "nt" or IS_MAC):
-                hi.build_plugin()  # keep the Cowork plugin zip next to the exe current
+            hook_deployment.deploy_files(only_if_deployed=True)  # refresh an existing install only; never create one
+            if os.path.isdir(hook_locations.INSTALL_DIR) and (os.name == "nt" or IS_MAC):
+                hook_cowork.build_plugin()  # keep the Cowork plugin zip next to the exe current
         except Exception:
             pass
         self.refresh_targets()
-        for key in [hi.LOCAL] + ["wsl:" + n for n, state in self.distros if state.lower() == "running"]:
+        for key in [hook_targets.LOCAL] + ["wsl:" + n for n, state in self.distros if state.lower() == "running"]:
             try:
-                hi.migrate_legacy_usage(key)  # backup and restore v0.3.1's automatic wrapper once
+                hook_installer.migrate_legacy_usage(key)  # backup and restore v0.3.1's automatic wrapper once
             except Exception as e:
                 diagnostics.log_error(f"restore legacy status line for {key}: {e!r}")
         self.ui(lambda: self.root.after(20000, self.legacy_tick))  # LEGACY: daily reminder about old-name hooks
         self.ui(lambda: self.root.after(30000, self.updates.tick))
         self.ui(self.updates.show_in_menus)
-        stale = [k for k, v in self.status.items() if v == hi.STALE]
+        stale = [k for k, v in self.status.items() if v == hook_protocol.STALE]
         if not setup_is_done():
             self.ui(self.show_setup)  # first run: shows what is installed / up to date / outdated per target
         elif stale:
@@ -289,14 +296,14 @@ class TrayApp:
 
     def _detect_for_setup(self, check_stopped):
         try:
-            targets, hidden = hi.detect_targets(check_stopped)
+            targets, hidden = hook_discovery.detect_targets(check_stopped)
         except Exception as e:
             self.ui(lambda: self.info(f"Couldn't detect Claude Code installs:\n{e}", error=True))
             return
         zip_path = None
         if os.name == "nt" or IS_MAC:
             try:
-                zip_path = hi.build_plugin()["zip"]  # the installer always leaves the Cowork zip ready
+                zip_path = hook_cowork.build_plugin()["zip"]  # the installer always leaves the Cowork zip ready
             except Exception:
                 pass
         self.ui(lambda: self._build_setup(targets, hidden, zip_path))
@@ -371,7 +378,7 @@ class TrayApp:
         cw.pack(fill="x", padx=16, pady=(0, 10))
         tk.Label(cw, justify="left", wraplength=410, font=(core.UI_FONT, 8),
                  text="Cowork ignores settings.json, so it needs the hooks as a plugin, which only the Claude app "
-                      "can install. AIPet built it for you:\n" + (zip_path or hi.COWORK_ZIP + " (not built yet)") + "\n"
+                      "can install. AIPet built it for you:\n" + (zip_path or hook_cowork.COWORK_ZIP + " (not built yet)") + "\n"
                       "1. Claude app > Customize > Plugins > upload that zip, and keep its hooks on.\n"
                       "2. Restart the Claude app and start a new Cowork session."
                  ).pack(anchor="w", padx=8, pady=(4, 2))
@@ -445,7 +452,7 @@ class TrayApp:
 
     def _cowork_job(self):
         try:
-            res = hi.build_plugin()
+            res = hook_cowork.build_plugin()
         except Exception as e:
             err = f"Couldn't build the Cowork plugin:\n{e}"
             self.ui(lambda: self.info(err, error=True))
@@ -498,15 +505,15 @@ class TrayApp:
           fg=grey)
         path_row(res["zip"], lambda: reveal(res["zip"]))
         p("1. Open the Claude app > Customize > Plugins.\n"
-          "2. Upload a plugin and pick " + hi.COWORK_ZIP + ". Make sure the plugin and its hooks are enabled.\n"
+          "2. Upload a plugin and pick " + hook_cowork.COWORK_ZIP + ". Make sure the plugin and its hooks are enabled.\n"
           "3. Restart the Claude app, then start a new Cowork session - it appears on the pet like any other.\n"
-          "To remove it: Customize > Plugins > " + hi.PLUGIN_NAME + " > Uninstall.")
+          "To remove it: Customize > Plugins > " + hook_cowork.PLUGIN_NAME + " > Uninstall.")
 
         h("Claude Code CLI (optional)")
         p("The terminal, VS Code and the app's Code tab already work through settings.json (Claude Code hooks > "
           "Install). Use the plugin there only instead of those hooks, never both, or every event reaches the pet "
           "twice. Run in a terminal:", fg=grey)
-        cmds = "\n".join(hi.cli_plugin_commands(res["market"]))
+        cmds = "\n".join(hook_cowork.cli_plugin_commands(res["market"]))
         box = tk.Text(win, height=2, width=64, font=("Consolas", 9), relief="solid", borderwidth=1)
         box.insert("1.0", cmds)
         box.configure(state="disabled")
@@ -516,9 +523,9 @@ class TrayApp:
         tk.Button(row, text="Copy commands", command=lambda: copy(cmds)).pack(side="left")
         tk.Button(row, text="Open folder", command=lambda: open_path(res["market"])).pack(side="left", padx=(6, 0))
         p(f"Inside Claude Code the same works with /plugin marketplace add and /plugin install. "
-          f"To remove it: claude plugin uninstall {hi.PLUGIN_NAME}@{hi.PLUGIN_MARKET}", fg=grey)
+          f"To remove it: claude plugin uninstall {hook_cowork.PLUGIN_NAME}@{hook_cowork.PLUGIN_MARKET}", fg=grey)
 
-        p("\nThe plugin calls the hook in " + hi.INSTALL_DIR + ", which AIPet keeps up to date. "
+        p("\nThe plugin calls the hook in " + hook_locations.INSTALL_DIR + ", which AIPet keeps up to date. "
           "Rebuild and re-upload only if that folder moves.", fg=grey)
         tk.Button(win, text="Close", width=12, command=close, default="active").pack(anchor="e", padx=16, pady=12)
         win.protocol("WM_DELETE_WINDOW", close)
@@ -536,7 +543,7 @@ class TrayApp:
         self.root.after(3600 * 1000, self.legacy_tick)
 
     def check_legacy(self, force=False):
-        targets = {hi.LOCAL: "This Mac" if IS_MAC else "This PC (Windows)"} if (os.name == "nt" or IS_MAC) else {}
+        targets = {hook_targets.LOCAL: "This Mac" if IS_MAC else "This PC (Windows)"} if (os.name == "nt" or IS_MAC) else {}
         targets.update({"wsl:" + n: f"WSL: {n}" for n, st in self.distros if st.lower() == "running"})
         pets = [p.data for p in self.pet.pets.values()]
 
@@ -573,8 +580,8 @@ class TrayApp:
             tk.Label(body, text=how, font=(core.UI_FONT, 9), justify="left", wraplength=480).pack(anchor="w")
         row = tk.Frame(win)
         row.pack(fill="x", padx=16, pady=(6, 14))
-        keys = [k for k in [hi.LOCAL] + ["wsl:" + n for n, _ in self.distros] if any(
-            f.startswith(("This PC", "This Mac") if k == hi.LOCAL else f"WSL: {k[4:]}:") for f, _ in found)]
+        keys = [k for k in [hook_targets.LOCAL] + ["wsl:" + n for n, _ in self.distros] if any(
+            f.startswith(("This PC", "This Mac") if k == hook_targets.LOCAL else f"WSL: {k[4:]}:") for f, _ in found)]
 
         def update():
             win.destroy()
@@ -596,13 +603,13 @@ class TrayApp:
 
     # ---- Auto approve: answer every permission prompt of chosen hook configs with "allow" (all off by default)
     # ---- hook targets, as the shared menu definitions ask for them (they don't import the installer)
-    LOCAL_TARGET = hi.LOCAL  # key of the machine this app runs on
+    LOCAL_TARGET = hook_targets.LOCAL  # key of the machine this app runs on
 
     def hook_backups(self, key):
-        return hi.list_backups(key)
+        return hook_backups.list_backups(key)
 
     def is_codex_target(self, key):
-        return hi.is_codex(key)
+        return hook_targets.is_codex(key)
 
     # ---- new version check (GitHub releases; tells you and opens the page, never installs anything)
     # ---- config.json edited by hand: apply it live
@@ -657,7 +664,7 @@ class TrayApp:
             self.setup_win = None
 
     def offer_update(self, keys):
-        names = "\n".join("  - " + hi.describe(k) for k in keys)
+        names = "\n".join("  - " + hook_targets.describe(k) for k in keys)
         if self.ask("AIPet's hooks here point at an older location and may not be working:\n\n"
                     f"{names}\n\nUpdate them now? Your other hooks and settings are kept, and each file is "
                     "backed up first."):
@@ -672,10 +679,10 @@ class TrayApp:
         try:
             for k in keys:
                 try:
-                    results.append(f"{hi.describe(k)}: {hi.install(k, (runtimes or {}).get(k)).splitlines()[0]}")
+                    results.append(f"{hook_targets.describe(k)}: {hook_installer.install(k, (runtimes or {}).get(k)).splitlines()[0]}")
                 except Exception as e:
-                    results.append(f"{hi.describe(k)}: FAILED - {e}")
-                self.status[k] = hi.status(k)
+                    results.append(f"{hook_targets.describe(k)}: FAILED - {e}")
+                self.status[k] = hook_installer.status(k)
             msg = "\n\n".join(results)
             self.ui(lambda: self.info(msg))
         finally:
@@ -683,23 +690,23 @@ class TrayApp:
             self.refresh_menu()
 
     def refresh_targets(self):
-        self.status[hi.LOCAL] = hi.status(hi.LOCAL) if (os.name == "nt" or IS_MAC) else "n/a"
-        self.distros = hi.list_distros()
+        self.status[hook_targets.LOCAL] = hook_installer.status(hook_targets.LOCAL) if (os.name == "nt" or IS_MAC) else "n/a"
+        self.distros = hook_targets.list_distros()
         self.probed = True
         for name, state in self.distros:
             # Only probe running distros so we never boot one just to show a menu.
-            self.status["wsl:" + name] = hi.status("wsl:" + name) if state.lower() == "running" else f"{state.lower()} · status unknown"
+            self.status["wsl:" + name] = hook_installer.status("wsl:" + name) if state.lower() == "running" else f"{state.lower()} · status unknown"
         codex = []
-        if (os.name == "nt" or IS_MAC) and hi.detect_codex_local():
-            codex.append(("This Mac" if IS_MAC else "This PC (Windows)", "codex:" + hi.LOCAL))
+        if (os.name == "nt" or IS_MAC) and hook_discovery.detect_codex_local():
+            codex.append(("This Mac" if IS_MAC else "This PC (Windows)", "codex:" + hook_targets.LOCAL))
         for name, state in self.distros:
             try:
-                if state.lower() == "running" and hi.codex_in_wsl(name):
+                if state.lower() == "running" and hook_discovery.codex_in_wsl(name):
                     codex.append((f"WSL: {name}", "codex:wsl:" + name))
             except Exception:
                 pass
         for _, key in codex:
-            self.status[key] = hi.status(key)
+            self.status[key] = hook_installer.status(key)
         self.codex_targets = codex
         self.refresh_menu()
 
@@ -856,32 +863,32 @@ class TrayApp:
         self.pet.tooltips.hide_tip()
 
     def confirm_usage(self, key):
-        on = not hi.usage_enabled(key)
-        text = (f"Enable Claude's CLI usage collector for {hi.describe(key)}?\n\n"
+        on = not hook_installer.usage_enabled(key)
+        text = (f"Enable Claude's CLI usage collector for {hook_targets.describe(key)}?\n\n"
                 "This changes Claude Code's status line. If you have one, AIPet runs your existing command through Bash "
                 "after recording Claude's usage data, adding a process on each refresh. If you have none, it adds a line "
                 "showing usage percentages. The previous setting is saved in ~/.aipet and restored when disabled.\n\n"
                 "This works in the CLI; VS Code and desktop sessions may not provide usage data. "
                 "AIPet does not read sign-in credentials or the Keychain.") if on else (
-                f"Disable Claude usage collection for {hi.describe(key)} and restore your previous status line?")
+                f"Disable Claude usage collection for {hook_targets.describe(key)} and restore your previous status line?")
         if self.ask(text):
             self.start_job(key, "usage", on)
 
     def confirm(self, key, install):
-        where = hi.describe(key)
+        where = hook_targets.describe(key)
         if install:
             text = (f"Add AIPet hooks to:\n{where}\n\nYour existing hooks and settings are kept, and the "
                     f"current file is backed up first (tray > Claude Code hooks > Restore backup).\n"
                     f"Only sessions started afterwards will show up."
-                    + ("\n\nClaude usage collection is a separate, optional setting in this menu." if not hi.is_codex(key) else "")
-                    + ("\n\nCodex then asks you to trust the new hooks once: run /hooks in Codex." if hi.is_codex(key) else ""))
+                    + ("\n\nClaude usage collection is a separate, optional setting in this menu." if not hook_targets.is_codex(key) else "")
+                    + ("\n\nCodex then asks you to trust the new hooks once: run /hooks in Codex." if hook_targets.is_codex(key) else ""))
         else:
             text = f"Remove AIPet hooks from:\n{where}\n\nOther hooks are left untouched and a backup is taken first."
         if self.ask(text):
             self.start_job(key, "install" if install else "remove")
 
     def confirm_restore(self, key, b):
-        lines = [f"Restore {hi.describe(key)}", f"to the backup from {b['when']} ({b['reason']})?", ""]
+        lines = [f"Restore {hook_targets.describe(key)}", f"to the backup from {b['when']} ({b['reason']})?", ""]
         if b["absent"]:
             lines.append("settings.json did not exist at that point, so it will be DELETED.")
         else:
@@ -904,27 +911,27 @@ class TrayApp:
     def _run_job(self, key, action, arg=None):
         try:
             if action == "install":
-                msg = hi.install(key)
+                msg = hook_installer.install(key)
             elif action == "remove":
-                msg = hi.uninstall(key)
+                msg = hook_installer.uninstall(key)
             elif action == "usage":
-                msg = hi.set_usage(key, bool(arg))
+                msg = hook_installer.set_usage(key, bool(arg))
             elif action == "restore":
-                msg = hi.restore_backup(key, arg)
+                msg = hook_backups.restore_backup(key, arg)
             else:
-                path = hi.make_backup(key, "manual")
-                msg = f"Backed up {hi.describe(key)}\nto {path}"
-            self.status[key] = hi.status(key)
+                path = hook_backups.make_backup(key, "manual")
+                msg = f"Backed up {hook_targets.describe(key)}\nto {path}"
+            self.status[key] = hook_installer.status(key)
             self.ui(lambda: self.info(msg))
         except Exception as e:
-            err = f"{action.capitalize()} failed for {hi.describe(key)}:\n{e}"
+            err = f"{action.capitalize()} failed for {hook_targets.describe(key)}:\n{e}"
             self.ui(lambda: self.info(err, error=True))
         finally:
             self.busy = False
             self.refresh_menu()
 
     def open_backups(self, key):
-        d = hi.backup_dir(key)
+        d = hook_backups.backup_dir(key)
         os.makedirs(d, exist_ok=True)
         open_path(d)
 

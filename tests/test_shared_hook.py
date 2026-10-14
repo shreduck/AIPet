@@ -5,10 +5,15 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import hooks_installer as hi
+from aipetlib.integrations import deployment as hook_deployment
+from aipetlib.integrations import locations as hook_locations
 
 
 class SharedHookDeployTests(unittest.TestCase):
+    def setUp(self):
+        import support
+        self.enterContext(support.installation())
+
     def test_hook_and_listed_runtime_files_are_copied(self):
         with tempfile.TemporaryDirectory() as tmp:
             app = os.path.join(tmp, "AIPet")
@@ -26,11 +31,11 @@ class SharedHookDeployTests(unittest.TestCase):
             stale = os.path.join(bin_dir, "hook", "_internal", "python314.dll")  # left by an older build
             os.makedirs(os.path.dirname(stale))
             open(stale, "wb").close()
-            with patch.object(hi.sys, "frozen", True, create=True), \
-                    patch.object(hi.sys, "_MEIPASS", internal, create=True), \
-                    patch.object(hi.sys, "executable", os.path.join(app, "AIPet.exe")), \
-                    patch.object(hi, "INSTALL_DIR", bin_dir):
-                hi._deploy_shared_hook()
+            with patch.object(hook_deployment.sys, "frozen", True, create=True), \
+                    patch.object(hook_deployment.sys, "_MEIPASS", internal, create=True), \
+                    patch.object(hook_deployment.sys, "executable", os.path.join(app, "AIPet.exe")), \
+                    patch.object(hook_locations, "INSTALL_DIR", bin_dir):
+                hook_deployment._deploy_shared_hook()
             hook = os.path.join(bin_dir, "hook")
             self.assertTrue(os.path.isfile(os.path.join(hook, "aipet-hook.exe")))
             for name in ("python313.dll", "base_library.zip", os.path.join("certifi", "cacert.pem")):
@@ -40,8 +45,8 @@ class SharedHookDeployTests(unittest.TestCase):
             self.assertFalse(os.path.exists(stale))  # leftovers of older builds are cleaned up
 
     def test_source_runs_and_single_file_builds_do_nothing(self):
-        with tempfile.TemporaryDirectory() as tmp, patch.object(hi, "INSTALL_DIR", tmp):
-            hi._deploy_shared_hook()  # not frozen
+        with tempfile.TemporaryDirectory() as tmp, patch.object(hook_locations, "INSTALL_DIR", tmp):
+            hook_deployment._deploy_shared_hook()  # not frozen
             self.assertEqual(os.listdir(tmp), [])
 
     def test_busy_file_is_moved_aside_and_replaced(self):
@@ -59,8 +64,8 @@ class SharedHookDeployTests(unittest.TestCase):
                 if len(calls) == 1:
                     raise PermissionError("in use")
                 return real_replace(a, b)
-            with patch.object(hi.os, "replace", side_effect=busy_once):
-                hi._sync_file(src, dst)
+            with patch.object(hook_deployment.os, "replace", side_effect=busy_once):
+                hook_deployment._sync_file(src, dst)
             with open(dst, "rb") as f:
                 self.assertEqual(f.read(), b"new")
             aside = [n for n in os.listdir(os.path.dirname(dst)) if n.startswith("aipet-hook.exe.old-")]

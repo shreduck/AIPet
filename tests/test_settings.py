@@ -132,7 +132,7 @@ class SettingsSpecTests(unittest.TestCase):
             self.assertEqual(len(rows), 9, name)
             self.assertTrue(all(len(r) == 9 for r in rows), name)
 
-    @patch.object(aipet_app.hi, 'list_backups', return_value=[])
+    @patch.object(aipet_app.hook_backups, 'list_backups', return_value=[])
     @patch.object(aipet.permissions, 'auto_approve_rules', return_value={})
     def test_real_spec_has_icons_and_help_for_every_page(self, *_):
         app = object.__new__(aipet_app.TrayApp)

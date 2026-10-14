@@ -121,7 +121,7 @@ class MenuSwitchTests(unittest.TestCase):
         app.hidden = app.c_muted = app.c_notify = app.c_autostart = False
         app.c_wb, app.version = 'off', 'test'
         app.agent_windows = AgentWindows(app)
-        with patch.object(aipet_app.hi, 'list_backups', return_value=[]), \
+        with patch.object(aipet_app.hook_backups, 'list_backups', return_value=[]), \
                 patch.object(aipet.permissions, 'auto_approve_rules', return_value={}), \
                 patch.object(aipet.permissions, 'timed_grants', return_value={}):
             looks = next(e for e in app._mac_menu_spec() if e and e['label'] == 'Appearance')['submenu']

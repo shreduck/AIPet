@@ -25,7 +25,8 @@ import subprocess
 import sys
 import time
 
-import hooks_installer as hi
+from aipetlib.integrations import cowork as hook_cowork
+from aipetlib.integrations import targets as hook_targets
 
 UI_FONT = "Consolas" if os.name == "nt" else ("Menlo" if sys.platform == "darwin" else "DejaVu Sans Mono")
 
@@ -195,7 +196,7 @@ LEGACY_HOOK = re.compile(r"claude[-_]pet[-_]hook", re.I)
 def uses_legacy_hook(key):
     """True if the target's settings.json still calls claude-pet-hook (they keep working, but should be updated)."""
     try:
-        return bool(LEGACY_HOOK.search(hi.read_raw(key)[1]))
+        return bool(LEGACY_HOOK.search(hook_targets.read_raw(key)[1]))
     except Exception:
         return False
 
@@ -324,8 +325,8 @@ def migration_window(APP_NAME, set_autostart):
         lines.append(("Start " + ("at login" if IS_MAC else "with Windows"),
                       "Moved from Claude Pet to AIPet."))
     lines += [
-        ("Cowork plugin", f"Rebuilt as {hi.COWORK_ZIP}. In the Claude app: Customize > Plugins, uninstall the old "
-                          f"{hi.PLUGIN_NAME} plugin and upload the new zip (menu: Claude Code hooks > Cowork)."),
+        ("Cowork plugin", f"Rebuilt as {hook_cowork.COWORK_ZIP}. In the Claude app: Customize > Plugins, uninstall the old "
+                          f"{hook_cowork.PLUGIN_NAME} plugin and upload the new zip (menu: Claude Code hooks > Cowork)."),
         ("Claude Code CLI plugin", "Only if you installed it: run the two commands from Claude Code hooks > Cowork "
                                    "again (its folder moved)."),
         ("The old app", ("Delete ClaudePet.app" if IS_MAC else "Delete ClaudePet.exe") + " once AIPet is running."),

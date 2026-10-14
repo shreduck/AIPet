@@ -32,7 +32,10 @@ GUI_PACKAGES = {"tkinter", "_tkinter", "PIL", "pystray", "pyvda", "comtypes", "o
 HEADLESS = ["aipetlib.agents", "aipetlib.runtime", "aipetlib.config", "aipetlib.records", "aipetlib.text",
             "aipetlib.housekeeping", "aipetlib.ui.sounds", "aipetlib.update", "aipetlib.integrations.targets",
             "aipetlib.workbench", "aipetlib.codex_questions", "aipetlib.gestures", "aipetlib.hook_events",
-            "aipetlib.sessions", "aipetlib.permissions"]
+            "aipetlib.sessions", "aipetlib.permissions",
+            "aipetlib.integrations.locations", "aipetlib.integrations.protocol", "aipetlib.integrations.settings",
+            "aipetlib.integrations.commands", "aipetlib.integrations.deployment", "aipetlib.integrations.backups",
+            "aipetlib.integrations.installer", "aipetlib.integrations.discovery", "aipetlib.integrations.cowork"]
 # What hooks_installer.deploy_files copies to ~/.aipet/bin for the source hook (keep both lists in step)
 HOOK_SOURCES = {"aipet_hook", "aipet_codex", "aipet_usage", "aipet_claude_usage", "aipetlib", "aipetlib.hook_events"}
 HOOK_OPTIONAL = {"certifi"}  # imported inside try/except by aipet_usage; never required

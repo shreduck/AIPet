@@ -5,12 +5,15 @@ import shutil
 from pathlib import Path
 from unittest.mock import patch
 
-import hooks_installer as hi
+from aipetlib.integrations import commands as hook_commands
+from aipetlib.integrations import cowork as hook_cowork
+from aipetlib.integrations import deployment as hook_deployment
+from aipetlib.integrations import locations as hook_locations
 from tools.share_mac_runtime import share_runtime
 
 
 def add_source_hook_components(frameworks):
-    components = Path(hi.__file__).parent / 'aipetlib'
+    components = Path(__file__).resolve().parents[1] / 'aipetlib'
     if components.is_dir():
         (frameworks / 'aipetlib').mkdir(exist_ok=True)
         for name in ('__init__.py', 'hook_events.py'):
@@ -18,6 +21,10 @@ def add_source_hook_components(frameworks):
 
 
 class MacRuntimeSharingTests(unittest.TestCase):
+    def setUp(self):
+        import support
+        self.enterContext(support.installation())
+
     def test_cowork_plugin_generation_keeps_mac_bundle_unchanged(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -26,20 +33,20 @@ class MacRuntimeSharingTests(unittest.TestCase):
             executable = app_dir / 'AIPet'
             executable.write_bytes(b'signed executable')
             config = root / 'config'
-            with patch.object(hi, 'IS_MAC', True), \
-                    patch.object(hi, 'app_dir', return_value=str(app_dir)), \
-                    patch.object(hi, 'PET_DIR', str(config)), \
-                    patch.object(hi, 'PLUGIN_MARKET_DIR', str(config / 'plugin-marketplace')), \
-                    patch.object(hi, 'deploy_files'), \
-                    patch.object(hi, 'local_hook_command', return_value='test-hook'):
-                result = hi.build_plugin()
+            with patch.object(hook_cowork, 'IS_MAC', True), \
+                    patch.object(hook_locations, 'app_dir', return_value=str(app_dir)), \
+                    patch.object(hook_locations, 'PET_DIR', str(config)), \
+                    patch.object(hook_locations, 'PLUGIN_MARKET_DIR', str(config / 'plugin-marketplace')), \
+                    patch.object(hook_deployment, 'deploy_files'), \
+                    patch.object(hook_commands, 'local_hook_command', return_value='test-hook'):
+                result = hook_cowork.build_plugin()
                 archive = Path(result['zip'])
-                self.assertEqual(archive, config / hi.COWORK_ZIP)
+                self.assertEqual(archive, config / hook_cowork.COWORK_ZIP)
                 with zipfile.ZipFile(archive) as plugin:
                     self.assertIsNone(plugin.testzip())
                     self.assertIn('hooks/hooks.json', plugin.namelist())
                 modified = archive.stat().st_mtime_ns
-                self.assertEqual(hi.build_plugin(), result)
+                self.assertEqual(hook_cowork.build_plugin(), result)
                 self.assertEqual(archive.stat().st_mtime_ns, modified)
             self.assertEqual(list(app_dir.iterdir()), [executable])
             self.assertEqual(executable.read_bytes(), b'signed executable')
@@ -65,9 +72,9 @@ class MacRuntimeSharingTests(unittest.TestCase):
                     (frameworks / name).write_text('# test')
                 target = root / 'deployed'
                 add_source_hook_components(frameworks)
-                with patch.object(hi, 'resource_path', lambda *parts: str(frameworks.joinpath(*parts))), \
-                        patch.object(hi, 'INSTALL_DIR', str(target)), patch.object(hi, 'PET_DIR', str(root / 'config')):
-                    hi.deploy_files()
+                with patch.object(hook_locations, 'resource_path', lambda *parts: str(frameworks.joinpath(*parts))), \
+                        patch.object(hook_locations, 'INSTALL_DIR', str(target)), patch.object(hook_locations, 'PET_DIR', str(root / 'config')):
+                    hook_deployment.deploy_files()
                 installed = target / 'hook/_internal' / relative
                 self.assertFalse(installed.is_symlink())
                 app_python.unlink()
@@ -111,9 +118,9 @@ class MacRuntimeSharingTests(unittest.TestCase):
                 (frameworks / name).write_text('# test')
             target = root / 'deployed'
             add_source_hook_components(frameworks)
-            with patch.object(hi, 'resource_path', lambda *parts: str(frameworks.joinpath(*parts))), \
-                    patch.object(hi, 'INSTALL_DIR', str(target)), patch.object(hi, 'PET_DIR', str(root / 'config')):
-                hi.deploy_files()
+            with patch.object(hook_locations, 'resource_path', lambda *parts: str(frameworks.joinpath(*parts))), \
+                    patch.object(hook_locations, 'INSTALL_DIR', str(target)), patch.object(hook_locations, 'PET_DIR', str(root / 'config')):
+                hook_deployment.deploy_files()
             installed = target / 'hook/_internal/lib-dynload/unicodedata.so'
             self.assertFalse(installed.is_symlink())
             self.assertEqual(installed.read_bytes(), b'same')
