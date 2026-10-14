@@ -19,6 +19,14 @@ def _tokens(info):
     return dict(totals, partial=bool(info.get("cut"))) if totals else None
 
 
+def without_tools(net):
+    """The same network as read without tool nodes: they come after every agent, so the agents keep their indexes."""
+    n = sum(1 for a in net["agents"] if not a.get("tool"))
+    if n == len(net["agents"]):
+        return net
+    return dict(net, agents=net["agents"][:n], log=[row for row in net["log"] if row[1] < n])
+
+
 def read_network(item, now=None, include_tools=False, bootstrap=False):
     with history._CACHE_LOCK:
         return _read_network(item, now=now, include_tools=include_tools, bootstrap=bootstrap)

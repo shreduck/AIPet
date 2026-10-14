@@ -27,7 +27,7 @@ from tkinter import font as tkfont
 
 from aipetlib.ui import theme
 from aipetlib.runtime import diagnostics
-from aipetlib.agents import log_filters, network, stats
+from aipetlib.agents import log_filters, network, stats, tracker
 from aipetlib.agents.tools import is_mcp_tool
 from aipetlib.ui.agent_common import (  # noqa: F401  (the window's values, also read from here)
     REFRESH_MS, FRAME_MS, IS_MAC, ALPHA_MIN, ALPHA_STEP, OPACITY_STEP, SCALE_MIN, SCALE_MAX, SCALE_STEP,
@@ -297,6 +297,19 @@ class AgentNetworkWindow(agent_controls.WindowControls):
             diagnostics.log_error(f"agent network: {e!r}")
         self._after = self.win.after(REFRESH_MS, self._tick)
 
+    def _network(self, item):
+        """A session's agent network. While the background tracker runs, the one it read last: reading transcripts
+        here, on the UI thread (and waiting for the tracker's lock), made the pet stutter while this window was open.
+        A session it hasn't read yet shows empty for a moment and asks it to read now."""
+        tools = self.opts.get("tools", True)
+        if not tracker.running():
+            return network.read_network(item, include_tools=tools)
+        net = tracker.latest(item.get("key"))
+        if net is None:
+            tracker.wake()
+            return {"agents": [], "log": []}
+        return net if tools else network.without_tools(net)
+
     def _refresh(self):
         self._apply_theme()
         items = getattr(self.pet, "_last_items", [])
@@ -323,14 +336,13 @@ class AgentNetworkWindow(agent_controls.WindowControls):
                                else "AIPet · agent network")
             except tk.TclError:
                 pass
-            self.net = network.read_network(self.item, include_tools=self.opts.get("tools", True))
+            self.net = self._network(self.item)
         if len(self.net["agents"]) != n_before:
             self._update_minsize()
         self.blocks = [(self.key, self.item, self.net)] if self.item else []
         if self.graph.stacked_mode():
             # compact, not tabbed: every session's graph, one under the other
-            self.blocks = [(i["key"], i, self.net if i["key"] == self.key else
-                            network.read_network(i, include_tools=self.opts.get("tools", True)))
+            self.blocks = [(i["key"], i, self.net if i["key"] == self.key else self._network(i))
                            for i in sessions]
         self.stats = stats.network_stats(self.net)
         if self.graph.stat_open:
