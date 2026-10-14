@@ -242,10 +242,10 @@ def _mac_menu_spec(app, settings=False):
              help="Answering permission prompts.", submenu=[
             item("Auto approve", icon="check", submenu=auto,
                  help="Approve every permission prompt from these installs without asking. Use with care."),
-            item("Answer Codex prompts from the pet", lambda: app.pet.set_codex_answers(not cfg.get("codex_answers")),
+            item("Answer Codex prompts from the pet", lambda: app.pet.answers.set_codex_answers(not cfg.get("codex_answers")),
                  checked=bool(cfg.get("codex_answers")),
                  help="Codex permission prompts get Allow / Deny buttons in the pet's popup."),
-            item("Answer Claude Code prompts from the pet", lambda: app.pet.set_claude_answers(not cfg.get("claude_answers", True)),
+            item("Answer Claude Code prompts from the pet", lambda: app.pet.answers.set_claude_answers(not cfg.get("claude_answers", True)),
                  checked=bool(cfg.get("claude_answers", True)),
                  help="Claude Code permission prompts get Allow / Deny buttons in the pet's popup."),
         ]),
@@ -278,7 +278,7 @@ def _live_spec(app, item, settings=False):
     Menus show exact countdowns (they are built when opened); the settings window rounds to minutes so it
     doesn't redraw every second."""
     grants, now = permissions.timed_grants(), time.time()
-    default = app.pet.timed_minutes()
+    default = app.pet.answers.timed_minutes()
 
     def left(grant):
         secs = grant["until"] - now
@@ -287,8 +287,8 @@ def _live_spec(app, item, settings=False):
     spec = [item("Timed auto approve length", choice=True,
                  help='How long "Auto approve for ..." lasts. Every start asks you to confirm first.',
                  slider={"value": default, "min": permissions.TIMED_MIN, "max": permissions.TIMED_MAX, "step": 1,
-                         "set": app.pet.set_timed_minutes, "format": lambda v: f"{int(v)} min"},
-                 submenu=[item(f"{m} min", lambda m=m: app.pet.set_timed_minutes(m), checked=default == m)
+                         "set": app.pet.answers.set_timed_minutes, "format": lambda v: f"{int(v)} min"},
+                 submenu=[item(f"{m} min", lambda m=m: app.pet.answers.set_timed_minutes(m), checked=default == m)
                           for m in (5, 10, 15, 30, 60)]),
             dict(app.agent_windows.menu_item(None), icon="link"),
             app.agent_windows.separate_item(),

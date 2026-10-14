@@ -750,8 +750,8 @@ class TrayApp:
             "click_to_focus": pet.set_click_to_focus,
             "context_banner": pet.set_context_banner,
             "all_spaces": pet.set_all_spaces,
-            "claude_answers": pet.set_claude_answers,
-            "codex_answers": pet.set_codex_answers,
+            "claude_answers": pet.answers.set_claude_answers,
+            "codex_answers": pet.answers.set_codex_answers,
             "session_tooltips": lambda v: pet.set_tooltip("session", v),
             "usage_tooltips": lambda v: pet.set_tooltip("usage", v),
             "card_scale": pet.set_card_scale,
@@ -961,11 +961,11 @@ class TrayApp:
         return app_menus._live_spec(self, item, settings)
 
     def _start_timed(self, d):
-        if self.pet.start_timed_approve(d):
+        if self.pet.answers.start_timed(d):
             self.refresh_menu()
 
     def _stop_timed(self, session_id):
-        self.pet.stop_timed_approve(session_id)
+        self.pet.answers.stop_timed(session_id)
         self.refresh_menu()
 
     def _timed_countdown_items(self):

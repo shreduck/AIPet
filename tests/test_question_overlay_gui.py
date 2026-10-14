@@ -38,10 +38,9 @@ class QuestionOverlayGuiTests(unittest.TestCase):
             f_small=("Arial", 11), f_main=("Arial", 12), f_bold=("Arial", 12, "bold"),
             key="isolated-fixture", theme="dark", s=1,
             net={"agents": [{"name": "Codex", "id": "main"}]})
-        w.pet = SimpleNamespace(answers_enabled=lambda _: True,
-            open_detail=lambda key: self.destinations.append(("card", key)),
-            go_to_prompt=lambda key: self.destinations.append(("session", key)),
-            send_answer=lambda key, behavior, **kw: self.sent.append((key, behavior, kw)) or True)
+        w.pet = SimpleNamespace(open_detail=lambda key: self.destinations.append(("card", key)), answers=SimpleNamespace(
+            enabled=lambda _: True, go_to_prompt=lambda key: self.destinations.append(("session", key)),
+            send=lambda key, behavior, **kw: self.sent.append((key, behavior, kw)) or True))
         w.body = tk.Frame(self.root, bg=w.P["node"])
         w.body.pack(fill="both", expand=True)
         canvas = tk.Canvas(w.body, bg=w.P["node"], highlightthickness=0)
@@ -122,8 +121,8 @@ class QuestionOverlayGuiTests(unittest.TestCase):
         item = {"key": "isolated-fixture", "agent": "codex", "state": "needs_input",
                 "title": "Isolated question fixture", "request": self.question()}
         app = SimpleNamespace(root=self.root, cfg={"codex_answers": True}, details={}, _last_items=[item],
-            answers_enabled=lambda _: True, timed_minutes=lambda: 5,
-            go_to_prompt=lambda key: self.destinations.append(("session", key)))
+            answers=SimpleNamespace(enabled=lambda _: True, timed_minutes=lambda: 5,
+                                    go_to_prompt=lambda key: self.destinations.append(("session", key))))
         card = None
         try:
             with patch.object(aipet_sprites, "load_sprites", return_value=None):

@@ -5,6 +5,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import aipet
+import aipetlib.app.answers as answers_module
+from aipetlib.app.answers import Answers
 import support
 import aipet_hook as hook
 
@@ -36,16 +38,17 @@ class AnswerToggleTests(unittest.TestCase):
         app.cfg = dict(aipet.DEFAULT_CONFIG)
         app.claude_answer_var = MagicMock()
         app.sync_bubbles, app._last_items = MagicMock(), []
+        app.answers = Answers(app)
         with tempfile.TemporaryDirectory() as folder, support.paths(HOME_DIR=folder), \
-                patch.object(aipet, 'save_setting') as save:
+                patch.object(answers_module.runtime_settings, 'save_setting') as save:
             codex_flag = Path(folder, 'codex-answers')
             codex_flag.touch()
             for enabled in (False, True):
-                app.set_claude_answers(enabled)
+                app.answers.set_claude_answers(enabled)
                 save.assert_called_with('claude_answers', enabled)
-                self.assertEqual(app.answers_enabled({'agent': 'claude'}), enabled)
+                self.assertEqual(app.answers.enabled({'agent': 'claude'}), enabled)
                 self.assertEqual(Path(folder, 'no-claude-answers').exists(), not enabled)
-                self.assertTrue(app.answers_enabled({'agent': 'codex'}))
+                self.assertTrue(app.answers.enabled({'agent': 'codex'}))
                 self.assertTrue(codex_flag.exists())
                 app.sync_bubbles.assert_called_with([])
 
@@ -90,19 +93,22 @@ class AnswerToggleTests(unittest.TestCase):
 
     def test_go_to_window_releases_only_codex_prompts(self):
         app = object.__new__(aipet.PetApp)
-        app.send_answer, app.focus_key = MagicMock(), MagicMock()
+        app.answers = Answers(app)
+        app.answers.send, app.focus_key = MagicMock(), MagicMock()
         app._last_items = [{'key': 'cx', 'agent': 'codex', 'state': 'needs_input'},
                            {'key': 'cc', 'agent': 'claude', 'state': 'needs_input'}]
-        app.go_to_prompt('cx')
-        app.send_answer.assert_called_once_with('cx', 'release')
-        app.go_to_prompt('cc')
-        app.send_answer.assert_called_once()  # Claude Code shows its own prompt alongside: nothing to let go
+        app.answers.go_to_prompt('cx')
+        app.answers.send.assert_called_once_with('cx', 'release')
+        app.answers.go_to_prompt('cc')
+        app.answers.send.assert_called_once()  # Claude Code shows its own prompt alongside: nothing to let go
         self.assertEqual([c.args[0] for c in app.focus_key.call_args_list], ['cx', 'cc'])
 
     def test_disabled_claude_cannot_submit_an_answer_to_a_stale_dialog(self):
         app = object.__new__(aipet.PetApp)
         app.cfg = {'claude_answers': False, 'codex_answers': True}
         app._last_items = [{'key': 'test', 'agent': 'claude', 'request': {'id': 'test', 'answerable': True}}]
-        with patch.object(aipet, 'hook_waiting', return_value=True), patch.object(aipet.os, 'replace') as write:
-            self.assertFalse(app.send_answer('test', 'allow'))
+        app.answers = Answers(app)
+        with patch.object(answers_module.permissions, 'hook_waiting', return_value=True), \
+                patch.object(answers_module.os, 'replace') as write:
+            self.assertFalse(app.answers.send('test', 'allow'))
             write.assert_not_called()

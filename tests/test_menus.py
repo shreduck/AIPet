@@ -124,7 +124,7 @@ class MenuTests(unittest.TestCase):
         claude_toggle = permissions['Answer Claude Code prompts from the pet']
         self.assertTrue(claude_toggle['checked'])
         claude_toggle['action']()
-        app.pet.set_claude_answers.assert_called_once_with(False)
+        app.pet.answers.set_claude_answers.assert_called_once_with(False)
         session = app._context_menu_spec(pet)[3]['submenu']
         next(e for e in session if e and e['label'] == 'Go to session window')['action']()
         app.pet.focus_session.assert_called_once_with(pet)

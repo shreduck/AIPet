@@ -34,10 +34,10 @@ class CarouselTests(unittest.TestCase):
             if self.confirm:
                 self.grants[item["session_id"]] = {"until": 9e9}
             return self.confirm
-        pet = SimpleNamespace(answers_enabled=lambda _: True, open_detail=lambda key: None,
-                              go_to_prompt=lambda key: None, timed_minutes=lambda: 15,
-                              start_timed_approve=start_timed_approve,
-                              send_answer=lambda key, behavior, **kw: self.sent.append((behavior, kw)) or True)
+        pet = SimpleNamespace(open_detail=lambda key: None, answers=SimpleNamespace(
+            enabled=lambda _: True, go_to_prompt=lambda key: None, timed_minutes=lambda: 15,
+            start_timed=start_timed_approve,
+            send=lambda key, behavior, **kw: self.sent.append((behavior, kw)) or True))
         self.window = SimpleNamespace(
             win=MagicMock(), P={k: "#000000" for k in ("node", "red", "mu", "hi", "tx", "bar", "line", "redbg", "blue")},
             px=lambda n: n, f_small=MagicMock(), f_main=MagicMock(), f_bold=MagicMock(), key="k", theme="dark", s=1,

@@ -60,7 +60,7 @@ class PromptPanel:
             return
         req = item.get("request") or {}
         name = window.net["agents"][who]["name"]
-        answerable = permission_rules.hook_waiting(item) and window.pet.answers_enabled(item)
+        answerable = permission_rules.hook_waiting(item) and window.pet.answers.enabled(item)
         self.chip.configure(text=f"[!] {name} needs your input · " + ("space to open" if answerable
                                                                        else "answer it in the window"))
         in_window = None if answerable else who
@@ -148,7 +148,7 @@ class PromptPanel:
                            wraplength=window.px(560), padx=window.px(6), pady=window.px(3))
             lab.pack(fill="x", padx=pad, pady=window.px(4))
             self.wraps.append(lab)
-        answerable = permission_rules.hook_waiting(item) and window.pet.answers_enabled(item)
+        answerable = permission_rules.hook_waiting(item) and window.pet.answers.enabled(item)
         self.own = None  # (question, entry) when a typed answer can be sent
         self.radio = False  # the options are a pick-one list (a question)
         self.questions = questions if answerable else []
@@ -177,7 +177,7 @@ class PromptPanel:
             if (item or {}).get("session_id"):  # like the card: every prompt of this session, for a while
                 grant = permission_rules.timed_grants().get(str(item["session_id"]))
                 self.options.append(("aipet: auto approving this session · allow" if grant else
-                                     f"aipet: auto approve this session for {window.pet.timed_minutes()} min…",
+                                     f"aipet: auto approve this session for {window.pet.answers.timed_minutes()} min…",
                                      self.timed))
             self.options.append(("deny", lambda: self.send("deny")))
         n_answers = len(self.options)
@@ -437,8 +437,8 @@ class PromptPanel:
 
     def send(self, behavior, answers=None, permissions=None):
         window = self.window
-        ok = (window.pet.send_answer(window.key, behavior, answers=answers, permissions=permissions) if permissions
-              else window.pet.send_answer(window.key, behavior, answers=answers))
+        ok = (window.pet.answers.send(window.key, behavior, answers=answers, permissions=permissions) if permissions
+              else window.pet.answers.send(window.key, behavior, answers=answers))
         self.note.configure(text="# sent" if ok else "# couldn't send it: the prompt may have been answered already")
         if ok:
             window.win.after(600, lambda: self.open(False))
@@ -450,7 +450,7 @@ class PromptPanel:
         req = (window.item or {}).get("request") or {}
         if (window.item or {}).get("agent") == "codex" and req.get("id"):
             self.released.add(req["id"])
-        window.pet.go_to_prompt(window.key)
+        window.pet.answers.go_to_prompt(window.key)
         self.sig = None  # rebuilt as "answer it in the window"
         self.open(False)
 
@@ -458,12 +458,12 @@ class PromptPanel:
         """Auto approve this session's prompts for a while (after the pet's confirmation), and allow this one."""
         window = self.window
         item = window.item or {}
-        if permission_rules.timed_grants().get(str(item.get("session_id"))) or window.pet.start_timed_approve(item):
+        if permission_rules.timed_grants().get(str(item.get("session_id"))) or window.pet.answers.start_timed(item):
             self.send("allow")
 
     def always(self):
         window = self.window
-        added = window.pet.whitelist_request(window.item)
+        added = window.pet.answers.whitelist(window.item)
         self.send("allow")
         if added:
             self.note.configure(text="# " + added)

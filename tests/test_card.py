@@ -12,7 +12,9 @@ import aipet_hook as hook
 
 class WhitelistButtonTests(unittest.TestCase):
     def app(self):
-        return object.__new__(aipet.PetApp)
+        app = object.__new__(aipet.PetApp)
+        app.answers = aipet.Answers(app)
+        return app
 
     def test_hook_config_key_matches_the_hooks(self):
         self.assertEqual(aipet.auto_approve_key_for({"env": "wsl", "distro": "dev-esign-mcp"}), "wsl:dev-esign-mcp")
@@ -26,7 +28,7 @@ class WhitelistButtonTests(unittest.TestCase):
         item = {"env": "wsl", "distro": "U", "request": req}
         with tempfile.TemporaryDirectory() as home, support.paths(AUTO_APPROVE_PATH=
                                                                  os.path.join(home, "auto-approve.json")):
-            line = self.app().whitelist_request(item)
+            line = self.app().answers.whitelist(item)
             self.assertIn("exact command", line)
             with open(os.path.join(home, "auto-approve.json")) as f:
                 rules = json.load(f)["targets"]["wsl:U"]
@@ -41,7 +43,7 @@ class WhitelistButtonTests(unittest.TestCase):
         item = {"env": "windows", "request": hook.build_request(data)}
         with tempfile.TemporaryDirectory() as home, support.paths(AUTO_APPROVE_PATH=
                                                                  os.path.join(home, "auto-approve.json")):
-            self.assertIn("every mcp__wb__search", self.app().whitelist_request(item))
+            self.assertIn("every mcp__wb__search", self.app().answers.whitelist(item))
             rules = aipet.auto_approve_rules()[aipet.auto_approve_key_for(item)]
             self.assertEqual(hook.auto_decision(rules, data), "whitelist")
 
