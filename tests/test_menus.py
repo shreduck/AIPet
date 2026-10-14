@@ -27,9 +27,9 @@ class MenuTests(unittest.TestCase):
             entry = next(e for e in appearance if e and e['label'] == 'Tooltip text size...')
             self.assertEqual(entry['slider']['value'], 1.0)
             entry['action']()
-            app.pet.open_tooltip_text_slider.assert_called()
+            app.pet.appearance.open_tooltip_text_slider.assert_called()
             entry['slider']['set'](1.5)
-            app.pet.set_tooltip_text_scale.assert_called_with(1.5)
+            app.pet.tooltips.set_tooltip_text_scale.assert_called_with(1.5)
 
     @patch.object(aipet_app.hi, 'list_backups', return_value=[])
     @patch.object(aipet.permissions, 'auto_approve_rules', return_value={})
@@ -46,7 +46,7 @@ class MenuTests(unittest.TestCase):
                     self.assertEqual([e['checked'] for e in choices], [selected == 'chimes', selected == 'system'])
                     for entry, value in zip(choices, ('chimes', 'system')):
                         entry['action']()
-                        app.pet.set_sound_style.assert_called_with(value)
+                        app.pet.preferences.set_sound_style.assert_called_with(value)
 
     @patch.object(aipet_app.hi, 'list_backups', return_value=[])
     @patch.object(aipet.permissions, 'auto_approve_rules', return_value={})
@@ -167,9 +167,12 @@ class MenuTests(unittest.TestCase):
 
     def test_context_menu_keeps_click_handling_and_recovers_on_error(self):
         app = object.__new__(aipet.PetApp)
+        app.appearance = aipet.Appearance(app)
+        app.tooltips = aipet.Tooltips(app)
+        app.preferences = aipet.PetPreferences(app)
         app.pointer = Pointer(app)
         app._menu_open, app.pointer.drag = False, ['old drag']
-        app.hide_tip, app.root, app.clickthru = MagicMock(), MagicMock(), MagicMock()
+        app.tooltips.hide_tip, app.root, app.clickthru = MagicMock(), MagicMock(), MagicMock()
         app.context_menu_spec = MagicMock(return_value=[])
         app.menu = MagicMock()
         def popup(*args):
@@ -241,9 +244,12 @@ class MenuTests(unittest.TestCase):
 
     def test_context_menu_runs_native_choice_after_closing(self):
         app = object.__new__(aipet.PetApp)
+        app.appearance = aipet.Appearance(app)
+        app.tooltips = aipet.Tooltips(app)
+        app.preferences = aipet.PetPreferences(app)
         app.pointer = Pointer(app)
         app._menu_open, app.pointer.drag = False, None
-        app.hide_tip, app.root, app.clickthru = MagicMock(), MagicMock(), None
+        app.tooltips.hide_tip, app.root, app.clickthru = MagicMock(), MagicMock(), None
         app.context_menu_spec, app.menu = MagicMock(return_value=[]), MagicMock()
         action = MagicMock(side_effect=lambda: self.assertFalse(app._menu_open))
         with patch.object(aipet, 'NATIVE_WIN_MENU', True), \
@@ -255,9 +261,12 @@ class MenuTests(unittest.TestCase):
 
     def test_context_menu_falls_back_to_tk_when_native_fails(self):
         app = object.__new__(aipet.PetApp)
+        app.appearance = aipet.Appearance(app)
+        app.tooltips = aipet.Tooltips(app)
+        app.preferences = aipet.PetPreferences(app)
         app.pointer = Pointer(app)
         app._menu_open, app.pointer.drag = False, None
-        app.hide_tip, app.root, app.clickthru = MagicMock(), MagicMock(), None
+        app.tooltips.hide_tip, app.root, app.clickthru = MagicMock(), MagicMock(), None
         app.context_menu_spec, app.menu = MagicMock(return_value=[]), MagicMock()
         with patch.object(aipet, 'NATIVE_WIN_MENU', True), \
                 patch.object(aipet, 'popup_native_menu', side_effect=OSError('no user32')), \
@@ -268,6 +277,9 @@ class MenuTests(unittest.TestCase):
 
     def test_details_opened_from_menu_stay_open_until_session_goes(self):
         app = object.__new__(aipet.PetApp)
+        app.appearance = aipet.Appearance(app)
+        app.tooltips = aipet.Tooltips(app)
+        app.preferences = aipet.PetPreferences(app)
         pinned, prompt = MagicMock(pinned=True), MagicMock(pinned=False)
         app.details = {'done-session': pinned, 'answered': prompt}
         items = [{'key': 'done-session', 'state': 'done'}, {'key': 'answered', 'state': 'working'}]
@@ -280,6 +292,9 @@ class MenuTests(unittest.TestCase):
 
     def test_control_click_does_not_focus_or_acknowledge_session(self):
         app = object.__new__(aipet.PetApp)
+        app.appearance = aipet.Appearance(app)
+        app.tooltips = aipet.Tooltips(app)
+        app.preferences = aipet.PetPreferences(app)
         app.pointer = Pointer(app)
         app.focus_session, app._acknowledge = MagicMock(), MagicMock()
         pet = SimpleNamespace(_on_badge='session', _on_bubble=True)

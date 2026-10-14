@@ -738,25 +738,25 @@ class TrayApp:
         """config.json key -> the setter that applies it now (the config watcher calls them with saving paused)."""
         pet = self.pet
         return {
-            "theme": lambda v: (pet.apply_theme(v), hasattr(self, "theme_var") and self.theme_var.set(v == "dark")),
-            "size": lambda v: pet.set_size(float(v)),
-            "tooltip_text_scale": pet.set_tooltip_text_scale,
-            "answer_wait_seconds": pet.set_answer_wait,
-            "done_timeout_minutes": pet.set_done_timeout,
-            "health_check_seconds": pet.set_health_interval,
+            "theme": lambda v: (pet.preferences.apply_theme(v), hasattr(self, "theme_var") and self.theme_var.set(v == "dark")),
+            "size": lambda v: pet.appearance.set_size(float(v)),
+            "tooltip_text_scale": pet.tooltips.set_tooltip_text_scale,
+            "answer_wait_seconds": pet.preferences.set_answer_wait,
+            "done_timeout_minutes": pet.preferences.set_done_timeout,
+            "health_check_seconds": pet.preferences.set_health_interval,
             "sounds": lambda v: (pet.muted.set(not v), setattr(self, "c_muted", not v)),
             "notifications": self._set_notify,
             "pet_style": self.set_style,
-            "compact": lambda v: pet.toggle_compact(bool(v)),
-            "session_titles": pet.set_session_titles,
-            "click_to_focus": pet.set_click_to_focus,
-            "context_banner": pet.set_context_banner,
-            "all_spaces": pet.set_all_spaces,
+            "compact": lambda v: pet.preferences.toggle_compact(bool(v)),
+            "session_titles": pet.preferences.set_session_titles,
+            "click_to_focus": pet.preferences.set_click_to_focus,
+            "context_banner": pet.preferences.set_context_banner,
+            "all_spaces": pet.preferences.set_all_spaces,
             "claude_answers": pet.answers.set_claude_answers,
             "codex_answers": pet.answers.set_codex_answers,
-            "session_tooltips": lambda v: pet.set_tooltip("session", v),
-            "usage_tooltips": lambda v: pet.set_tooltip("usage", v),
-            "card_scale": pet.set_card_scale,
+            "session_tooltips": lambda v: pet.tooltips.set_tooltip("session", v),
+            "usage_tooltips": lambda v: pet.tooltips.set_tooltip("usage", v),
+            "card_scale": pet.preferences.set_card_scale,
         }
 
     def _recheck_setup(self):
@@ -1083,7 +1083,7 @@ class TrayApp:
         self.pet.cfg["claude_oauth_usage"] = bool(on)
         runtime_settings.save_setting("claude_oauth_usage", bool(on))
         self.refresh_menu()
-        self.pet.hide_tip()
+        self.pet.tooltips.hide_tip()
 
     def confirm_usage(self, key):
         on = not hi.usage_enabled(key)
@@ -1159,7 +1159,7 @@ class TrayApp:
         open_path(d)
 
     def hide(self):
-        self.pet.hide_tip()
+        self.pet.tooltips.hide_tip()
         self.root.withdraw()
         self.hidden = True
         self.refresh_menu()
@@ -1209,7 +1209,7 @@ class TrayApp:
 
     def toggle_theme(self):
         name = "light" if core.T.get("name") == "dark" else "dark"
-        self.pet.apply_theme(name)
+        self.pet.preferences.apply_theme(name)
         if not runtime_settings.save_setting("theme", name):
             self.info("Couldn't save the theme (config.json isn't valid JSON?). It applies until you quit.", error=True)
         if hasattr(self, "theme_var"):

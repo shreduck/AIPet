@@ -128,14 +128,17 @@ class MenuSwitchTests(unittest.TestCase):
             switch = next(e for e in looks if e and e['label'] == 'Context beside the pet')
             self.assertTrue(switch['checked'])
             switch['action']()
-            app.pet.set_context_banner.assert_called_once_with(False)
+            app.pet.preferences.set_context_banner.assert_called_once_with(False)
 
     def test_setting_saves_and_follows_the_menu(self):
         pet = object.__new__(aipet.PetApp)
+        pet.appearance = aipet.Appearance(pet)
+        pet.tooltips = aipet.Tooltips(pet)
+        pet.preferences = aipet.PetPreferences(pet)
         pet.cfg = {}
         pet.context_banner_var = MagicMock(get=MagicMock(return_value=True))
-        with patch.object(aipet, 'save_setting') as save:
-            pet.set_context_banner(False)
+        with patch('aipetlib.app.preferences.save_setting') as save:
+            pet.preferences.set_context_banner(False)
         self.assertFalse(pet.cfg["context_banner"])
         save.assert_called_once_with("context_banner", False)
         pet.context_banner_var.set.assert_called_once_with(False)

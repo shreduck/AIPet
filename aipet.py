@@ -25,8 +25,9 @@ from aipetlib.app.answers import Answers
 from aipetlib.app.session_reader import SessionReader
 import aipetlib.housekeeping as housekeeping
 import aipetlib.ui.sounds as sounds
-import aipetlib.ui.appearance_controls as appearance_controls
-import aipetlib.ui.tooltips as tooltips
+from aipetlib.ui.appearance_controls import Appearance
+from aipetlib.ui.tooltips import Tooltips
+from aipetlib.app.preferences import PetPreferences
 import copy
 import glob
 import json
@@ -321,6 +322,9 @@ class PetApp:
         self.frame = tk.Frame(root, bg=TRANSPARENT)
         self.placement = Placement(self)  # where the window sits, and the shared right margin
         self.pointer = Pointer(self)  # dragging, clicks and click-through
+        self.appearance = Appearance(self)
+        self.tooltips = Tooltips(self)
+        self.preferences = PetPreferences(self)
         self.answers = Answers(self)  # answering the hooks from the pet
         self.frame.pack(side="top", anchor="e", padx=(0, self.placement.usage_frame_pad))
 
@@ -334,7 +338,6 @@ class PetApp:
         self.badges_expanded = False  # compact mode: the merged badge is expanded into one badge per session
         self.first_refresh = True
         self.muted = tk.BooleanVar(value=not self.cfg["sounds"])
-        self.tip = None
         self.menu_pet = None
         self.context_menu_spec = None
         self._menu_open = False
@@ -353,13 +356,13 @@ class PetApp:
         m.add_command(label="Mark as finished", command=self.finish_menu_pet)
         self.finish_menu_index = m.index("end")
         self.dismiss_menu_index = m.index("Dismiss this pet")
-        m.add_command(label="Size...", command=self.open_size_slider)
+        m.add_command(label="Size...", command=self.appearance.open_size_slider)
         self.size_menu_index = m.index("end")
-        m.add_command(label="Tooltip text size...", command=self.open_tooltip_text_slider)
-        m.add_command(label="Reset size", command=self.reset_scale)
-        m.add_command(label="Answer timeout...", command=self.open_answer_slider)
-        m.add_command(label="Clear finished after...", command=self.open_done_slider)
-        m.add_command(label="Health check every...", command=self.open_health_slider)
+        m.add_command(label="Tooltip text size...", command=self.appearance.open_tooltip_text_slider)
+        m.add_command(label="Reset size", command=self.appearance.reset_scale)
+        m.add_command(label="Answer timeout...", command=self.appearance.open_answer_slider)
+        m.add_command(label="Clear finished after...", command=self.appearance.open_done_slider)
+        m.add_command(label="Health check every...", command=self.appearance.open_health_slider)
         self.codex_answer_var = tk.BooleanVar(value=bool(self.cfg.get("codex_answers")))
         self.answers.write_codex_flag()
         m.add_checkbutton(label="Answer Codex prompts from the pet", variable=self.codex_answer_var,
@@ -369,29 +372,29 @@ class PetApp:
         m.add_checkbutton(label="Answer Claude Code prompts from the pet", variable=self.claude_answer_var,
                           command=lambda: self.answers.set_claude_answers(self.claude_answer_var.get()))
         self.compact_var = tk.BooleanVar(value=bool(self.cfg.get("compact")))
-        m.add_checkbutton(label="Compact mode (one pet)", variable=self.compact_var, command=self.toggle_compact)
+        m.add_checkbutton(label="Compact mode (one pet)", variable=self.compact_var, command=self.preferences.toggle_compact)
         self.context_banner_var = tk.BooleanVar(value=bool(self.cfg.get("context_banner", True)))
         m.add_checkbutton(label="Context beside the pet", variable=self.context_banner_var,
-                          command=lambda: self.set_context_banner(self.context_banner_var.get()))
+                          command=lambda: self.preferences.set_context_banner(self.context_banner_var.get()))
         self.click_focus_var = tk.BooleanVar(value=bool(self.cfg.get("click_to_focus", True)))
         m.add_checkbutton(label="Click goes to the session's window", variable=self.click_focus_var,
-                          command=lambda: self.set_click_to_focus(self.click_focus_var.get()))
+                          command=lambda: self.preferences.set_click_to_focus(self.click_focus_var.get()))
         if IS_MAC or os.name == "nt":
             self.all_spaces_var = tk.BooleanVar(value=bool(self.cfg.get("all_spaces", True)))
             m.add_checkbutton(label="Show on all desktops", variable=self.all_spaces_var,
-                              command=lambda: self.set_all_spaces(self.all_spaces_var.get()))
+                              command=lambda: self.preferences.set_all_spaces(self.all_spaces_var.get()))
         self.titles_var = tk.StringVar(value=self.cfg.get("session_titles", "name"))
         titles = tk.Menu(m, tearoff=0)
         for value, text in (("name", "Session name"), ("prompt", "Last prompt")):
             titles.add_radiobutton(label=text, variable=self.titles_var, value=value,
-                                   command=lambda v=value: self.set_session_titles(v))
+                                   command=lambda v=value: self.preferences.set_session_titles(v))
         m.add_cascade(label="Session titles", menu=titles)
         tips = tk.Menu(m, tearoff=0)
         self.tooltip_vars = {}
         for kind, label in (("session", "Session details"), ("usage", "Usage details")):
             var = self.tooltip_vars[kind] = tk.BooleanVar(value=bool(self.cfg.get(kind + "_tooltips", True)))
             tips.add_checkbutton(label=label, variable=var,
-                                 command=lambda k=kind: self.set_tooltip(k, self.tooltip_vars[k].get()))
+                                 command=lambda k=kind: self.tooltips.set_tooltip(k, self.tooltip_vars[k].get()))
         m.add_cascade(label="Tooltips", menu=tips)
         m.add_separator()
         m.add_checkbutton(label="Mute sounds", variable=self.muted)
@@ -406,7 +409,7 @@ class PetApp:
         native_menu_theme()
 
         self.placement.anchor = self.placement.default_anchor()  # bottom-right of the main screen
-        self.size_win, self._menu_xy = None, None
+        self._menu_xy = None
         self.clickthru = ClickThrough(root) if self.cfg.get("click_through", True) else None
         self.pointer.passing = None
         # sessions are read in the background; the poll below takes the newest list (at twice its rate, so a change
@@ -426,8 +429,8 @@ class PetApp:
             root.after(500, self.pointer.pass_tick)
         root.after(60 * 1000, self._sweep_usage)
         if IS_MAC or os.name == "nt":
-            root.after(700, self._apply_all_spaces)
-            root.bind("<Map>", lambda e: root.after(100, self._apply_all_spaces) if e.widget is root else None, add="+")
+            root.after(700, self.preferences._apply_all_spaces)
+            root.bind("<Map>", lambda e: root.after(100, self.preferences._apply_all_spaces) if e.widget is root else None, add="+")
 
     # ---- data
     def read_items(self):
@@ -595,66 +598,6 @@ class PetApp:
         if item:
             self.details[key] = Detail(self, key, item)
 
-    def apply_theme(self, name):
-        """Switch theme live: name tags and tooltips pick it up on their own; bubbles are rebuilt."""
-        set_theme(name)
-        self.cfg["theme"] = T["name"]
-        reopen = list(self.details)
-        for d in list(self.details.values()):  # their colours are fixed at creation: rebuild them in the new theme
-            d.destroy()
-        for key in reopen:
-            self.open_detail(key)
-        retheme_all()
-        style_menu(self.menu)
-        native_menu_theme()
-
-    # ---- resizing (the Size... slider in the right-click menu)
-    def set_size(self, size):
-        return appearance_controls.set_size(self, size)
-
-    def tooltip_text_scale(self):
-        return tooltips.tooltip_text_scale(self)
-
-    def set_tooltip_text_scale(self, scale):
-        return tooltips.set_tooltip_text_scale(self, scale)
-
-    def set_answer_wait(self, seconds):
-        ANSWER_WAIT["v"] = clamp_wait(round(float(seconds) / 15) * 15)
-        self.cfg["answer_wait_seconds"] = ANSWER_WAIT["v"]
-        save_setting("answer_wait_seconds", ANSWER_WAIT["v"])
-        write_answer_wait(ANSWER_WAIT["v"])
-
-    def set_done_timeout(self, minutes):
-        DONE_TIMEOUT["v"] = clamp_done(minutes)
-        self.cfg["done_timeout_minutes"] = DONE_TIMEOUT["v"]
-        save_setting("done_timeout_minutes", DONE_TIMEOUT["v"])
-
-    def set_health_interval(self, seconds):
-        HEALTH["v"] = clamp_health(round(float(seconds) / 5) * 5)
-        self.cfg["health_check_seconds"] = HEALTH["v"]
-        save_setting("health_check_seconds", HEALTH["v"])
-
-    def set_scale(self, v):
-        return appearance_controls.set_scale(self, v)
-
-    def _place_above_pet(self, w):
-        return appearance_controls._place_above_pet(self, w)
-
-    def open_size_slider(self):
-        return appearance_controls.open_size_slider(self)
-
-    def open_tooltip_text_slider(self):
-        return appearance_controls.open_tooltip_text_slider(self)
-
-    def open_answer_slider(self):
-        return appearance_controls.open_answer_slider(self)
-
-    def open_done_slider(self):
-        return appearance_controls.open_done_slider(self)
-
-    def reset_scale(self):
-        return appearance_controls.reset_scale(self)
-
     def focus_key(self, key):
         pet = self.pets.get(key)
         if pet:
@@ -704,9 +647,6 @@ class PetApp:
         except (OSError, ValueError) as e:
             log_error(f"mark as finished: {e!r}")
 
-    def open_health_slider(self):
-        return appearance_controls.open_health_slider(self)
-
     def dismiss_menu_pet(self):
         if self.menu_pet and self.menu_pet.key != "_none":
             self.dismiss(self.menu_pet)
@@ -729,13 +669,6 @@ class PetApp:
         if self.muted.get() and not force:
             return
         sounds.play(urgent, error=kind == "error", style=self.cfg.get("sound_style", "chimes"), bell=lambda: self.root.bell())
-
-    def set_sound_style(self, style):
-        if style not in ("chimes", "system"):
-            return
-        self.cfg["sound_style"] = style
-        save_setting("sound_style", style)
-        self.beep(False, force=True)  # let the user hear the choice
 
     def dismiss(self, pet):
         self.dismiss_item(pet.data)
@@ -816,74 +749,10 @@ class PetApp:
                  auto_flash=any(m.get("auto_flash") for m in members))
         return [g]
 
-    def set_session_titles(self, mode):
-        """Session name (default) or latest prompt as the extra title (same-folder sessions, expanded badges)."""
-        mode = "prompt" if mode == "prompt" else "name"
-        self.cfg["session_titles"] = mode
-        save_setting("session_titles", mode)
-        if hasattr(self, "titles_var") and self.titles_var.get() != mode:
-            self.titles_var.set(mode)
-
-    def set_click_to_focus(self, on):
-        """Clicking a pet / badge goes to the session's window (on by default). Off: a click only acknowledges it."""
-        self.cfg["click_to_focus"] = bool(on)
-        save_setting("click_to_focus", self.cfg["click_to_focus"])
-        if hasattr(self, "click_focus_var") and self.click_focus_var.get() != self.cfg["click_to_focus"]:
-            self.click_focus_var.set(self.cfg["click_to_focus"])
-
-    def set_context_banner(self, on):
-        """Each AI's context in use beside the pet (on by default); the pets redraw with or without it."""
-        self.cfg["context_banner"] = bool(on)
-        save_setting("context_banner", self.cfg["context_banner"])
-        if hasattr(self, "context_banner_var") and self.context_banner_var.get() != self.cfg["context_banner"]:
-            self.context_banner_var.set(self.cfg["context_banner"])
-
-    def set_all_spaces(self, on):
-        """Show the pet on every virtual desktop, or only its own."""
-        self.cfg["all_spaces"] = bool(on)
-        save_setting("all_spaces", self.cfg["all_spaces"])
-        if hasattr(self, "all_spaces_var") and self.all_spaces_var.get() != self.cfg["all_spaces"]:
-            self.all_spaces_var.set(self.cfg["all_spaces"])
-        self._apply_all_spaces()
-
-    def _apply_all_spaces(self):
-        try:
-            on = bool(self.cfg.get("all_spaces", True))
-            self.root.update_idletasks()
-            if IS_MAC:
-                # Keep Tk's attributes in sync so remapping the overlay does not
-                # replace the native Space behavior.
-                try:
-                    kind, attrs = self.root.tk.call("::tk::unsupported::MacWindowStyle", "style", self.root._w)
-                    attrs = [a for a in self.root.tk.splitlist(attrs)
-                             if a not in ("canJoinAllSpaces", "moveToActiveSpace", "hideOnFullScreen", "hideOnSuspend")]
-                    if on:
-                        attrs.append("canJoinAllSpaces")
-                    if "doesNotHide" not in attrs:
-                        attrs.append("doesNotHide")
-                    self.root.tk.call("::tk::unsupported::MacWindowStyle", "style", self.root._w, kind, tuple(attrs))
-                except tk.TclError as e:
-                    log_error(f"all spaces: Tk window style: {e!r}")
-                import mac_statusbar
-                if not mac_statusbar.set_all_spaces(self.root.title(), on):
-                    log_error("all spaces: pet window not found")
-            elif os.name == "nt":
-                from pyvda import AppView
-                view = AppView(hwnd=int(self.root.wm_frame(), 16))
-                view.pin() if on else view.unpin()
-        except Exception as e:
-            log_error(f"all spaces: {e!r}")
-
-    def toggle_compact(self, value=None):
-        self.cfg["compact"] = (not self.cfg.get("compact", False)) if value is None else bool(value)
-        save_setting("compact", self.cfg["compact"])
-        if hasattr(self, "compact_var") and self.compact_var.get() != self.cfg["compact"]:
-            self.compact_var.set(self.cfg["compact"])
-
     def on_menu(self, e, pet=None):
         if self._menu_open:
             return "break"
-        self.hide_tip()
+        self.tooltips.hide_tip()
         self.pointer.drag = None
         if pet:
             pet._on_bubble, pet._on_badge = False, None
@@ -973,34 +842,6 @@ class PetApp:
         if uri and self.cfg.get("vscode_open_conversation", True):
             # VS Code hands a vscode:// link to its active window, so give `code` a moment to raise the right one
             self.root.after(1200, lambda: vscode.open_uri(uri))
-
-    def show_tip(self, pet):
-        return tooltips.show_tip(self, pet)
-
-    def show_usage_tip(self, pet, detail):
-        return tooltips.show_usage_tip(self, pet, detail)
-
-    def set_card_scale(self, value):
-        """Size of the permission / question cards (all open ones follow at once); saved as card_scale."""
-        CARD_SCALE["v"] = clamp_card_scale(value)
-        self.cfg["card_scale"] = CARD_SCALE["v"]
-        save_setting("card_scale", CARD_SCALE["v"])
-        rescale_card_fonts()
-        for d in list(self.details.values()):
-            d.apply_scale()
-
-    def set_tooltip(self, kind, on):
-        return tooltips.set_tooltip(self, kind, on)
-
-    def _show_tooltip(self, pet, text, usage_detail=None):
-        return tooltips._show_tooltip(self, pet, text, usage_detail)
-
-    def _build_tooltip(self, pet, text, usage_detail):
-        return tooltips._build_tooltip(self, pet, text, usage_detail)
-
-    def hide_tip(self):
-        return tooltips.hide_tip(self)
-
 
 # --------------------------------------------------------------------------- entry points
 def probe_workbench():

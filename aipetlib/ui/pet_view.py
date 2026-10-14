@@ -42,8 +42,8 @@ class PetView:
             c.bind("<Button-2>", lambda e: app.on_menu(e, self))
             c.bind("<Control-Button-1>", lambda e: app.on_menu(e, self))
             c.bind("<Control-ButtonRelease-1>", lambda e: "break")
-        c.bind("<Enter>", lambda e: app.show_tip(self))
-        c.bind("<Leave>", lambda e: app.hide_tip())
+        c.bind("<Enter>", lambda e: app.tooltips.show_tip(self))
+        c.bind("<Leave>", lambda e: app.tooltips.hide_tip())
         self._on_bubble = False  # the check/cross/? bubble ("ans" items) opens the details popup when clicked
         c.tag_bind("ans", "<Enter>", lambda e: c.config(cursor="hand2"))
         c.tag_bind("ans", "<Leave>", lambda e: c.config(cursor=""))
@@ -137,12 +137,12 @@ class PetView:
             return
         previous, self._usage_hover = self._usage_hover, tag
         if tag:
-            self.app.show_usage_tip(self, self._usage_details[tag])
+            self.app.tooltips.show_usage_tip(self, self._usage_details[tag])
         elif previous:
             if 0 <= x < c.winfo_width() and 0 <= y < c.winfo_height():
-                self.app.show_tip(self)
+                self.app.tooltips.show_tip(self)
             else:
-                self.app.hide_tip()
+                self.app.tooltips.hide_tip()
 
     def _completion_seal(self, x, y):
         self.canvas.create_oval(x - 9, y - 9, x + 9, y + 9, fill="#dcfce7", outline="#15803d", width=1)

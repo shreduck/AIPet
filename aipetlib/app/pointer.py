@@ -12,7 +12,7 @@ IS_MAC = sys.platform == "darwin"
 class Pointer:
     """Owns a drag in progress ([x, y, window x, window y, moved]) and whether clicks currently pass through.
 
-    Needs from the app: root, pets, placement, clickthru, _menu_open, hide_tip(), cfg, _last_items, ack,
+    Needs from the app: root, pets, placement, clickthru, _menu_open, tooltips, cfg, _last_items, ack,
     badges_expanded, open_detail(), focus_session(), _acknowledge().
     """
 
@@ -50,7 +50,7 @@ class Pointer:
                 self.passing = want
                 app.clickthru.set(want)
                 if want:
-                    app.hide_tip()
+                    app.tooltips.hide_tip()
         except Exception as e:
             diagnostics.log_error(f"click-through: {e!r}")
         app.root.after(50, self.pass_tick)
@@ -69,7 +69,7 @@ class Pointer:
         if abs(dx) + abs(dy) > 4:
             self.drag[4] = True
         if self.drag[4]:
-            app.hide_tip()
+            app.tooltips.hide_tip()
             app.root.geometry(f"+{wx + dx}+{wy + dy}")
 
     def release(self, e, pet):

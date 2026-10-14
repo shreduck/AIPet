@@ -84,6 +84,9 @@ class UsageTests(unittest.TestCase):
 
     def test_shared_margin_keeps_rightmost_position_stable(self):
         app = aipet.PetApp.__new__(aipet.PetApp)
+        app.appearance = aipet.Appearance(app)
+        app.tooltips = aipet.Tooltips(app)
+        app.preferences = aipet.PetPreferences(app)
         pet = MagicMock()
         pet.usage_extra = 0
         app.pets, app.order = {"pet": pet}, ["pet"]
@@ -121,28 +124,34 @@ class UsageTests(unittest.TestCase):
 
     def test_tooltip_types_can_be_disabled_independently(self):
         app = aipet.PetApp.__new__(aipet.PetApp)
+        app.appearance = aipet.Appearance(app)
+        app.tooltips = aipet.Tooltips(app)
+        app.preferences = aipet.PetPreferences(app)
         app.cfg = {"session_tooltips": False, "usage_tooltips": True}
-        app.hide_tip = MagicMock()
-        app._show_tooltip = MagicMock()
+        app.tooltips.hide_tip = MagicMock()
+        app.tooltips._show_tooltip = MagicMock()
         pet = MagicMock()
-        app.show_tip(pet)
-        app._show_tooltip.assert_not_called()
+        app.tooltips.show_tip(pet)
+        app.tooltips._show_tooltip.assert_not_called()
         detail = {"agent": "codex", "window": "7d", "percent": 2, "readings": []}
-        app.show_usage_tip(pet, detail)
-        app._show_tooltip.assert_called_once()
-        app._show_tooltip.reset_mock()
+        app.tooltips.show_usage_tip(pet, detail)
+        app.tooltips._show_tooltip.assert_called_once()
+        app.tooltips._show_tooltip.reset_mock()
         app.cfg["usage_tooltips"] = False
-        app.show_usage_tip(pet, detail)
-        app._show_tooltip.assert_not_called()
+        app.tooltips.show_usage_tip(pet, detail)
+        app.tooltips._show_tooltip.assert_not_called()
 
     def test_tooltip_settings_are_persisted(self):
         app = aipet.PetApp.__new__(aipet.PetApp)
+        app.appearance = aipet.Appearance(app)
+        app.tooltips = aipet.Tooltips(app)
+        app.preferences = aipet.PetPreferences(app)
         app.cfg, app.pets = {}, {"pet": MagicMock()}
-        app.hide_tip = MagicMock()
+        app.tooltips.hide_tip = MagicMock()
         app.tooltip_vars = {"usage": MagicMock()}
         from aipetlib.runtime import settings
         with patch.object(settings, "save_setting") as save:  # where the tooltip switch saves it
-            app.set_tooltip("usage", False)
+            app.tooltips.set_tooltip("usage", False)
         self.assertFalse(app.cfg["usage_tooltips"])
         save.assert_called_once_with("usage_tooltips", False)
         self.assertIsNone(app.pets["pet"]._usage_hover)

@@ -48,7 +48,7 @@ class PointerTests(unittest.TestCase):
     def setUp(self):
         from aipetlib.app.pointer import Pointer
         item = {"key": "s1", "state": "needs_input"}
-        self.app = SimpleNamespace(root=root(), placement=SimpleNamespace(anchor=[0, 0]), hide_tip=MagicMock(),
+        self.app = SimpleNamespace(root=root(), placement=SimpleNamespace(anchor=[0, 0]), tooltips=SimpleNamespace(hide_tip=MagicMock()),
                                    cfg={}, _last_items=[item], ack={}, badges_expanded=False,
                                    open_detail=MagicMock(), focus_session=MagicMock(), _acknowledge=MagicMock(),
                                    pets={}, _menu_open=False, clickthru=MagicMock())

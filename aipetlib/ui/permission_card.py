@@ -71,7 +71,7 @@ class PermissionCard:
                                    command=lambda v: self.size_label.configure(text=f"{int(round(float(v) * 100))}%"))
         self.size_scale.pack(side="left")
         self.size_label.pack(side="left")
-        self.size_scale.bind("<ButtonRelease-1>", lambda e: self.app.set_card_scale(self.size_var.get()))
+        self.size_scale.bind("<ButtonRelease-1>", lambda e: self.app.preferences.set_card_scale(self.size_var.get()))
         mod = "Command" if IS_MAC else "Control"
         for seq, step in (("plus", 1), ("equal", 1), ("KP_Add", 1), ("minus", -1), ("KP_Subtract", -1),
                           ("0", 0), ("KP_0", 0)):
@@ -585,7 +585,7 @@ class PermissionCard:
         """Ctrl + plus / minus (step 1 / -1) and Ctrl + 0 (back to 100%) on the card."""
         value = 1.0 if step == 0 else preferences.clamp_card_scale(preferences.CARD_SCALE["v"] + step * preferences.CARD_SCALE_STEP)
         if value != preferences.CARD_SCALE["v"]:
-            self.app.set_card_scale(value)
+            self.app.preferences.set_card_scale(value)
         return "break"
 
     def apply_scale(self):

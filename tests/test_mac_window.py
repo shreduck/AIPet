@@ -473,7 +473,10 @@ class MacWindowTests(unittest.TestCase):
         canvas.pack()
         root.update()
         app = object.__new__(aipet.PetApp)
-        app.root, app.tip, app._menu_open = root, None, False
+        app.appearance = aipet.Appearance(app)
+        app.tooltips = aipet.Tooltips(app)
+        app.preferences = aipet.PetPreferences(app)
+        app.root, app.tooltips.tip, app._menu_open = root, None, False
         app.cfg = {"all_spaces": True}
         pet = SimpleNamespace(canvas=canvas, gutter=0)
         native_app = mac.send(mac.cls("NSApplication"), "sharedApplication")
@@ -481,16 +484,16 @@ class MacWindowTests(unittest.TestCase):
         try:
             for detail, scale in ((None, 1.0), ({"agent": "codex"}, 1.5), ({"agent": "claude"}, 2.0), (None, 1.0)):
                 app.cfg["tooltip_text_scale"] = scale
-                app._show_tooltip(pet, "Hover details\nTest content", usage_detail=detail)
+                app.tooltips._show_tooltip(pet, "Hover details\nTest content", usage_detail=detail)
                 root.update()
-                tip_canvas = app.tip.winfo_children()[0]
+                tip_canvas = app.tooltips.tip.winfo_children()[0]
                 text_items = [i for i in tip_canvas.find_all() if tip_canvas.type(i) == "text"]
                 for item, base_size in zip(text_items, (9, 8)):
                     from tkinter import font
                     rendered = font.Font(root=root, font=tip_canvas.itemcget(item, "font"))
                     self.assertEqual(rendered.actual("size"), round(base_size * scale))
-                self.assertLessEqual(app.tip.winfo_rooty() + app.tip.winfo_height(), canvas.winfo_rooty() - 6)
-                window = mac.window_titled(app.tip.title())
+                self.assertLessEqual(app.tooltips.tip.winfo_rooty() + app.tooltips.tip.winfo_height(), canvas.winfo_rooty() - 6)
+                window = mac.window_titled(app.tooltips.tip.title())
                 self.assertTrue(window)
                 parent = mac.window_titled(root.title())
                 self.assertGreater(mac.send(window, "level", restype=mac.c_long),
@@ -507,7 +510,7 @@ class MacWindowTests(unittest.TestCase):
                 self.assertFalse(flags & mac.ALL_SPACES_CONFLICTS)
                 if mac.supports_all_applications():
                     self.assertTrue(flags & mac.ALL_APPLICATIONS)
-                app.hide_tip()
+                app.tooltips.hide_tip()
                 self.assertTrue(root.winfo_exists())
         finally:
             root.destroy()
@@ -533,7 +536,10 @@ class MacWindowTests(unittest.TestCase):
         canvas = tk.Canvas(root, width=100, height=100)
         canvas.pack()
         app = object.__new__(aipet.PetApp)
-        app.root, app.tip, app._menu_open = root, None, False
+        app.appearance = aipet.Appearance(app)
+        app.tooltips = aipet.Tooltips(app)
+        app.preferences = aipet.PetPreferences(app)
+        app.root, app.tooltips.tip, app._menu_open = root, None, False
         app.cfg = {"all_spaces": True}
         pet = SimpleNamespace(canvas=canvas, gutter=0, data={})
         agent = None
@@ -567,11 +573,11 @@ class MacWindowTests(unittest.TestCase):
             self.assertEqual(foreground_pid(), finder_pid)
             above = windows_above(number)
             for detail in (None, {"agent": "codex"}, {"agent": "claude"}):
-                app._show_tooltip(pet, "Hover details\nTest content", usage_detail=detail)
+                app.tooltips._show_tooltip(pet, "Hover details\nTest content", usage_detail=detail)
                 settle()
                 self.assertEqual(foreground_pid(), finder_pid)
                 self.assertTrue(above <= windows_above(number))
-                app.hide_tip()
+                app.tooltips.hide_tip()
                 settle()
                 self.assertEqual(foreground_pid(), finder_pid)
                 self.assertTrue(above <= windows_above(number))
@@ -580,7 +586,7 @@ class MacWindowTests(unittest.TestCase):
             settle()
             self.assertEqual(foreground_pid(), os.getpid())
         finally:
-            app.hide_tip()
+            app.tooltips.hide_tip()
             if agent:
                 agent.close()
             root.update()

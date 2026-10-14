@@ -147,9 +147,9 @@ def start_spaces_probe(app, output):
                                 rec.update(state=request["state"], updated=time.time(), changed=time.time())
                                 path.write_text(json.dumps(rec), encoding="utf-8")
                     if "all_spaces" in request:
-                        app.pet.set_all_spaces(request["all_spaces"])
+                        app.pet.preferences.set_all_spaces(request["all_spaces"])
                     if "compact" in request:
-                        app.pet.toggle_compact(request["compact"])
+                        app.pet.preferences.toggle_compact(request["compact"])
                     if request.get("about"):
                         app.show_about()
                     if request.get("agent_network"):

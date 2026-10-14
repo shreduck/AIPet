@@ -35,16 +35,19 @@ def spec():
 class SettingsSpecTests(unittest.TestCase):
     def test_tooltip_text_scale_is_independent_and_saved(self):
         pet = object.__new__(aipet.PetApp)
-        pet.cfg, pet.tip = {"size": 1.35}, None
+        pet.appearance = aipet.Appearance(pet)
+        pet.tooltips = aipet.Tooltips(pet)
+        pet.preferences = aipet.PetPreferences(pet)
+        pet.cfg, pet.tooltips.tip = {"size": 1.35}, None
         with tempfile.TemporaryDirectory() as directory, \
                 support.paths(HOME_DIR=directory), \
                 support.paths(CONFIG_PATH=str(Path(directory) / 'config.json')):
-            self.assertEqual(pet.tooltip_text_scale(), 1.0)
-            pet.set_tooltip_text_scale(1.75)
+            self.assertEqual(pet.tooltips.tooltip_text_scale(), 1.0)
+            pet.tooltips.set_tooltip_text_scale(1.75)
             self.assertEqual(pet.cfg['size'], 1.35)
             self.assertEqual(aipet.load_config()['tooltip_text_scale'], 1.75)
-            self.assertEqual(pet.tooltip_text_scale(), 1.75)
-            pet.set_tooltip_text_scale(1.0)
+            self.assertEqual(pet.tooltips.tooltip_text_scale(), 1.75)
+            pet.tooltips.set_tooltip_text_scale(1.0)
             self.assertEqual(aipet.load_config()['tooltip_text_scale'], 1.0)
 
     def test_wheel_stops_at_edges_and_consumes_events(self):
@@ -72,6 +75,9 @@ class SettingsSpecTests(unittest.TestCase):
 
     def test_inline_slider_changes_update_and_persist_settings(self):
         pet = object.__new__(aipet.PetApp)
+        pet.appearance = aipet.Appearance(pet)
+        pet.tooltips = aipet.Tooltips(pet)
+        pet.preferences = aipet.PetPreferences(pet)
         pet.cfg, pet.pets = {}, {}
         pet.placement = MagicMock()  # where the window sits: not what this test is about
         with tempfile.TemporaryDirectory() as directory, \
@@ -79,10 +85,10 @@ class SettingsSpecTests(unittest.TestCase):
                 support.paths(CONFIG_PATH=str(Path(directory) / 'config.json')), \
                 patch.dict(aipet.SCALE), patch.dict(aipet.ANSWER_WAIT), \
                 patch.dict(aipet.DONE_TIMEOUT), patch.dict(aipet.HEALTH):
-            pet.set_size(1.35)
-            pet.set_answer_wait(75)
-            pet.set_done_timeout(8)
-            pet.set_health_interval(25)
+            pet.appearance.set_size(1.35)
+            pet.preferences.set_answer_wait(75)
+            pet.preferences.set_done_timeout(8)
+            pet.preferences.set_health_interval(25)
             expected = {'size': 1.35, 'answer_wait_seconds': 75,
                         'done_timeout_minutes': 8, 'health_check_seconds': 25}
             self.assertEqual(pet.cfg, expected)
@@ -91,9 +97,9 @@ class SettingsSpecTests(unittest.TestCase):
             self.assertEqual(aipet.SCALE['v'], 1.35 * aipet.SCALE_UNIT)
             self.assertEqual([aipet.ANSWER_WAIT['v'], aipet.DONE_TIMEOUT['v'], aipet.HEALTH['v']], [75, 8, 25])
             pet.placement.reposition.assert_called_once()
-            pet.set_answer_wait(0)
-            pet.set_done_timeout(0)
-            pet.set_health_interval(0)
+            pet.preferences.set_answer_wait(0)
+            pet.preferences.set_done_timeout(0)
+            pet.preferences.set_health_interval(0)
             self.assertEqual((Path(directory) / 'answer-wait').read_text(), '0')
             self.assertEqual([aipet.ANSWER_WAIT['v'], aipet.DONE_TIMEOUT['v'], aipet.HEALTH['v']], [0, 0, 0])
 
@@ -149,9 +155,9 @@ class SettingsSpecTests(unittest.TestCase):
         self.assertTrue(dark["help"])
         self.assertIs(dark["action"].__func__, aipet_app.TrayApp.toggle_theme)  # the very same action as the menu
         rows = {e['label']: e for _, e in settings.flatten(app._mac_menu_spec())}
-        for label, setter in (("Pet size...", app.pet.set_size), ("Answer timeout...", app.pet.set_answer_wait),
-                              ("Clear finished after...", app.pet.set_done_timeout),
-                              ("Health check every...", app.pet.set_health_interval)):
+        for label, setter in (("Pet size...", app.pet.appearance.set_size), ("Answer timeout...", app.pet.preferences.set_answer_wait),
+                              ("Clear finished after...", app.pet.preferences.set_done_timeout),
+                              ("Health check every...", app.pet.preferences.set_health_interval)):
             self.assertIs(rows[label]['slider']['set'], setter)
             self.assertIsNot(rows[label]['slider']['set'], rows[label]['action'])
 
