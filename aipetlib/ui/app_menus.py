@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 
+from ..integrations import backups as hook_backups, targets as hook_targets
 from .. import permissions
 from .. import sessions as session_text
 from .. import text as textfmt
@@ -65,31 +66,31 @@ def _mac_menu_spec(app, settings=False):
 
     def target(name, key):
         st = app.status.get(key, "checking…")
-        backups = app.hook_backups(key)[:15]
+        backups = hook_backups.list_backups(key)[:15]
         restore = [item(f"{b['when']} - {b['reason']}" + ("  [original]" if b["original"] else ""),
-                        lambda b=b: app.confirm_restore(key, b)) for b in backups] or [item("No backups yet", enabled=False)]
+                        lambda b=b: app.hooks.confirm_restore(key, b)) for b in backups] or [item("No backups yet", enabled=False)]
         return item(f"{'✓ ' if st.startswith('installed') else ''}{name}  ({st})", submenu=[
-            item("Install / update hooks", lambda: app.confirm(key, True),
+            item("Install / update hooks", lambda: app.hooks.confirm(key, True),
                  help="Adds AIPet's hooks to this install's settings, or brings them up to date. Your own hooks stay."),
-            item("Remove hooks", lambda: app.confirm(key, False),
+            item("Remove hooks", lambda: app.hooks.confirm(key, False),
                  help="Takes AIPet's hooks out again. The pet stops seeing sessions from here."),
-            *([] if app.is_codex_target(key) else [item(
-                "Claude usage status line...", lambda: app.confirm_usage(key),
+            *([] if hook_targets.is_codex(key) else [item(
+                "Claude usage status line...", lambda: app.hooks.confirm_usage(key),
                 help="Lets the pet show Claude's usage limits by recording them from Claude Code's status line.")]),
             None,
             item("Restore backup", submenu=restore,
                  help="Puts back a settings file saved before AIPet changed it."),
-            item("Back up now", lambda: app.start_job(key, "backup"),
+            item("Back up now", lambda: app.hooks.start_job(key, "backup"),
                  help="Saves a copy of the current settings file."),
-            item("Open backups folder", lambda: app.open_backups(key)),
+            item("Open backups folder", lambda: app.hooks.open_backups(key)),
         ], help=f"Hook status: {st}.")
 
-    refresh = lambda: threading.Thread(target=app.refresh_targets, daemon=True).start()  # noqa: E731
-    claude = [target("This Mac" if IS_MAC else "This PC (Windows)", app.LOCAL_TARGET)]
+    refresh = lambda: threading.Thread(target=app.hooks.refresh_targets, daemon=True).start()  # noqa: E731
+    claude = [target("This Mac" if IS_MAC else "This PC (Windows)", hook_targets.LOCAL)]
     claude += [target(f"WSL: {name}", "wsl:" + name) for name, _ in app.distros]
-    claude += [None, item("Cowork (Claude desktop app)...", app.show_cowork,
+    claude += [None, item("Cowork (Claude desktop app)...", app.cowork.show,
                           help="How to let the pet follow Cowork sessions in the Claude desktop app."),
-               item("Check for old Claude Pet hooks...", lambda: app.check_legacy(True),
+               item("Check for old Claude Pet hooks...", lambda: app.legacy.check(True),
                     help="Finds hooks left behind by Claude Pet, this app's old name, and offers to remove them.")]
     codex = [target(lab, key) for lab, key in app.codex_targets] or [item("Codex not found", enabled=False)]
     cfg = app.pet.cfg
@@ -233,7 +234,7 @@ def _mac_menu_spec(app, settings=False):
                      checked=bool(cfg.get("claude_oauth_usage", False)),
                      help="Reads your Claude plan's usage from an unofficial endpoint. Experimental; asks before turning on."),
                 None,
-                item("Run setup again...", app.show_setup, help="The first-run setup: pick which installs to hook up."),
+                item("Run setup again...", app.setup.show, help="The first-run setup: pick which installs to hook up."),
                 item("Re-detect / refresh status", refresh, help="Look again for Claude Code, Codex and WSL installs."),
                 item(f"Workbench: {app.c_wb}", enabled=False),
             ]),

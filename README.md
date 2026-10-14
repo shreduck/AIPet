@@ -553,21 +553,22 @@ From source, the Windows hook runs via `pythonw` and the script, so no exe is ne
 | `aipetlib/ui/` | Pet rendering (`pet_style`, `pet_view`, `sprites`, `theme`), permission cards, hover panels (`Tooltips` in `tooltips`), slider windows (`Appearance` in `appearance_controls`), tray and Dock artwork (`tray_icons`), menu definitions, the chimes (`sounds`), the agent network window (`agent_window`) and its components (`agent_logs`, `agent_graph`, `agent_prompts`, `agent_menu`, `agent_controls`) with their shared values (`agent_common`) |
 | `aipetlib/text.py` | Plain-text helpers: phrases, "3m ago", countdowns |
 | `aipetlib/update.py` | Releases: this build's version and the newest one on GitHub |
-| `aipetlib/app/` | The apps' controllers, each owning one part: `updates` (release checks and dialog), `agent_windows` (network windows and menu switches), `approvals` (rules editor and targets), `config_watch` (config.json applied live), `diagnostics` (Save diagnostics...), `placement` (anchored corner and shared margin), `pointer` (dragging, clicks, click-through), `answers` (hook answers and answering switches), `preferences` (pet settings, theme and card scale), `session_reader` (session polling off the UI thread), `presentation` (tray/menu-bar handles, Dock image, notifications and tray menu adaptation) |
-| `aipetlib/integrations/` | Hook targets (`targets`: the keys of this machine, WSL and Codex targets); the installer follows in stage 9 |
+| `aipetlib/app/` | The apps' controllers: `updates` (release checks and dialog), `agent_windows` (network windows), `approvals` (rules editor), `config_watch` (config.json applied live), `diagnostics`, `placement`, `pointer`, `answers`, `preferences`, `session_reader`, `presentation` (tray/Dock/notifications), `setup` (first-run setup and runtime choices), `cowork` (plugin instructions), `legacy` (old-hook reminders), and `hooks` (installation jobs, confirmations and target snapshots) |
+| `aipetlib/integrations/` | Headless installation owners: `targets` (local/WSL config access), `discovery` (installed providers), `commands` (quoting and runtime selection), `settings` (merges), `protocol` (events/timeouts), `locations` (source/frozen paths), `backups` (retention/restoration), `deployment` (independent hook copies), `installer` (install/remove and optional usage), `cowork` (plugin ZIP/marketplace), and `legacy` (migration operations). The first-start migration dialog lives in `ui/legacy_migration` |
 | `aipet_settings.py` | The AIPet menu window (built from the same menu definition) |
 | `aipet_agents.py` | Temporary facade over `aipetlib/agents/` (to be removed) |
 | `aipet_guide.py` | The settings guide for AI assistants (Copy settings guide for AI) |
 | `aipet_hook.py` | The hook Claude Code and Codex run on each event |
-| `hooks_installer.py` | settings.json / hooks.json merge and remove, backups and restore, the Cowork plugin |
+| `hooks_installer.py` | Temporary compatibility exports over the installation owners in `aipetlib/integrations/` |
 | `aipet_usage.py`, `aipet_claude_usage.py` | Usage-limit readings |
 | `mac_statusbar.py` | The macOS menu-bar icon and native panels |
-| `legacy.py` | Moving over from Claude Pet (removable later) |
+| `legacy.py` | Temporary compatibility exports for moving over from Claude Pet |
 | `build.bat`, `build_mac.sh`, `.github/workflows/` | Builds and the macOS self-test |
 | `tools/` | Sprite, icon and demo GIF generators, test helpers |
 
 The entry-point scripts retain their launch commands and temporary shared-value re-exports. UI actions call their
-owning components directly (`pet.appearance`, `pet.tooltips`, `pet.preferences`, `app.presentation`). Components receive the
+owning components directly (`pet.appearance`, `pet.tooltips`, `pet.preferences`, `app.presentation`,
+`app.setup`, `app.cowork`, `app.legacy`, `app.hooks`). Components receive the
 owning window or app and import every other value from the module that owns it (`runtime/paths`, `runtime/preferences`,
 `ui/theme`, `ui/pet_style`...); they never import an entry point and take no catch-all services object
 (`tools/check_architecture.py` enforces both). The hook's event logic gets the hook helpers it uses as an explicit

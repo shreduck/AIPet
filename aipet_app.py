@@ -11,7 +11,6 @@ AIPet - tray application (entry point for AIPet.exe, in the AIPet folder).
 """
 import aipetlib.ui.app_menus as app_menus
 import ctypes
-import json
 import os
 import queue
 import subprocess
@@ -38,24 +37,20 @@ import aipetlib.app.diagnostics as app_diagnostics
 from aipetlib.app.updates import UpdateFlow
 from aipetlib.app.presentation import APP_NAME, TrayPresenter
 from aipetlib.ui.tray_icons import set_window_icon
-from aipetlib.integrations import backups as hook_backups
-from aipetlib.integrations import cowork as hook_cowork
-from aipetlib.integrations import deployment as hook_deployment
-from aipetlib.integrations import discovery as hook_discovery
-from aipetlib.integrations import installer as hook_installer
-from aipetlib.integrations import locations as hook_locations
-from aipetlib.integrations import protocol as hook_protocol
 from aipetlib.integrations import targets as hook_targets
-import legacy  # LEGACY: moving over from Claude Pet
+from aipetlib.integrations import legacy  # LEGACY: moving over from Claude Pet
+from aipetlib.ui.legacy_migration import migration_window
+from aipetlib.app.setup import SetupFlow, setup_is_done, mark_setup_done
+from aipetlib.app.cowork import CoworkFlow
+from aipetlib.app.legacy import LegacyFlow
+from aipetlib.app.hooks import HookJobs
 
 IS_MAC = sys.platform == "darwin"
-
 
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 LAUNCH_AGENT = os.path.expanduser("~/Library/LaunchAgents/com.aipet.app.plist")
 _mutex = None
-SETUP_MARKER = os.path.join(paths.HOME_DIR, "setup-done")
 from aipetlib.runtime.paths import DEBUG_FLAG  # noqa: E402
 from aipetlib.ui.pet_style import BETA_STYLES, PET_STYLES  # noqa: E402
 
@@ -176,18 +171,6 @@ def set_autostart(on):
                 pass
 
 
-def setup_is_done():
-    return os.path.exists(SETUP_MARKER)
-
-
-def mark_setup_done():
-    try:
-        os.makedirs(paths.HOME_DIR, exist_ok=True)
-        open(SETUP_MARKER, "w").close()
-    except OSError:
-        pass
-
-
 # --------------------------------------------------------------------------- app
 class TrayApp:
     def __init__(self):
@@ -197,11 +180,8 @@ class TrayApp:
         set_window_icon(self.root)
         self.q = queue.Queue()
         self.hidden = False
-        self.busy = False
-        self.setup_win = None
         self.distros = []          # [(name, state)]
         self.codex_targets = []    # [(label, key)] where Codex was found (this machine, running WSL distros)
-        self.probed = False
         self.status = {hook_targets.LOCAL: "checking…"}
         # caches read by the tray thread (never touch Tk from there)
         self.c_muted = self.pet.muted.get()
@@ -213,12 +193,15 @@ class TrayApp:
         self.approvals = Approvals(self)  # auto approve rules per hook target, and which are on
         self.version = releases.current_version()
         self.updates = UpdateFlow(self)  # new releases: daily check, menu entries, the dialog
+        self.setup = SetupFlow(self)
+        self.cowork = CoworkFlow(self, open_path)
+        self.legacy = LegacyFlow(self)
+        self.hooks = HookJobs(self, open_path)
         self.presentation = TrayPresenter(self)
 
         self.pet.on_alert = self.presentation.on_alert
         self.agent_tracker = NetworkTracker(lambda: list(self.pet._agent_items))
         self.agent_tracker.start()
-        self.cowork_win = None
         # One menu definition serves the pet, macOS menu bar and Windows tray.
         self.pet.context_menu_spec = self._context_menu_spec
 
@@ -258,358 +241,8 @@ class TrayApp:
     def _startup_jobs(self):
         refresh_autostart_path()
         self._check_autostart()
-        try:
-            hook_backups.migrate_legacy_backups()  # pull backups over from the old %LOCALAPPDATA% location
-        except Exception as e:
-            print(f"[aipet] backup migration failed: {e}", file=sys.stderr)
-        try:
-            hook_deployment.deploy_files(only_if_deployed=True)  # refresh an existing install only; never create one
-            if os.path.isdir(hook_locations.INSTALL_DIR) and (os.name == "nt" or IS_MAC):
-                hook_cowork.build_plugin()  # keep the Cowork plugin zip next to the exe current
-        except Exception:
-            pass
-        self.refresh_targets()
-        for key in [hook_targets.LOCAL] + ["wsl:" + n for n, state in self.distros if state.lower() == "running"]:
-            try:
-                hook_installer.migrate_legacy_usage(key)  # backup and restore v0.3.1's automatic wrapper once
-            except Exception as e:
-                diagnostics.log_error(f"restore legacy status line for {key}: {e!r}")
-        self.ui(lambda: self.root.after(20000, self.legacy_tick))  # LEGACY: daily reminder about old-name hooks
-        self.ui(lambda: self.root.after(30000, self.updates.tick))
-        self.ui(self.updates.show_in_menus)
-        stale = [k for k, v in self.status.items() if v == hook_protocol.STALE]
-        if not setup_is_done():
-            self.ui(self.show_setup)  # first run: shows what is installed / up to date / outdated per target
-        elif stale:
-            self.ui(lambda: self.offer_update(stale))
-        self.ui(lambda: self.root.after(1500, self.agent_windows.offer_intro))
+        self.hooks.startup()
 
-    # ---- first-run setup
-    def show_setup(self, check_stopped=False):
-        if self.setup_win is not None:
-            try:
-                self.setup_win.lift()
-                return
-            except tk.TclError:
-                self.setup_win = None
-        threading.Thread(target=self._detect_for_setup, args=(check_stopped,), daemon=True).start()
-
-    def _detect_for_setup(self, check_stopped):
-        try:
-            targets, hidden = hook_discovery.detect_targets(check_stopped)
-        except Exception as e:
-            self.ui(lambda: self.info(f"Couldn't detect Claude Code installs:\n{e}", error=True))
-            return
-        zip_path = None
-        if os.name == "nt" or IS_MAC:
-            try:
-                zip_path = hook_cowork.build_plugin()["zip"]  # the installer always leaves the Cowork zip ready
-            except Exception:
-                pass
-        self.ui(lambda: self._build_setup(targets, hidden, zip_path))
-
-    def _build_setup(self, targets, hidden, zip_path=None):
-        if self.setup_win is not None:
-            return
-        win = self.setup_win = tk.Toplevel(self.root)
-        win.title(f"{APP_NAME} setup")
-        win.attributes("-topmost", True)
-        win.resizable(False, False)
-        grey = "#6b7280"
-
-        tk.Label(win, text="Where should AIPet watch Claude Code?", font=(core.UI_FONT, 12, "bold")
-                 ).pack(anchor="w", padx=16, pady=(14, 2))
-        tk.Label(win, justify="left", wraplength=430, fg=grey,
-                 text="These are the Claude Code installs I found. Tick the ones to hook up.").pack(anchor="w", padx=16)
-
-        picks, runtime = {}, {}
-        body = tk.Frame(win)
-        body.pack(fill="x", padx=16, pady=10)
-        stopped = [t for t in targets if t["kind"] == "unknown"]
-        targets = [t for t in targets if t["kind"] != "unknown"]
-        for t in targets:
-            usable = t["kind"] in ("ready", "installed", "outdated")
-            var = tk.BooleanVar(value=t["kind"] in ("ready", "outdated"))
-            picks[t["key"]] = var
-            row = tk.Frame(body)
-            row.pack(fill="x", pady=3)
-            tk.Checkbutton(row, text=t["label"], variable=var, state="normal" if usable else "disabled",
-                           font=(core.UI_FONT, 10)).pack(anchor="w")
-            state_text, color = {
-                "ready": ("not installed yet", grey),
-                "installed": ("hooks installed and up to date", "#15803d"),
-                "outdated": ("hooks installed but out of date - tick to update them", "#b45309"),
-                "blocked": ("settings.json can't be read (invalid JSON?) - fix it first; nothing is changed", "#b91c1c"),
-                "needs_python": (t["note"], "#b91c1c"),
-                "missing": (t["note"], grey),
-            }.get(t["kind"], (t["note"], grey))
-            tk.Label(row, text=state_text, fg=color, font=(core.UI_FONT, 8, "bold"), wraplength=400, justify="left"
-                     ).pack(anchor="w", padx=(26, 0))
-            if t["kind"] in ("ready", "installed", "outdated"):
-                tk.Label(row, text=t["note"], fg=grey, font=(core.UI_FONT, 8), wraplength=400, justify="left"
-                         ).pack(anchor="w", padx=(26, 0))
-            if t["key"] == "mac" and usable:
-                self._mac_runtime_ui(row, t, runtime)
-        if not targets and not stopped:
-            tk.Label(body, text="No Claude Code installs found.", fg=grey).pack(anchor="w")
-        if hidden:
-            tk.Label(body, fg=grey, font=(core.UI_FONT, 8), wraplength=420, justify="left",
-                     text=f"{hidden} WSL distro{'s' if hidden != 1 else ''} hidden: Claude Code isn't installed there."
-                     ).pack(anchor="w", pady=(6, 0))
-
-        if stopped:
-            tk.Label(body, fg=grey, font=(core.UI_FONT, 8), wraplength=420, justify="left",
-                     text="Not checked (not running): " + ", ".join(t["label"][5:] for t in stopped)
-                     ).pack(anchor="w", pady=(6, 0))
-            def check_stopped():
-                if self.ask("Checking stopped WSL distros starts them. Continue?"):
-                    self._close_setup()
-                    self.show_setup(check_stopped=True)
-            tk.Button(win, text="Check stopped WSL distros (starts them)...", command=check_stopped
-                      ).pack(anchor="w", padx=16, pady=(0, 6))
-
-        tk.Label(win, justify="left", wraplength=430, fg=grey, font=(core.UI_FONT, 8),
-                 text="Each settings.json is backed up first, and your other hooks and settings are kept. "
-                      "Only Claude Code sessions started afterwards show up. You can change this any time from "
-                      "the tray menu: Claude Code hooks."
-                 ).pack(anchor="w", padx=16, pady=(0, 8))
-
-        cw = tk.LabelFrame(win, text=" Claude desktop app - Cowork ", font=(core.UI_FONT, 9, "bold"))
-        cw.pack(fill="x", padx=16, pady=(0, 10))
-        tk.Label(cw, justify="left", wraplength=410, font=(core.UI_FONT, 8),
-                 text="Cowork ignores settings.json, so it needs the hooks as a plugin, which only the Claude app "
-                      "can install. AIPet built it for you:\n" + (zip_path or hook_cowork.COWORK_ZIP + " (not built yet)") + "\n"
-                      "1. Claude app > Customize > Plugins > upload that zip, and keep its hooks on.\n"
-                      "2. Restart the Claude app and start a new Cowork session."
-                 ).pack(anchor="w", padx=8, pady=(4, 2))
-        tk.Button(cw, text="Build the zip and show full instructions (app + CLI)...", command=self.show_cowork
-                  ).pack(anchor="w", padx=8, pady=(0, 6))
-
-        def install():
-            keys = [k for k, v in picks.items() if v.get()]
-            if not keys:
-                self.info("Nothing is ticked. Tick at least one install, or press Skip for now.")
-                return
-            if self.busy:
-                self.info("Another hook operation is still running - try again in a moment.")
-                return
-            self._close_setup()
-            self.busy = True
-            runtimes = {"mac": runtime["var"].get()} if "var" in runtime else {}
-            threading.Thread(target=self._update_job, args=(keys, runtimes), daemon=True).start()
-
-        def skip():
-            self._close_setup()
-            self.info("No problem. You can set this up later from the tray icon: Claude Code hooks, "
-                      "or Run setup again.")
-
-        buttons = tk.Frame(win)
-        buttons.pack(fill="x", padx=16, pady=(0, 14))
-        tk.Button(buttons, text="Install selected", command=install, default="active", width=16).pack(side="right")
-        tk.Button(buttons, text="Skip for now", command=skip, width=12).pack(side="right", padx=(0, 8))
-        win.protocol("WM_DELETE_WINDOW", skip)
-        core.theme_window(win)
-        win.update_idletasks()
-        win.geometry(f"+{max(0, (win.winfo_screenwidth() - win.winfo_reqwidth()) // 2)}"
-                     f"+{max(0, (win.winfo_screenheight() - win.winfo_reqheight()) // 3)}")
-
-    def _mac_runtime_ui(self, parent, t, runtime):
-        """macOS only: choose between the user's Python 3 (fast) and the bundled hook (nothing to install)."""
-        py = t.get("python")
-        var = runtime["var"] = tk.StringVar(value="python" if py else "builtin")
-        box = tk.Frame(parent)
-        box.pack(anchor="w", padx=(26, 0), pady=(4, 0))
-        tk.Label(box, text="Hook runtime", font=(core.UI_FONT, 8, "bold")).pack(anchor="w")
-        tk.Radiobutton(box, variable=var, value="python", state="normal" if py else "disabled", font=(core.UI_FONT, 9),
-                       text=f"Your Python 3 (faster) - {py}" if py else "Your Python 3 (faster) - not found"
-                       ).pack(anchor="w")
-        tk.Radiobutton(box, variable=var, value="builtin", font=(core.UI_FONT, 9),
-                       text="Built-in hook (nothing to install)").pack(anchor="w")
-        warn = tk.Label(box, fg="#b45309", font=(core.UI_FONT, 8), wraplength=380, justify="left")
-        warn.pack(anchor="w", pady=(2, 0))
-
-        def refresh(*_):
-            warn.config(text="Heads up: Python 3 is faster. The built-in hook works with nothing to install, but it "
-                              "starts a bigger program on every tool call, so expect a small delay. You can switch "
-                              "any time by running setup again." if var.get() == "builtin" else "")
-        var.trace_add("write", refresh)
-        refresh()
-        if not py:
-            row = tk.Frame(box)
-            row.pack(anchor="w", pady=(4, 0))
-            tk.Button(row, text="How to get Python 3...", command=self.python_help).pack(side="left")
-            tk.Button(row, text="Re-check", command=self._recheck_setup).pack(side="left", padx=6)
-
-    # ---- Cowork / CLI plugin
-    def show_cowork(self):
-        if getattr(self, "cowork_win", None) is not None:
-            try:
-                self.cowork_win.lift()
-                return
-            except tk.TclError:
-                self.cowork_win = None
-        threading.Thread(target=self._cowork_job, daemon=True).start()
-
-    def _cowork_job(self):
-        try:
-            res = hook_cowork.build_plugin()
-        except Exception as e:
-            err = f"Couldn't build the Cowork plugin:\n{e}"
-            self.ui(lambda: self.info(err, error=True))
-            return
-        self.ui(lambda: self._build_cowork(res))
-
-    def _build_cowork(self, res):
-        if getattr(self, "cowork_win", None) is not None:
-            return
-        win = self.cowork_win = tk.Toplevel(self.root)
-        win.title(f"{APP_NAME} - Cowork and CLI plugin")
-        win.attributes("-topmost", True)
-        win.resizable(False, False)
-        grey, wrap = "#6b7280", 470
-
-        def close():
-            self.cowork_win = None
-            win.destroy()
-
-        def copy(text):
-            self.root.clipboard_clear()
-            self.root.clipboard_append(text)
-
-        def h(text):
-            tk.Label(win, text=text, font=(core.UI_FONT, 11, "bold")).pack(anchor="w", padx=16, pady=(12, 2))
-
-        def p(text, **kw):
-            tk.Label(win, text=text, justify="left", wraplength=wrap, font=(core.UI_FONT, 9), **kw
-                     ).pack(anchor="w", padx=16)
-
-        def path_row(path, open_cmd):
-            row = tk.Frame(win)
-            row.pack(fill="x", padx=16, pady=(4, 2))
-            e = tk.Entry(row, width=58, font=("Consolas", 9))
-            e.insert(0, path)
-            e.configure(state="readonly")
-            e.pack(side="left", fill="x", expand=True)
-            tk.Button(row, text="Copy", command=lambda: copy(path)).pack(side="left", padx=(6, 0))
-            tk.Button(row, text="Open folder", command=open_cmd).pack(side="left", padx=(6, 0))
-
-        def reveal(path):
-            if os.name == "nt":
-                subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
-            else:
-                open_path(os.path.dirname(path))
-
-        h("Claude desktop app (Cowork)")
-        p("Cowork runs its own Claude Code that never reads settings.json, so the pet's hooks reach it as a plugin. "
-          "Only the Claude app can install plugins, so AIPet.exe can't do this step for you. Your plugin zip:",
-          fg=grey)
-        path_row(res["zip"], lambda: reveal(res["zip"]))
-        p("1. Open the Claude app > Customize > Plugins.\n"
-          "2. Upload a plugin and pick " + hook_cowork.COWORK_ZIP + ". Make sure the plugin and its hooks are enabled.\n"
-          "3. Restart the Claude app, then start a new Cowork session - it appears on the pet like any other.\n"
-          "To remove it: Customize > Plugins > " + hook_cowork.PLUGIN_NAME + " > Uninstall.")
-
-        h("Claude Code CLI (optional)")
-        p("The terminal, VS Code and the app's Code tab already work through settings.json (Claude Code hooks > "
-          "Install). Use the plugin there only instead of those hooks, never both, or every event reaches the pet "
-          "twice. Run in a terminal:", fg=grey)
-        cmds = "\n".join(hook_cowork.cli_plugin_commands(res["market"]))
-        box = tk.Text(win, height=2, width=64, font=("Consolas", 9), relief="solid", borderwidth=1)
-        box.insert("1.0", cmds)
-        box.configure(state="disabled")
-        box.pack(anchor="w", padx=16, pady=(4, 2))
-        row = tk.Frame(win)
-        row.pack(fill="x", padx=16)
-        tk.Button(row, text="Copy commands", command=lambda: copy(cmds)).pack(side="left")
-        tk.Button(row, text="Open folder", command=lambda: open_path(res["market"])).pack(side="left", padx=(6, 0))
-        p(f"Inside Claude Code the same works with /plugin marketplace add and /plugin install. "
-          f"To remove it: claude plugin uninstall {hook_cowork.PLUGIN_NAME}@{hook_cowork.PLUGIN_MARKET}", fg=grey)
-
-        p("\nThe plugin calls the hook in " + hook_locations.INSTALL_DIR + ", which AIPet keeps up to date. "
-          "Rebuild and re-upload only if that folder moves.", fg=grey)
-        tk.Button(win, text="Close", width=12, command=close, default="active").pack(anchor="e", padx=16, pady=12)
-        win.protocol("WM_DELETE_WINDOW", close)
-        core.theme_window(win)
-        win.update_idletasks()
-        win.geometry(f"+{max(0, (win.winfo_screenwidth() - win.winfo_reqwidth()) // 2)}"
-                     f"+{max(0, (win.winfo_screenheight() - win.winfo_reqheight()) // 3)}")
-
-    # ---- LEGACY: daily reminder about hooks / plugins still on the old name (see legacy.py)
-    def legacy_tick(self):
-        """Tk thread: check once now (if not yet reminded today), then every hour, so a pet running for days still
-        reminds on each new day."""
-        if legacy.due_today():
-            self.check_legacy()
-        self.root.after(3600 * 1000, self.legacy_tick)
-
-    def check_legacy(self, force=False):
-        targets = {hook_targets.LOCAL: "This Mac" if IS_MAC else "This PC (Windows)"} if (os.name == "nt" or IS_MAC) else {}
-        targets.update({"wsl:" + n: f"WSL: {n}" for n, st in self.distros if st.lower() == "running"})
-        pets = [p.data for p in self.pet.pets.values()]
-
-        def job():
-            try:
-                found = legacy.findings(targets, pets)
-            except Exception as e:
-                found = []
-                diagnostics.log_error(f"legacy check failed: {e!r}")
-            if found or force:
-                self.ui(lambda: self._legacy_window(found))
-            if found:
-                legacy.mark_warned()
-        threading.Thread(target=job, daemon=True).start()
-
-    def _legacy_window(self, found):
-        if not found:
-            self.info("Nothing uses the old Claude Pet name any more. You can delete the old folder "
-                      f"({legacy.LEGACY_DIR}) if it still exists.")
-            return
-        win = tk.Toplevel(self.root)
-        win.title(f"{APP_NAME}: update old hooks")
-        win.attributes("-topmost", True)
-        win.resizable(False, False)
-        tk.Label(win, text="Some hooks still use the old Claude Pet name", font=(core.UI_FONT, 12, "bold")
-                 ).pack(anchor="w", padx=16, pady=(14, 2))
-        tk.Label(win, fg="#6b7280", justify="left", wraplength=480,
-                 text="They keep working for now, but support for the old name will be removed in a future version. "
-                      "This reminder shows once a day while anything is left.").pack(anchor="w", padx=16)
-        body = tk.Frame(win)
-        body.pack(fill="x", padx=16, pady=8)
-        for what, how in found:
-            tk.Label(body, text=what, font=(core.UI_FONT, 9, "bold"), justify="left", wraplength=480).pack(anchor="w", pady=(6, 0))
-            tk.Label(body, text=how, font=(core.UI_FONT, 9), justify="left", wraplength=480).pack(anchor="w")
-        row = tk.Frame(win)
-        row.pack(fill="x", padx=16, pady=(6, 14))
-        keys = [k for k in [hook_targets.LOCAL] + ["wsl:" + n for n, _ in self.distros] if any(
-            f.startswith(("This PC", "This Mac") if k == hook_targets.LOCAL else f"WSL: {k[4:]}:") for f, _ in found)]
-
-        def update():
-            win.destroy()
-            if self.busy:
-                self.info("Another hook operation is still running - try again in a moment.")
-                return
-            self.busy = True
-            threading.Thread(target=self._update_job, args=(keys,), daemon=True).start()
-        if keys:
-            tk.Button(row, text="Update these hooks now", default="active", command=update).pack(side="right")
-        if any("Cowork" in f or "CLI" in f for f, _ in found):
-            tk.Button(row, text="Cowork / CLI plugin...", command=lambda: (win.destroy(), self.show_cowork())
-                      ).pack(side="right", padx=8)
-        tk.Button(row, text="Remind me tomorrow", command=win.destroy).pack(side="left")
-        core.theme_window(win)
-        win.update_idletasks()
-        win.geometry(f"+{max(0, (win.winfo_screenwidth() - win.winfo_reqwidth()) // 2)}"
-                     f"+{max(0, (win.winfo_screenheight() - win.winfo_reqheight()) // 3)}")
-
-    # ---- Auto approve: answer every permission prompt of chosen hook configs with "allow" (all off by default)
-    # ---- hook targets, as the shared menu definitions ask for them (they don't import the installer)
-    LOCAL_TARGET = hook_targets.LOCAL  # key of the machine this app runs on
-
-    def hook_backups(self, key):
-        return hook_backups.list_backups(key)
-
-    def is_codex_target(self, key):
-        return hook_targets.is_codex(key)
 
     # ---- new version check (GitHub releases; tells you and opens the page, never installs anything)
     # ---- config.json edited by hand: apply it live
@@ -637,78 +270,6 @@ class TrayApp:
             "usage_tooltips": lambda v: pet.tooltips.set_tooltip("usage", v),
             "card_scale": pet.preferences.set_card_scale,
         }
-
-    def _recheck_setup(self):
-        self._close_setup()
-        self.show_setup()
-
-    def python_help(self):
-        if self.ask("Python 3 makes AIPet's hook faster.\n\nThe simplest way is the installer from python.org. "
-                    "Open the download page in your browser?"):
-            webbrowser.open("https://www.python.org/downloads/macos/")
-        if self.ask("Alternatively, Apple's Command Line Tools include Python 3 (about 1 GB). This opens Apple's own "
-                    "installer window; nothing is installed unless you confirm there.\n\nOpen it now?"):
-            try:
-                subprocess.Popen(["xcode-select", "--install"])
-            except OSError as e:
-                self.info(f"Couldn't start Apple's installer:\n{e}", error=True)
-        self.info("When the installation has finished, press Re-check in the setup window.")
-
-    def _close_setup(self):
-        mark_setup_done()
-        if self.setup_win is not None:
-            try:
-                self.setup_win.destroy()
-            except tk.TclError:
-                pass
-            self.setup_win = None
-
-    def offer_update(self, keys):
-        names = "\n".join("  - " + hook_targets.describe(k) for k in keys)
-        if self.ask("AIPet's hooks here point at an older location and may not be working:\n\n"
-                    f"{names}\n\nUpdate them now? Your other hooks and settings are kept, and each file is "
-                    "backed up first."):
-            if self.busy:
-                self.info("Another hook operation is still running - use tray > Claude Code hooks > Install / update.")
-                return
-            self.busy = True
-            threading.Thread(target=self._update_job, args=(keys,), daemon=True).start()
-
-    def _update_job(self, keys, runtimes=None):
-        results = []
-        try:
-            for k in keys:
-                try:
-                    results.append(f"{hook_targets.describe(k)}: {hook_installer.install(k, (runtimes or {}).get(k)).splitlines()[0]}")
-                except Exception as e:
-                    results.append(f"{hook_targets.describe(k)}: FAILED - {e}")
-                self.status[k] = hook_installer.status(k)
-            msg = "\n\n".join(results)
-            self.ui(lambda: self.info(msg))
-        finally:
-            self.busy = False
-            self.refresh_menu()
-
-    def refresh_targets(self):
-        self.status[hook_targets.LOCAL] = hook_installer.status(hook_targets.LOCAL) if (os.name == "nt" or IS_MAC) else "n/a"
-        self.distros = hook_targets.list_distros()
-        self.probed = True
-        for name, state in self.distros:
-            # Only probe running distros so we never boot one just to show a menu.
-            self.status["wsl:" + name] = hook_installer.status("wsl:" + name) if state.lower() == "running" else f"{state.lower()} · status unknown"
-        codex = []
-        if (os.name == "nt" or IS_MAC) and hook_discovery.detect_codex_local():
-            codex.append(("This Mac" if IS_MAC else "This PC (Windows)", "codex:" + hook_targets.LOCAL))
-        for name, state in self.distros:
-            try:
-                if state.lower() == "running" and hook_discovery.codex_in_wsl(name):
-                    codex.append((f"WSL: {name}", "codex:wsl:" + name))
-            except Exception:
-                pass
-        for _, key in codex:
-            self.status[key] = hook_installer.status(key)
-        self.codex_targets = codex
-        self.refresh_menu()
 
     def refresh_menu(self):
         if getattr(self, "settings_win", None) is not None:
@@ -761,7 +322,7 @@ class TrayApp:
     # ---- agent network windows: one for all sessions, or one per session ("each")
     def startup_dialogs_open(self):
         """Setup not done yet, its window or a hook job still open, or a dialog holding the grab: wait with offers."""
-        return not setup_is_done() or self.setup_win is not None or self.busy or self.root.grab_current() is not None
+        return not setup_is_done() or self.setup.win is not None or self.hooks.busy or self.root.grab_current() is not None
 
     def show_settings(self):
         if getattr(self, "settings_win", None) is not None and self.settings_win.alive():
@@ -861,79 +422,6 @@ class TrayApp:
         runtime_settings.save_setting("claude_oauth_usage", bool(on))
         self.refresh_menu()
         self.pet.tooltips.hide_tip()
-
-    def confirm_usage(self, key):
-        on = not hook_installer.usage_enabled(key)
-        text = (f"Enable Claude's CLI usage collector for {hook_targets.describe(key)}?\n\n"
-                "This changes Claude Code's status line. If you have one, AIPet runs your existing command through Bash "
-                "after recording Claude's usage data, adding a process on each refresh. If you have none, it adds a line "
-                "showing usage percentages. The previous setting is saved in ~/.aipet and restored when disabled.\n\n"
-                "This works in the CLI; VS Code and desktop sessions may not provide usage data. "
-                "AIPet does not read sign-in credentials or the Keychain.") if on else (
-                f"Disable Claude usage collection for {hook_targets.describe(key)} and restore your previous status line?")
-        if self.ask(text):
-            self.start_job(key, "usage", on)
-
-    def confirm(self, key, install):
-        where = hook_targets.describe(key)
-        if install:
-            text = (f"Add AIPet hooks to:\n{where}\n\nYour existing hooks and settings are kept, and the "
-                    f"current file is backed up first (tray > Claude Code hooks > Restore backup).\n"
-                    f"Only sessions started afterwards will show up."
-                    + ("\n\nClaude usage collection is a separate, optional setting in this menu." if not hook_targets.is_codex(key) else "")
-                    + ("\n\nCodex then asks you to trust the new hooks once: run /hooks in Codex." if hook_targets.is_codex(key) else ""))
-        else:
-            text = f"Remove AIPet hooks from:\n{where}\n\nOther hooks are left untouched and a backup is taken first."
-        if self.ask(text):
-            self.start_job(key, "install" if install else "remove")
-
-    def confirm_restore(self, key, b):
-        lines = [f"Restore {hook_targets.describe(key)}", f"to the backup from {b['when']} ({b['reason']})?", ""]
-        if b["absent"]:
-            lines.append("settings.json did not exist at that point, so it will be DELETED.")
-        else:
-            lines.append(f"That version {'contains' if b['pet_hooks'] else 'does not contain'} AIPet hooks "
-                         f"({b['size']} bytes).")
-            if not b["valid_json"]:
-                lines.append("Warning: that backup is not valid JSON - Claude Code may reject it.")
-        lines += ["", "The current file is backed up first, so you can undo this from the same menu.",
-                  "Restart running Claude Code sessions for the change to take effect."]
-        if self.ask("\n".join(lines)):
-            self.start_job(key, "restore", b["path"])
-
-    def start_job(self, key, action, arg=None):
-        if self.busy:
-            self.info("Another hook operation is still running - try again in a moment.")
-            return
-        self.busy = True
-        threading.Thread(target=self._run_job, args=(key, action, arg), daemon=True).start()
-
-    def _run_job(self, key, action, arg=None):
-        try:
-            if action == "install":
-                msg = hook_installer.install(key)
-            elif action == "remove":
-                msg = hook_installer.uninstall(key)
-            elif action == "usage":
-                msg = hook_installer.set_usage(key, bool(arg))
-            elif action == "restore":
-                msg = hook_backups.restore_backup(key, arg)
-            else:
-                path = hook_backups.make_backup(key, "manual")
-                msg = f"Backed up {hook_targets.describe(key)}\nto {path}"
-            self.status[key] = hook_installer.status(key)
-            self.ui(lambda: self.info(msg))
-        except Exception as e:
-            err = f"{action.capitalize()} failed for {hook_targets.describe(key)}:\n{e}"
-            self.ui(lambda: self.info(err, error=True))
-        finally:
-            self.busy = False
-            self.refresh_menu()
-
-    def open_backups(self, key):
-        d = hook_backups.backup_dir(key)
-        os.makedirs(d, exist_ok=True)
-        open_path(d)
 
     def hide(self):
         self.pet.tooltips.hide_tip()
@@ -1083,7 +571,7 @@ def main():
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("AIPet.AIPet")
         except Exception:
             pass
-    if legacy.needs_migration() and not legacy.migration_window(APP_NAME, set_autostart):  # LEGACY
+    if legacy.needs_migration() and not migration_window(APP_NAME, set_autostart):  # LEGACY
         return
     TrayApp().root.mainloop()
 

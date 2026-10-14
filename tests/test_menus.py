@@ -15,7 +15,7 @@ class MenuTests(unittest.TestCase):
         grants.start()
         self.addCleanup(grants.stop)
 
-    @patch.object(aipet_app.hook_backups, 'list_backups', return_value=[])
+    @patch.object(aipet_app.app_menus.hook_backups, 'list_backups', return_value=[])
     @patch.object(aipet.permissions, 'auto_approve_rules', return_value={})
     def test_tooltip_text_slider_is_beside_pet_size_in_both_menus(self, *_):
         app = self.make_app()
@@ -31,7 +31,7 @@ class MenuTests(unittest.TestCase):
             entry['slider']['set'](1.5)
             app.pet.tooltips.set_tooltip_text_scale.assert_called_with(1.5)
 
-    @patch.object(aipet_app.hook_backups, 'list_backups', return_value=[])
+    @patch.object(aipet_app.app_menus.hook_backups, 'list_backups', return_value=[])
     @patch.object(aipet.permissions, 'auto_approve_rules', return_value={})
     def test_sound_choices_on_mac_and_windows(self, *_):
         app = self.make_app()
@@ -48,7 +48,7 @@ class MenuTests(unittest.TestCase):
                         entry['action']()
                         app.pet.preferences.set_sound_style.assert_called_with(value)
 
-    @patch.object(aipet_app.hook_backups, 'list_backups', return_value=[])
+    @patch.object(aipet_app.app_menus.hook_backups, 'list_backups', return_value=[])
     @patch.object(aipet.permissions, 'auto_approve_rules', return_value={})
     def test_tray_menu_built_off_the_tk_thread_never_calls_tk(self, *_):
         """The Windows tray builds its menu on pystray's thread. A Tk call from there (an agent window's
@@ -88,6 +88,10 @@ class MenuTests(unittest.TestCase):
 
     def make_app(self):
         app = object.__new__(aipet_app.TrayApp)
+        app.setup = aipet_app.SetupFlow(app)
+        app.cowork = aipet_app.CoworkFlow(app, MagicMock())
+        app.legacy = aipet_app.LegacyFlow(app)
+        app.hooks = aipet_app.HookJobs(app, MagicMock())
         app.pet = MagicMock(cfg=dict(aipet.DEFAULT_CONFIG))
         app.status, app.distros, app.codex_targets = {}, [], [('Local Codex', 'codex:local')]
         app.approvals, app.updates = aipet_app.Approvals(app), MagicMock(info=None)
@@ -97,7 +101,7 @@ class MenuTests(unittest.TestCase):
         app.agent_windows = AgentWindows(app)
         return app
 
-    @patch.object(aipet_app.hook_backups, 'list_backups', return_value=[])
+    @patch.object(aipet_app.app_menus.hook_backups, 'list_backups', return_value=[])
     @patch.object(aipet.permissions, 'auto_approve_rules', return_value={})
     def test_context_and_status_menus_share_groups_and_current_values(self, *_):
         app = self.make_app()
@@ -142,7 +146,7 @@ class MenuTests(unittest.TestCase):
         with patch.object(aipet.permissions, 'timed_grants', return_value={'s1': {'title': 'live', 'until': 9e9}}):
             self.assertEqual(len(app._timed_countdown_items()), 1)
 
-    @patch.object(aipet_app.hook_backups, 'list_backups', return_value=[])
+    @patch.object(aipet_app.app_menus.hook_backups, 'list_backups', return_value=[])
     @patch.object(aipet.permissions, 'auto_approve_rules', return_value={})
     def test_fix_fast_cancel_marks_the_session_finished(self, *_):
         app = self.make_app()

@@ -35,7 +35,8 @@ HEADLESS = ["aipetlib.agents", "aipetlib.runtime", "aipetlib.config", "aipetlib.
             "aipetlib.sessions", "aipetlib.permissions",
             "aipetlib.integrations.locations", "aipetlib.integrations.protocol", "aipetlib.integrations.settings",
             "aipetlib.integrations.commands", "aipetlib.integrations.deployment", "aipetlib.integrations.backups",
-            "aipetlib.integrations.installer", "aipetlib.integrations.discovery", "aipetlib.integrations.cowork"]
+            "aipetlib.integrations.installer", "aipetlib.integrations.discovery", "aipetlib.integrations.cowork",
+            "aipetlib.integrations.legacy"]
 # What hooks_installer.deploy_files copies to ~/.aipet/bin for the source hook (keep both lists in step)
 HOOK_SOURCES = {"aipet_hook", "aipet_codex", "aipet_usage", "aipet_claude_usage", "aipetlib", "aipetlib.hook_events"}
 HOOK_OPTIONAL = {"certifi"}  # imported inside try/except by aipet_usage; never required
@@ -44,7 +45,7 @@ SERVICE_FREE = ["aipetlib.agents", "aipetlib.runtime", "aipetlib.text", "aipetli
                 "aipetlib.ui.font_metrics", "aipetlib.geometry", "aipetlib.windows",
                 "aipetlib.vscode", "aipetlib.click_through", "aipetlib.permissions",
                 "aipetlib.sessions", "aipetlib.ui.pet_style", "aipetlib.ui.pet_view", "aipetlib.ui.tooltips",
-                "aipetlib.ui.appearance_controls", "aipetlib.ui.tray_icons", "aipetlib.ui.permission_card", "aipetlib.ui.agent_common",
+                "aipetlib.ui.appearance_controls", "aipetlib.ui.tray_icons", "aipetlib.ui.legacy_migration", "aipetlib.ui.permission_card", "aipetlib.ui.agent_common",
                 "aipetlib.ui.agent_prompts", "aipetlib.ui.agent_logs", "aipetlib.ui.agent_shell", "aipetlib.ui.agent_graph",
                 "aipetlib.ui.agent_controls", "aipetlib.ui.agent_menu", "aipetlib.ui.agent_window", "aipetlib.ui.sounds", "aipetlib.housekeeping", "aipetlib.update", "aipetlib.app", "aipetlib.integrations", "aipetlib.ui.app_menus",
                 "aipetlib.hook_events"]

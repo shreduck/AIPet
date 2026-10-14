@@ -20,8 +20,8 @@ class AgentIntroTests(unittest.TestCase):
         app.pet = MagicMock(cfg=cfg or {})
         app.root = MagicMock()
         app.root.grab_current.return_value = None
-        app.setup_win = None
-        app.busy = False
+        app.setup = aipet_app.SetupFlow(app)
+        app.hooks = aipet_app.HookJobs(app, MagicMock())
         app.agent_windows = agent_windows.AgentWindows(app)
         app.agent_windows.show = MagicMock()
         app.refresh_menu = MagicMock()
@@ -49,9 +49,9 @@ class AgentIntroTests(unittest.TestCase):
             with self.subTest(reason=reason):
                 app = self.app()
                 if reason == "setup":
-                    app.setup_win = MagicMock()
+                    app.setup.win = MagicMock()
                 elif reason == "busy":
-                    app.busy = True
+                    app.hooks.busy = True
                 else:
                     app.root.grab_current.return_value = MagicMock()
                 with patch.object(agent_windows.theme, "themed_dialog") as dialog, \

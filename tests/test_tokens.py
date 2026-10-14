@@ -114,6 +114,10 @@ class NodeAndLogTests(unittest.TestCase):
 class MenuSwitchTests(unittest.TestCase):
     def test_context_banner_switch_in_the_appearance_menu(self):
         app = object.__new__(aipet_app.TrayApp)
+        app.setup = aipet_app.SetupFlow(app)
+        app.cowork = aipet_app.CoworkFlow(app, MagicMock())
+        app.legacy = aipet_app.LegacyFlow(app)
+        app.hooks = aipet_app.HookJobs(app, MagicMock())
         app.pet = MagicMock(cfg=dict(aipet.DEFAULT_CONFIG))
         app.status, app.distros, app.codex_targets = {}, [], []
         app.approvals, app.updates = aipet_app.Approvals(app), MagicMock(info=None)
@@ -121,7 +125,7 @@ class MenuSwitchTests(unittest.TestCase):
         app.hidden = app.c_muted = app.c_notify = app.c_autostart = False
         app.c_wb, app.version = 'off', 'test'
         app.agent_windows = AgentWindows(app)
-        with patch.object(aipet_app.hook_backups, 'list_backups', return_value=[]), \
+        with patch.object(aipet_app.app_menus.hook_backups, 'list_backups', return_value=[]), \
                 patch.object(aipet.permissions, 'auto_approve_rules', return_value={}), \
                 patch.object(aipet.permissions, 'timed_grants', return_value={}):
             looks = next(e for e in app._mac_menu_spec() if e and e['label'] == 'Appearance')['submenu']
