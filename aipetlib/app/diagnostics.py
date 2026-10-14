@@ -87,7 +87,7 @@ def report(app=None):
         r = app.root
         attempt("window", lambda: f"geometry={r.winfo_geometry()} viewable={r.winfo_viewable()} "
                                   f"state={r.state()} screen={r.winfo_screenwidth()}x{r.winfo_screenheight()} "
-                                  f"anchor={app.anchor}")
+                                  f"anchor={app.placement.anchor}")
         for key, pet in list(app.pets.items())[:6]:
             c = pet.canvas
             attempt(f"pet {key[:14]}", lambda c=c, pet=pet: (

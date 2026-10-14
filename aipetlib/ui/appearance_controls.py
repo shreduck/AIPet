@@ -15,7 +15,7 @@ from . import theme
 
 def set_size(app, size):
     app.set_scale(float(size) * preferences.SCALE_UNIT)
-    app.reposition()
+    app.placement.reposition()
     app.cfg["size"] = round(preferences.SCALE["v"] / preferences.SCALE_UNIT, 2)
     settings.save_setting("size", app.cfg["size"])
 
@@ -27,7 +27,7 @@ def set_scale(app, v):
     preferences.SCALE["v"] = v
     for pet in app.pets.values():
         pet.canvas.config(width=pet_style.px(pet_style.CANVAS_W + getattr(pet, "gutter", 0) + getattr(pet, "usage_extra", 0)), height=pet_style.px(pet_style.CANVAS_H))
-    app._sync_usage_padding()
+    app.placement.sync_usage_padding()
 
 
 def _place_above_pet(app, w):
@@ -62,7 +62,7 @@ def open_size_slider(app):
 
     def apply(_v=None):
         app.set_scale(var.get() * preferences.SCALE_UNIT)
-        app.reposition()
+        app.placement.reposition()
         pct.config(text=f"{int(round(preferences.SCALE['v'] / preferences.SCALE_UNIT * 100))}%")
 
     def commit(_e=None):

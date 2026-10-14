@@ -1176,7 +1176,7 @@ class TrayApp:
         """Tray / menu bar: bring a lost pet back to the main screen's bottom-right corner (and show it if hidden)."""
         if self.hidden:
             self.show()
-        self.pet.reset_position()
+        self.pet.placement.reset_position()
 
     def toggle_mute(self):
         self.pet.muted.set(not self.pet.muted.get())

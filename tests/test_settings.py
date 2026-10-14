@@ -73,7 +73,7 @@ class SettingsSpecTests(unittest.TestCase):
     def test_inline_slider_changes_update_and_persist_settings(self):
         pet = object.__new__(aipet.PetApp)
         pet.cfg, pet.pets = {}, {}
-        pet.reposition, pet._sync_usage_padding = MagicMock(), MagicMock()
+        pet.placement = MagicMock()  # where the window sits: not what this test is about
         with tempfile.TemporaryDirectory() as directory, \
                 support.paths(HOME_DIR=directory), \
                 support.paths(CONFIG_PATH=str(Path(directory) / 'config.json')), \
@@ -90,7 +90,7 @@ class SettingsSpecTests(unittest.TestCase):
             self.assertEqual((Path(directory) / 'answer-wait').read_text(), '75')
             self.assertEqual(aipet.SCALE['v'], 1.35 * aipet.SCALE_UNIT)
             self.assertEqual([aipet.ANSWER_WAIT['v'], aipet.DONE_TIMEOUT['v'], aipet.HEALTH['v']], [75, 8, 25])
-            pet.reposition.assert_called_once()
+            pet.placement.reposition.assert_called_once()
             pet.set_answer_wait(0)
             pet.set_done_timeout(0)
             pet.set_health_interval(0)

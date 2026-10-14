@@ -75,7 +75,7 @@ def start_spaces_probe(app, output):
             flags = mac.send(w, "collectionBehavior", restype=mac.c_ulong)
             data = {"id": request["id"], "pid": os.getpid(), "time": time.time(),
                     "pointer": app.root.winfo_pointerxy(),
-                    "pointer_over_pet": app.pet._over_hit(*app.root.winfo_pointerxy()),
+                    "pointer_over_pet": app.pet.pointer.over_hit(*app.root.winfo_pointerxy()),
                     "click_through": bool(mac.send(w, "ignoresMouseEvents", restype=mac.c_bool)),
                     "mouse_events": list(mouse_events),
                     "context_menu_created": getattr(app.pet, "_context_menu_shown", False),

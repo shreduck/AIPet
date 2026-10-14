@@ -19,6 +19,8 @@ Standard library only (tkinter, urllib, winsound).
 """
 import aipetlib.vscode as vscode
 import aipetlib.app.diagnostics as app_diagnostics
+from aipetlib.app.placement import Placement
+from aipetlib.app.pointer import Pointer
 import aipetlib.housekeeping as housekeeping
 import aipetlib.ui.sounds as sounds
 import aipetlib.ui.appearance_controls as appearance_controls
@@ -314,8 +316,9 @@ class PetApp:
         self.stack = tk.Frame(root, bg=TRANSPARENT)  # notification bubbles, stacked above the pets
         self.stack.pack(side="top", anchor="e")
         self.frame = tk.Frame(root, bg=TRANSPARENT)
-        self._usage_frame_pad = px(USAGE_EDGE_ROOM)
-        self.frame.pack(side="top", anchor="e", padx=(0, self._usage_frame_pad))
+        self.placement = Placement(self)  # where the window sits, and the shared right margin
+        self.pointer = Pointer(self)  # dragging, clicks and click-through
+        self.frame.pack(side="top", anchor="e", padx=(0, self.placement.usage_frame_pad))
 
         self.pets, self.order, self.prev_states = {}, [], {}
         self.prev_agents, self.done_flash = {}, {}  # subagent counts; session key -> time its brief "done" check ends
@@ -328,7 +331,6 @@ class PetApp:
         self.first_refresh = True
         self.muted = tk.BooleanVar(value=not self.cfg["sounds"])
         self.tip = None
-        self.drag = None
         self.menu_pet = None
         self.context_menu_spec = None
         self._menu_open = False
@@ -399,10 +401,10 @@ class PetApp:
         style_menu(m)
         native_menu_theme()
 
-        self.anchor = self.default_anchor()  # bottom-right of the main screen
+        self.placement.anchor = self.placement.default_anchor()  # bottom-right of the main screen
         self.size_win, self._menu_xy = None, None
         self.clickthru = ClickThrough(root) if self.cfg.get("click_through", True) else None
-        self._pass = None
+        self.pointer.passing = None
         self.refresh()
         self.animate()
         if IS_MAC:
@@ -412,7 +414,7 @@ class PetApp:
             root.bind("<Destroy>", lambda event: self._mouse_bridge.close()
                       if event.widget is root else None, add="+")
         if self.clickthru:
-            root.after(500, self._pass_tick)
+            root.after(500, self.pointer.pass_tick)
         root.after(60 * 1000, self._sweep_usage)
         if IS_MAC or os.name == "nt":
             root.after(700, self._apply_all_spaces)
@@ -514,8 +516,8 @@ class PetApp:
                 for k in keys:
                     self.pets[k].canvas.pack(side="left", padx=2)
                 self.order = keys
-                self._sync_usage_padding()
-                self.reposition()
+                self.placement.sync_usage_padding()
+                self.placement.reposition()
 
             self.sync_bubbles(real)
             if self.wb and not self.context_menu_spec:
@@ -836,105 +838,8 @@ class PetApp:
                 self.dismiss_item(it)
 
     # ---- window
-    def _sync_usage_padding(self):
-        """Share one right margin across the overlay instead of padding every pet."""
-        last = self.pets.get(self.order[-1]) if self.order else None
-        extra = getattr(last, "usage_extra", 0) if last else 0
-        padding = max(0, px(USAGE_EDGE_ROOM - extra))
-        delta = padding - self._usage_frame_pad
-        if delta:
-            self._usage_frame_pad = padding
-            self.frame.pack_configure(padx=(0, padding))
-        return delta
-
-    def reposition(self, ref=None):
-        """Keep the bottom-right corner (the anchor) where it is while the pets change size, but inside the monitor the
-        pet is on. That monitor is found from the middle of the window as it is now, not from the anchor: an anchor
-        just across a monitor edge used to pull a growing pet onto the neighbouring screen. The anchor follows any
-        clamping, so the next resize starts from where the pet really is."""
-        r = self.root
-        r.update_idletasks()
-        w, h = r.winfo_reqwidth(), r.winfo_reqheight()
-        ax, ay = self.anchor
-        if ref is None:
-            try:
-                cw, ch = r.winfo_width(), r.winfo_height()
-                ref = (r.winfo_x() + cw // 2, r.winfo_y() + ch // 2) if cw > 1 and ch > 1 else (ax - 1, ay - 1)
-            except tk.TclError:
-                ref = (ax - 1, ay - 1)
-        x, y = geometry.fit_on_screen(ax - w, ay - h, w, h, ref, r)
-        r.geometry(geometry.geo(x, y))
-        self.anchor = [x + w, y + h]
-
-    def default_anchor(self):
-        """Where the pet's bottom-right corner starts: the main screen's bottom-right corner, just above the Windows
-        taskbar; on macOS just above the Dock (the visible area of the main screen)."""
-        r = self.root
-        if IS_MAC:
-            area = geometry.mac_screen_at(1, 1)  # the main screen holds Tk's origin
-            if area:
-                return [area[2] - 24, area[3] - 8]
-        return [r.winfo_screenwidth() - 24, r.winfo_screenheight() - 60]
-
-    def shift_for_width(self, delta):
-        """The overlay is about to become delta px wider (narrower if negative): move it now, before Tk redraws, so the
-        new size and position land together and the pet stays put (reposition() would redraw at the old position
-        first, flashing the pet sideways). Falls back to reposition() before the window is shown."""
-        r = self.root
-        try:
-            w, h = r.winfo_width(), r.winfo_height()
-            if w <= 1 or h <= 1:
-                r.after_idle(self.reposition)
-                return
-            w += delta
-            ref = (r.winfo_x() + r.winfo_width() // 2, r.winfo_y() + h // 2)
-            x, y = geometry.fit_on_screen(self.anchor[0] - w, self.anchor[1] - h, w, h, ref, r)
-            r.geometry(geometry.geo(x, y))
-            self.anchor = [x + w, y + h]
-        except tk.TclError:
-            r.after_idle(self.reposition)
-
-    def reset_position(self):
-        """Last resort for a pet lost off screen: back to the main screen's bottom-right corner."""
-        self.anchor = self.default_anchor()
-        self.reposition(ref=(self.anchor[0] - 1, self.anchor[1] - 1))
-        try:
-            self.root.deiconify()
-            self.root.lift()
-            self.root.attributes("-topmost", True)
-        except tk.TclError:
-            pass
-
     # ---- click-through: the window is one rectangle around all pets, but only the robots and the "needs you" bubbles
     # should catch clicks. The pointer is polled, and the window passes clicks through whenever it isn't over those.
-    def _over_hit(self, x, y, margin=3):
-        for pet in list(self.pets.values()):
-            c = pet.canvas
-            try:
-                if not c.winfo_ismapped():
-                    continue
-                ox, oy = c.winfo_rootx(), c.winfo_rooty()
-                boxes = [c.bbox(t) for t in ("hit", "ans", "badge", "usage") if c.find_withtag(t)] or [c.bbox("all")]  # mole/cat: all
-            except tk.TclError:
-                continue
-            for bb in boxes:
-                if bb and ox + bb[0] - margin <= x <= ox + bb[2] + margin and oy + bb[1] - margin <= y <= oy + bb[3] + margin:
-                    return True
-        return False
-
-    def _pass_tick(self):
-        try:
-            x, y = self.root.winfo_pointerxy()
-            want = not (self._menu_open or self.drag is not None or self._over_hit(x, y))
-            if want != self._pass:
-                self._pass = want
-                self.clickthru.set(want)
-                if want:
-                    self.hide_tip()
-        except Exception as e:
-            log_error(f"click-through: {e!r}")
-        self.root.after(50, self._pass_tick)
-
     def animate(self):
         t = time.time() - self.t0
         try:
@@ -946,51 +851,6 @@ class PetApp:
                     log_error("draw failed:\n" + traceback.format_exc(limit=4))
         finally:
             self.root.after(50, self.animate)
-
-    def on_press(self, e):
-        self.drag = [e.x_root, e.y_root, self.root.winfo_x(), self.root.winfo_y(), False]
-
-    def on_drag(self, e):
-        if not self.drag:
-            return
-        sx, sy, wx, wy, _ = self.drag
-        dx, dy = e.x_root - sx, e.y_root - sy
-        if abs(dx) + abs(dy) > 4:
-            self.drag[4] = True
-        if self.drag[4]:
-            self.hide_tip()
-            self.root.geometry(f"+{wx + dx}+{wy + dy}")
-
-    def on_release(self, e, pet):
-        if IS_MAC and (e.state & 0x4):  # Control-click is a context menu, never a session click.
-            self.drag = None
-            pet._on_bubble, pet._on_badge = False, None
-            return "break"
-        on_bubble, pet._on_bubble = pet._on_bubble, False
-        on_badge, pet._on_badge = pet._on_badge, None
-        if self.drag and self.drag[4]:
-            self.root.update_idletasks()
-            self.anchor = [self.root.winfo_x() + self.root.winfo_width(),
-                           self.root.winfo_y() + self.root.winfo_height()]
-        elif on_badge in ("__expand", "__collapse"):  # compact mode: show every session's badge, or the merged one
-            self.badges_expanded = on_badge == "__expand"
-        elif on_badge and on_badge != "_none":  # a badge: that session's prompt window, or its window if it isn't waiting
-            item = next((i for i in self._last_items if i["key"] == on_badge), None)
-            if item:
-                self.ack[on_badge] = True
-                if item.get("state") == "needs_input":
-                    self.open_detail(on_badge)
-                elif self.cfg.get("click_to_focus", True):
-                    import types
-                    self.focus_session(types.SimpleNamespace(key=on_badge, data=item))
-        elif on_bubble and pet.key != "_none":
-            self._acknowledge(pet)
-            self.open_detail(pet.data.get("focus", pet.key))  # the bubble: the full question and the answer buttons
-        else:
-            self._acknowledge(pet)  # click: acknowledge (stops jumping / reminders) and go to the session's window
-            if pet.key != "_none" and self.cfg.get("click_to_focus", True):
-                self.focus_session(pet)
-        self.drag = None
 
     def _acknowledge(self, pet):
         pet.acked = True
@@ -1136,7 +996,7 @@ class PetApp:
         if self._menu_open:
             return "break"
         self.hide_tip()
-        self.drag = None
+        self.pointer.drag = None
         if pet:
             pet._on_bubble, pet._on_badge = False, None
         self.menu_pet = pet
@@ -1148,7 +1008,7 @@ class PetApp:
             try:
                 if self.clickthru:
                     self.clickthru.set(False)
-                    self._pass = False
+                    self.pointer.passing = False
                 entries = self.context_menu_spec(pet)
                 native = False
                 if NATIVE_WIN_MENU:

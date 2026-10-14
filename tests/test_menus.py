@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import aipet
 import aipet_app
+from aipetlib.app.pointer import Pointer
 from aipetlib.app.agent_windows import AgentWindows
 
 
@@ -159,7 +160,8 @@ class MenuTests(unittest.TestCase):
 
     def test_context_menu_keeps_click_handling_and_recovers_on_error(self):
         app = object.__new__(aipet.PetApp)
-        app._menu_open, app.drag = False, ['old drag']
+        app.pointer = Pointer(app)
+        app._menu_open, app.pointer.drag = False, ['old drag']
         app.hide_tip, app.root, app.clickthru = MagicMock(), MagicMock(), MagicMock()
         app.context_menu_spec = MagicMock(return_value=[])
         app.menu = MagicMock()
@@ -174,7 +176,7 @@ class MenuTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'menu test failure'):
                 app.on_menu(SimpleNamespace(x_root=100, y_root=100), pet)
         self.assertFalse(app._menu_open)
-        self.assertIsNone(app.drag)
+        self.assertIsNone(app.pointer.drag)
         self.assertIsNone(pet._on_badge)
         self.assertFalse(pet._on_bubble)
 
@@ -232,7 +234,8 @@ class MenuTests(unittest.TestCase):
 
     def test_context_menu_runs_native_choice_after_closing(self):
         app = object.__new__(aipet.PetApp)
-        app._menu_open, app.drag = False, None
+        app.pointer = Pointer(app)
+        app._menu_open, app.pointer.drag = False, None
         app.hide_tip, app.root, app.clickthru = MagicMock(), MagicMock(), None
         app.context_menu_spec, app.menu = MagicMock(return_value=[]), MagicMock()
         action = MagicMock(side_effect=lambda: self.assertFalse(app._menu_open))
@@ -245,7 +248,8 @@ class MenuTests(unittest.TestCase):
 
     def test_context_menu_falls_back_to_tk_when_native_fails(self):
         app = object.__new__(aipet.PetApp)
-        app._menu_open, app.drag = False, None
+        app.pointer = Pointer(app)
+        app._menu_open, app.pointer.drag = False, None
         app.hide_tip, app.root, app.clickthru = MagicMock(), MagicMock(), None
         app.context_menu_spec, app.menu = MagicMock(return_value=[]), MagicMock()
         with patch.object(aipet, 'NATIVE_WIN_MENU', True), \
@@ -269,9 +273,10 @@ class MenuTests(unittest.TestCase):
 
     def test_control_click_does_not_focus_or_acknowledge_session(self):
         app = object.__new__(aipet.PetApp)
-        app.drag, app.focus_session, app._acknowledge = None, MagicMock(), MagicMock()
+        app.pointer = Pointer(app)
+        app.focus_session, app._acknowledge = MagicMock(), MagicMock()
         pet = SimpleNamespace(_on_badge='session', _on_bubble=True)
-        with patch.object(aipet, 'IS_MAC', True):
-            self.assertEqual(app.on_release(SimpleNamespace(state=4), pet), 'break')
+        with patch('aipetlib.app.pointer.IS_MAC', True):
+            self.assertEqual(app.pointer.release(SimpleNamespace(state=4), pet), 'break')
         app.focus_session.assert_not_called()
         app._acknowledge.assert_not_called()
