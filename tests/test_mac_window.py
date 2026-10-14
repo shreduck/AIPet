@@ -286,10 +286,12 @@ class MacWindowTests(unittest.TestCase):
 
         def open_settings():
             app = object.__new__(aipet_app.TrayApp)
-            app.root, app._auto_changed = root, MagicMock()
-            app.open_auto_rules(key, "Isolated persistence test")
+            app.root = root
+            app.approvals = aipet_app.Approvals(app)
+            app.approvals.changed = MagicMock()
+            app.approvals.open_editor(key, "Isolated persistence test")
             root.update()
-            return app, app.auto_wins[key]
+            return app, app.approvals.editors[key]
 
         failures = []
         try:
@@ -323,7 +325,7 @@ class MacWindowTests(unittest.TestCase):
                     if failures:
                         raise failures[0]
                     self.assertFalse(settings.winfo_exists())
-                    app._auto_changed.assert_called_once()
+                    app.approvals.changed.assert_called_once()
                     self.assertEqual(json.loads(path.read_text()), {"targets": {key: expected}, "timed": {}})
                     self.assertEqual(aipet.auto_approve_rules()[key], expected)
                     self.assertFalse(Path(str(path) + ".tmp").exists())
@@ -355,7 +357,9 @@ class MacWindowTests(unittest.TestCase):
         root.title("AIPet modal regression")
         root.update()
         app = object.__new__(aipet_app.TrayApp)
-        app.root, app._auto_changed = root, MagicMock()
+        app.root = root
+        app.approvals = aipet_app.Approvals(app)
+        app.approvals.changed = MagicMock()
 
         def descendants(widget):
             for child in widget.winfo_children():
@@ -373,13 +377,13 @@ class MacWindowTests(unittest.TestCase):
             bridge._dispatch(2, 1, x, y, 0)
 
         try:
-            with patch.object(aipet, "auto_approve_rules", return_value={}), \
-                    patch.object(aipet, "save_auto_approve", return_value=True) as save:
+            with patch.object(aipet.permissions, "auto_approve_rules", return_value={}), \
+                    patch.object(aipet.permissions, "save_auto_approve", return_value=True) as save:
                 for accept, saved in ((False, True), (None, True), (True, False), (True, True)):
                     save.reset_mock()
                     save.return_value = saved
-                    app.open_auto_rules("test-only", "Test only (nothing is saved)")
-                    settings = app.auto_wins["test-only"]
+                    app.approvals.open_editor("test-only", "Test only (nothing is saved)")
+                    settings = app.approvals.editors["test-only"]
                     root.update()
                     next(w for w in descendants(settings) if isinstance(w, tk.Checkbutton)).invoke()
                     def dismiss_warning():

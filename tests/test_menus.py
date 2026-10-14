@@ -15,7 +15,7 @@ class MenuTests(unittest.TestCase):
         self.addCleanup(grants.stop)
 
     @patch.object(aipet_app.hi, 'list_backups', return_value=[])
-    @patch.object(aipet, 'auto_approve_rules', return_value={})
+    @patch.object(aipet.permissions, 'auto_approve_rules', return_value={})
     def test_tooltip_text_slider_is_beside_pet_size_in_both_menus(self, *_):
         app = self.make_app()
         for spec in (app._context_menu_spec(SimpleNamespace(key='_none', data={})),
@@ -31,7 +31,7 @@ class MenuTests(unittest.TestCase):
             app.pet.set_tooltip_text_scale.assert_called_with(1.5)
 
     @patch.object(aipet_app.hi, 'list_backups', return_value=[])
-    @patch.object(aipet, 'auto_approve_rules', return_value={})
+    @patch.object(aipet.permissions, 'auto_approve_rules', return_value={})
     def test_sound_choices_on_mac_and_windows(self, *_):
         app = self.make_app()
         for mac, name, system_label in ((True, 'posix', 'macOS sounds'), (False, 'nt', 'Windows sounds')):
@@ -48,7 +48,7 @@ class MenuTests(unittest.TestCase):
                         app.pet.set_sound_style.assert_called_with(value)
 
     @patch.object(aipet_app.hi, 'list_backups', return_value=[])
-    @patch.object(aipet, 'auto_approve_rules', return_value={})
+    @patch.object(aipet.permissions, 'auto_approve_rules', return_value={})
     def test_tray_menu_built_off_the_tk_thread_never_calls_tk(self, *_):
         """The Windows tray builds its menu on pystray's thread. A Tk call from there (an agent window's
         winfo_exists) waits for the Tk thread, and after Quit forever: the process and its tray icon stayed alive."""
@@ -89,14 +89,15 @@ class MenuTests(unittest.TestCase):
         app = object.__new__(aipet_app.TrayApp)
         app.pet = MagicMock(cfg=dict(aipet.DEFAULT_CONFIG))
         app.status, app.distros, app.codex_targets = {}, [], [('Local Codex', 'codex:local')]
-        app.c_auto, app.updates = [], MagicMock(info=None)
+        app.approvals, app.updates = aipet_app.Approvals(app), MagicMock(info=None)
+        app.approvals.targets_on = []
         app.hidden = app.c_muted = app.c_notify = app.c_autostart = False
         app.c_wb, app.version = 'off', 'test'
         app.agent_windows = AgentWindows(app)
         return app
 
     @patch.object(aipet_app.hi, 'list_backups', return_value=[])
-    @patch.object(aipet, 'auto_approve_rules', return_value={})
+    @patch.object(aipet.permissions, 'auto_approve_rules', return_value={})
     def test_context_and_status_menus_share_groups_and_current_values(self, *_):
         app = self.make_app()
         pet = SimpleNamespace(key='session', data={'source': 'CC', 'cwd': '/tmp', 'state': 'working'})
@@ -134,7 +135,7 @@ class MenuTests(unittest.TestCase):
         self.assertTrue(all(not e['enabled'] for e in idle if e))
 
     @patch.object(aipet_app.hi, 'list_backups', return_value=[])
-    @patch.object(aipet, 'auto_approve_rules', return_value={})
+    @patch.object(aipet.permissions, 'auto_approve_rules', return_value={})
     def test_fix_fast_cancel_marks_the_session_finished(self, *_):
         app = self.make_app()
         working = {'key': 'cc:a', 'source': 'CC', 'state': 'working', 'title': 'ai-pet', 'conv': 'Fix bug', 'path': 'a'}

@@ -63,13 +63,14 @@ class TimedApproveTests(unittest.TestCase):
         self.assertIn("s-1", aipet.timed_grants())
 
     @patch.object(aipet_app.hi, "list_backups", return_value=[])
-    @patch.object(aipet, "auto_approve_rules", return_value={})
+    @patch.object(aipet.permissions, "auto_approve_rules", return_value={})
     def test_live_management_and_right_click_countdowns(self, *_):
         app = object.__new__(aipet_app.TrayApp)
         app.pet = MagicMock(cfg=dict(aipet.DEFAULT_CONFIG))
         app.pet.timed_minutes.return_value = 10
         app.status, app.distros, app.codex_targets = {}, [], []
-        app.c_auto, app.updates = [], MagicMock(info=None)
+        app.approvals, app.updates = aipet_app.Approvals(app), MagicMock(info=None)
+        app.approvals.targets_on = []
         app.hidden = app.c_muted = app.c_notify = app.c_autostart = False
         app.c_wb, app.version = "off", "test"
         app.agent_windows = AgentWindows(app)

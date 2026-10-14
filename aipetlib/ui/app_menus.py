@@ -93,12 +93,12 @@ def _mac_menu_spec(app, settings=False):
     codex = [target(lab, key) for lab, key in app.codex_targets] or [item("Codex not found", enabled=False)]
     cfg = app.pet.cfg
     auto = []
-    for title, entries in app.auto_sections():
+    for title, entries in app.approvals.sections():
         auto.append(item(title, submenu=[
-            item(app.auto_label(lab, key), lambda k=key, lab=lab: app.toggle_auto(k, lab),
-                 checked=key in app.c_auto) for lab, key in entries
+            item(app.approvals.label(lab, key), lambda k=key, lab=lab: app.approvals.open_editor(k, lab),
+                 checked=key in app.approvals.targets_on) for lab, key in entries
         ] or [item("Not found", enabled=False)]))
-    auto += [None, item("Turn all off", app.auto_all_off, enabled=bool(app.c_auto),
+    auto += [None, item("Turn all off", app.approvals.all_off, enabled=bool(app.approvals.targets_on),
                         help="Switches auto approve off everywhere at once.")]
     top = [item(f"Update available: {app.updates.info['tag']}...", app.updates.open, icon="refresh",
                 help="A newer AIPet is out. See what changed and update."), None] if app.updates.info else []
@@ -237,7 +237,7 @@ def _mac_menu_spec(app, settings=False):
                 item(f"Workbench: {app.c_wb}", enabled=False),
             ]),
         ]),
-        item("Permissions" + (" (auto approve ON)" if app.c_auto else ""), icon="shield",
+        item("Permissions" + (" (auto approve ON)" if app.approvals.targets_on else ""), icon="shield",
              help="Answering permission prompts.", submenu=[
             item("Auto approve", icon="check", submenu=auto,
                  help="Approve every permission prompt from these installs without asking. Use with care."),
