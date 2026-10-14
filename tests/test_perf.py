@@ -16,7 +16,7 @@ class PerfLogTests(unittest.TestCase):
         p = support.paths(HOME_DIR=self.home.name, DEBUG_FLAG=self.flag)
         p.start()
         self.addCleanup(p.stop)
-        perf._FLAG.update(on=False, checked=-1e9)
+        perf._FLAG.update(on=False, checked=float("inf"))
         self.log = os.path.join(self.home.name, "perf.log")
 
     def lines(self):
@@ -31,7 +31,9 @@ class PerfLogTests(unittest.TestCase):
             open(self.flag, "w").close()
         elif os.path.exists(self.flag):
             os.remove(self.flag)
-        perf._FLAG["checked"] = -1e9  # look at the switch again now
+        perf._FLAG["checked"] = -1e9
+        self.assertEqual(perf.enabled(now=0.0), on)  # looked at the switch now
+        perf._FLAG["checked"] = float("inf")  # and not again while the test steps the clock
 
     def test_slow_blocks_are_logged_only_while_debugging(self):
         clock = iter([0.0, 0.050, 1.0, 1.050, 2.0, 2.005])

@@ -13,11 +13,12 @@ STALL_MS = 80  # the heartbeat this late is logged as a stall
 BEAT_MS = 100
 MAX_BYTES = 1_000_000  # then perf.log becomes perf.log.old and starts again
 _FLAG = {"on": False, "checked": 0.0}
+_SWITCH_CLOCK = time.perf_counter  # its own reference: timing stays independent of how the switch is looked at
 
 
 def enabled(now=None):
     """Whether the debug switch is on (looked at every 5 s at most, not on every frame)."""
-    now = time.monotonic() if now is None else now
+    now = _SWITCH_CLOCK() if now is None else now
     if now - _FLAG["checked"] > 5:
         _FLAG["checked"] = now
         _FLAG["on"] = os.path.exists(paths.DEBUG_FLAG)

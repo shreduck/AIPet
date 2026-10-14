@@ -2,6 +2,7 @@
 import threading
 
 from ..runtime import settings as runtime_settings
+from ..agents import tracker
 from ..ui import agent_window
 from ..ui import theme
 
@@ -56,6 +57,7 @@ class AgentWindows:
         app = self.app
         if threading.current_thread() is getattr(app, "_tk_thread", threading.main_thread()):
             self.cached_open = bool(self.open_windows())
+            tracker.set_active(self.cached_open)  # full histories only while a window shows them
         return self.cached_open
 
     def separate(self):
@@ -133,6 +135,7 @@ class AgentWindows:
         mode, that session's own window (key None: every session's)."""
         app = self.app
         wins = self.open_windows()
+        tracker.set_active(True)  # full histories for the window (it reads what the tracker publishes)
         new = lambda k, pinned, n=0: agent_window.AgentNetworkWindow(  # noqa: E731
             app.root, app.pet, k, pinned=pinned, on_options=self.options_changed, cascade=n, at=at)
         if not self.separate():

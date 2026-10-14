@@ -22,6 +22,7 @@ import aipetlib.app.diagnostics as app_diagnostics
 from aipetlib.app.placement import Placement
 from aipetlib.app.pointer import Pointer
 from aipetlib.app.answers import Answers
+from aipetlib.app.session_reader import SessionReader
 import aipetlib.housekeeping as housekeeping
 import aipetlib.ui.sounds as sounds
 import aipetlib.ui.appearance_controls as appearance_controls
@@ -408,6 +409,10 @@ class PetApp:
         self.size_win, self._menu_xy = None, None
         self.clickthru = ClickThrough(root) if self.cfg.get("click_through", True) else None
         self.pointer.passing = None
+        # sessions are read in the background; the poll below takes the newest list (at twice its rate, so a change
+        # shows within one poll)
+        self.reader = SessionReader(self.read_items, max(0.2, self.cfg["poll_ms"] / 2000))
+        self.reader.start()
         self.refresh()
         self.animate()
         perf.watch(root)  # UI stalls to perf.log while debugging
@@ -425,10 +430,19 @@ class PetApp:
             root.bind("<Map>", lambda e: root.after(100, self._apply_all_spaces) if e.widget is root else None, add="+")
 
     # ---- data
-    def collect(self):
+    def read_items(self):
+        """Every session, read from disk (and Workbench): the slow part, run by the session reader thread."""
         items = read_claude_code_sessions(self.cfg)
         if self.wb:
             items += self.wb.items()
+        return items
+
+    def collect(self):
+        reader = getattr(self, "reader", None)
+        items = reader.latest() if reader else None
+        if items is None:  # no reader (tests), or its first read isn't done yet: read here once
+            items = self.read_items()
+        items = [dict(i) for i in items]  # the reader's list is shared: titles and context are added below
         hide = DONE_TIMEOUT["v"] * 60  # 0 = never
         now = time.time()
         items = [i for i in items

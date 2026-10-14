@@ -25,6 +25,12 @@ class Answers:
         self.app = app
         self.navigation = PromptNavigation()
 
+    def read_again(self):
+        """The hook (or the session file) is about to change: have the background reader look now."""
+        reader = getattr(self.app, "reader", None)
+        if reader:
+            reader.wake()
+
     def send(self, key, behavior, answers=None, permissions=None):
         """Hand the user's click to the waiting PermissionRequest hook. Returns True if it was written.
         answers: for a question, {question text: label, or [labels] for multi-select}.
@@ -42,6 +48,7 @@ class Answers:
                 json.dump(dict({"behavior": behavior, "t": time.time()}, **({"answers": answers} if answers else {}),
                                **({"permissions": permissions} if permissions else {})), f)
             os.replace(path + ".tmp", path)
+            self.read_again()
             return True
         except OSError:
             return False
@@ -131,6 +138,7 @@ class Answers:
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(rec, f)
             os.replace(tmp, path)
+            self.read_again()
             return True
         except (OSError, ValueError) as e:
             diagnostics.log_error(f"clear prompt: {e!r}")
