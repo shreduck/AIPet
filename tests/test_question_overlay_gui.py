@@ -156,6 +156,21 @@ class QuestionOverlayGuiTests(unittest.TestCase):
         self.assertEqual(self.sent, [("isolated-fixture", "allow", {"answers": {
             "Where should this isolated fixture run?": "Local"}})])
 
+    def test_several_questions_one_at_a_time_then_sent_together(self):
+        self.waiting = True
+        self.show({"id": "fixture-carousel", "kind": "question", "questions": [
+            {"question": "First?", "options": [{"label": "One"}, {"label": "Two"}]},
+            {"question": "Second (any)?", "multiSelect": True, "options": [{"label": "A"}, {"label": "B"}]}]},
+            agent="claude")
+        self.assertIn("First?", self.texts())
+        self.click(self.window.prompt.opt_labels[1])  # Two: on to the second question
+        self.assertIn("Second (any)?  (pick any)", self.texts())
+        labels = [label for label, _ in self.window.prompt.options]
+        self.click(self.window.prompt.opt_labels[labels.index("B")])
+        self.click(self.window.prompt.opt_labels[labels.index("send answers")])
+        self.assertEqual(self.sent, [("isolated-fixture", "allow", {"answers": {"First?": "Two",
+                                                                               "Second (any)?": ["B"]}})])
+
     def test_permission_actions_and_prompt_completion_preserve_existing_behavior(self):
         self.waiting = True
         self.show({"id": "fixture-permission", "tool": "TestTool", "detail": "No command is executed"})

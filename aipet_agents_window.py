@@ -191,8 +191,8 @@ class AgentNetworkWindow(agent_controls.WindowControls):
                 w.bind(seq, key(lambda: self.step_agent(-1), True))
             except tk.TclError:
                 pass
-        w.bind("<Right>", key(lambda: self.prompt.step_option(1) if self.prompt.overlay_open else self.step_agent(1)))
-        w.bind("<Left>", key(lambda: self.prompt.step_option(-1) if self.prompt.overlay_open else self.step_agent(-1)))
+        w.bind("<Right>", key(lambda: self.prompt.step_question(1) if self.prompt.overlay_open else self.step_agent(1)))
+        w.bind("<Left>", key(lambda: self.prompt.step_question(-1) if self.prompt.overlay_open else self.step_agent(-1)))
         w.bind("<Down>", key(lambda: self.prompt.step_option(1) if self.prompt.overlay_open else self.logs.text.yview_scroll(1, "units")))
         w.bind("<Up>", key(lambda: self.prompt.step_option(-1) if self.prompt.overlay_open else self.logs.text.yview_scroll(-1, "units")))
         for k in ("a", "A"):
@@ -340,7 +340,8 @@ class AgentNetworkWindow(agent_controls.WindowControls):
         self.graph.draw()
         self.logs.draw_tabs()
         self.logs.update_filters()
-        self.logs.draw()
+        if not self.prompt.covers_logs():  # hidden under the open prompt: catch up once it folds
+            self.logs.draw()
         self.prompt.draw()
         self.graph.maybe_auto_fit()
 
