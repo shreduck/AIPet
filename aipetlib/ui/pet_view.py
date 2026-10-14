@@ -34,9 +34,9 @@ class PetView:
         self._usage_details = {}
         c = self.canvas = tk.Canvas(app.frame, width=pet_style.px(pet_style.CANVAS_W + pet_style.USAGE_GUTTER), height=pet_style.px(pet_style.CANVAS_H), bg=pet_style.TRANSPARENT,
                                     highlightthickness=0, bd=0)
-        c.bind("<ButtonPress-1>", app.on_press)
-        c.bind("<B1-Motion>", app.on_drag)
-        c.bind("<ButtonRelease-1>", lambda e: app.on_release(e, self))
+        c.bind("<ButtonPress-1>", app.pointer.press)
+        c.bind("<B1-Motion>", app.pointer.move)
+        c.bind("<ButtonRelease-1>", lambda e: app.pointer.release(e, self))
         c.bind("<Button-3>", lambda e: app.on_menu(e, self))
         if IS_MAC:  # macOS Tk: right button is Button-2; ctrl-click is the trackpad equivalent
             c.bind("<Button-2>", lambda e: app.on_menu(e, self))
@@ -85,8 +85,8 @@ class PetView:
             self.gutter = gutter
             self.usage_extra = extra
             c.config(width=pet_style.px(pet_style.CANVAS_W + gutter + extra))
-            delta += self.app._sync_usage_padding()
-            self.app.shift_for_width(delta)  # update the canvas and shared margin in the same redraw
+            delta += self.app.placement.sync_usage_padding()
+            self.app.placement.shift_for_width(delta)  # update the canvas and shared margin in the same redraw
         self._finish()
         self._update_usage_hover()
 

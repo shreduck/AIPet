@@ -25,11 +25,17 @@ from tkinter import messagebox
 import aipet as core
 from aipetlib.runtime import diagnostics, paths, preferences
 from aipetlib.runtime import settings as runtime_settings
-import aipet_agents_window
 from aipetlib.agents.tracker import NetworkTracker
 import aipet_guide
 import aipet_settings
-import aipet_update as upd
+from aipetlib import permissions
+from aipetlib import text as textfmt
+from aipetlib import update as releases
+from aipetlib.app.agent_windows import AgentWindows
+from aipetlib.app.approvals import Approvals
+from aipetlib.app.config_watch import ConfigWatcher
+import aipetlib.app.diagnostics as app_diagnostics
+from aipetlib.app.updates import UpdateFlow
 import hooks_installer as hi
 import legacy  # LEGACY: moving over from Claude Pet
 
@@ -43,16 +49,6 @@ except ImportError:  # still runs, just without a tray icon
     pystray = None
 
 APP_NAME = "AIPet"
-CONFIG_WATCH_MS = 1500  # how often config.json is checked for hand edits
-RESTART_KEYS = {"workbench", "claude_code", "click_through", "max_pets"}  # read once at start
-
-
-def config_stamp():
-    try:
-        st = os.stat(paths.CONFIG_PATH)
-        return st.st_mtime_ns, st.st_size
-    except OSError:
-        return None
 
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -323,14 +319,11 @@ class TrayApp:
         self.c_autostart = autostart_enabled()
         self.c_notify = bool(self.pet.cfg.get("notifications", False))
         self.c_wb = "off"
-        self.c_agent_open = False  # whether an agent network window is open, for the tray menu (see agent_network_open)
+        self.agent_windows = AgentWindows(self)  # the agent network windows and their menu switches
         self._tk_thread = threading.current_thread()
-        self.c_auto = core.auto_approve_targets()  # hook configs with auto-approval on (all off by default)
-        self.version = upd.current_version()
-        self.update_state = upd.State(paths.HOME_DIR)
-        found = self.update_state.load().get("latest") or {}
-        self.update_info = found if upd.is_newer(found.get("tag"), self.version) else None  # a newer release, if any
-        self._update_busy = False
+        self.approvals = Approvals(self)  # auto approve rules per hook target, and which are on
+        self.version = releases.current_version()
+        self.updates = UpdateFlow(self)  # new releases: daily check, menu entries, the dialog
         self._icon_key = None
 
         self.pet.on_alert = self.on_alert
@@ -353,8 +346,8 @@ class TrayApp:
                 diagnostics.log_error(f"menu bar icon: {e!r}")
 
         threading.Thread(target=self._startup_jobs, daemon=True).start()
-        self._config_stamp = config_stamp()
-        self.root.after(CONFIG_WATCH_MS, self.watch_config)
+        self.config_watch = ConfigWatcher(self)  # config.json edited by hand: applied live
+        self.config_watch.start()
         self.pump()
 
     # ---- threading
@@ -372,7 +365,7 @@ class TrayApp:
             print(f"[aipet] ui error: {e}", file=sys.stderr)
         self.c_muted = self.pet.muted.get()
         self.c_wb = self.pet.wb.status if self.pet.wb else "off"
-        self.agent_network_open()  # refresh the cached answer the tray menu reads
+        self.agent_windows.is_open()  # refresh the cached answer the tray menu reads
         self.update_tray()
         self.root.after(250, self.pump)
 
@@ -403,14 +396,14 @@ class TrayApp:
             except Exception as e:
                 diagnostics.log_error(f"restore legacy status line for {key}: {e!r}")
         self.ui(lambda: self.root.after(20000, self.legacy_tick))  # LEGACY: daily reminder about old-name hooks
-        self.ui(lambda: self.root.after(30000, self.update_tick))
-        self.ui(self._show_update_in_menus)
+        self.ui(lambda: self.root.after(30000, self.updates.tick))
+        self.ui(self.updates.show_in_menus)
         stale = [k for k, v in self.status.items() if v == hi.STALE]
         if not setup_is_done():
             self.ui(self.show_setup)  # first run: shows what is installed / up to date / outdated per target
         elif stale:
             self.ui(lambda: self.offer_update(stale))
-        self.ui(lambda: self.root.after(1500, self.offer_agent_network))
+        self.ui(lambda: self.root.after(1500, self.agent_windows.offer_intro))
 
     # ---- first-run setup
     def show_setup(self, check_stopped=False):
@@ -739,310 +732,12 @@ class TrayApp:
     def is_codex_target(self, key):
         return hi.is_codex(key)
 
-    def auto_sections(self):
-        """[(section title, [(label, key)])] for every hook config that can be auto-approved, plus any switched-on key
-        that isn't detected right now, so it can always be switched off again."""
-        claude = [("This Mac" if IS_MAC else "This PC (Windows)", hi.LOCAL)]
-        claude += [(f"WSL: {n}", "wsl:" + n) for n, _ in self.distros]
-        if os.name == "nt" or IS_MAC:
-            claude.append(("Cowork (Claude desktop app)", "cowork"))
-        sections = [("Claude Code", claude), ("Codex", list(self.codex_targets))]
-        known = {k for _, items in sections for _, k in items}
-        other = [(k, k) for k in self.c_auto if k not in known]
-        if other:
-            sections.append(("Not detected now", other))
-        return sections
-
-    def auto_label(self, label, key):
-        """Menu text: the config, what its rules do when switched on, and a note when its hooks aren't installed."""
-        rules = core.auto_approve_rules().get(key)
-        text = label
-        if rules and rules.get("enabled"):
-            n = len([x for x in rules.get("whitelist") or [] if x.strip() and not x.strip().startswith("#")])
-            text += " - allow all" if rules.get("allow_all") else f" - {n} whitelist rule{'s' if n != 1 else ''}"
-        st = self.status.get(key, "")
-        if key != "cowork" and st and not st.startswith("installed") and not any(
-                w in st for w in ("unknown", "checking", "n/a")):
-            text += "  (hooks not installed)"
-        return text + "..."
-
-    def open_auto_rules(self, key, label):
-        """The rules window of one hook config: on/off, Allow all, and a whitelist and a blacklist of regexes."""
-        wins = self.__dict__.setdefault("auto_wins", {})
-        if key in wins:
-            try:
-                wins[key].lift()
-                return
-            except tk.TclError:
-                wins.pop(key, None)
-        old = core.auto_approve_rules().get(key) or core.default_auto_rules()
-        win = wins[key] = tk.Toplevel(self.root)
-        agent_label = "Codex" if hi.is_codex(key) else "Claude Code"
-        win.title(f"{APP_NAME} - auto approve - {agent_label} - {label}")
-        win.attributes("-topmost", True)
-        win.resizable(False, False)
-        accent = "#5b8def" if hi.is_codex(key) else "#d98960"
-        frame = tk.Canvas(win, highlightthickness=0, bd=0)
-        frame.pack()
-        body = tk.Frame(frame)
-        frame.create_window(14, 14, window=body, anchor="nw")
-
-        def fit_card(_event=None):
-            w, h = body.winfo_reqwidth() + 28, body.winfo_reqheight() + 28
-            frame.configure(width=w, height=h)
-            frame.delete("outline")
-            frame.create_polygon(8, 2, w - 8, 2, w - 8, 5, w - 3, 5, w - 3, 8, w - 2, 8,
-                                 w - 2, h - 8, w - 5, h - 8, w - 5, h - 3, w - 8, h - 3, w - 8, h - 2,
-                                 8, h - 2, 8, h - 5, 3, h - 5, 3, h - 8, 2, h - 8, 2, 8, 5, 8, 5, 3, 8, 3,
-                                 fill="", outline=accent, width=2, tags="outline")
-        body.bind("<Configure>", fit_card)
-        grey = "#6b7280"
-        enabled = tk.BooleanVar(value=bool(old.get("enabled")))
-        allow_all = tk.BooleanVar(value=bool(old.get("allow_all")))
-
-        tk.Label(body, text="AUTO APPROVAL", fg=accent, font=(core.MONO_FAMILY, 9, "bold")).pack(anchor="w")
-        tk.Label(body, text=label, font=(core.MONO_FAMILY, 17, "bold")).pack(anchor="w", pady=(3, 6))
-        tk.Label(body, fg=grey, justify="left", wraplength=640, font=(core.MONO_FAMILY, 9),
-                 text="Choose which requests can continue without asking.\nRequests outside your rules still need your approval."
-                 ).pack(anchor="w", pady=(0, 14))
-        mode = tk.LabelFrame(body, text=" Approval mode ", font=(core.MONO_FAMILY, 10, "bold"),
-                             relief="solid", bd=1, padx=10, pady=8)
-        mode.pack(fill="x")
-        tk.Checkbutton(mode, text="Auto approve for this config", variable=enabled, font=(core.MONO_FAMILY, 10, "bold")
-                       ).pack(anchor="w")
-        tk.Checkbutton(mode, text="Allow all - approve every request (ignores both lists)",
-                       variable=allow_all, font=(core.MONO_FAMILY, 9)).pack(anchor="w", pady=(4, 0))
-        mode_hint = tk.Label(mode, fg=grey, justify="left", wraplength=620, font=(core.MONO_FAMILY, 8))
-        mode_hint.pack(anchor="w", padx=4, pady=(6, 0))
-
-        cols = tk.Frame(body)
-        cols.pack(fill="x", pady=(16, 0))
-        boxes = {}
-        for col, (name, title, hint, lines) in enumerate((
-                ("whitelist", "Whitelist - approve automatically",
-                 "One regex per line. Must match the WHOLE command (or file path / URL), the tool name, or "
-                 "Tool(command). Examples: git (status|diff)   npm test   Read", old.get("whitelist") or []),
-                ("blacklist", "Blacklist - always ask me",
-                 "One regex per line, matched ANYWHERE in the same texts. Wins over the whitelist. The default .* "
-                 "asks for everything: replace it to let the whitelist work. Tip: [;&|`$<>] asks for chained or "
-                 "redirected commands, so a whitelisted one can't smuggle in another.", old.get("blacklist")
-                 if old.get("blacklist") is not None else core.DEFAULT_BLACKLIST))):
-            box = tk.Frame(cols)
-            box.grid(row=0, column=col, sticky="nw", padx=(0 if col == 0 else 12, 0))
-            tk.Label(box, text=title, font=(core.MONO_FAMILY, 9, "bold")).pack(anchor="w", pady=(0, 5))
-            tk.Label(box, text=hint, fg=grey, justify="left", anchor="nw", height=6,
-                     wraplength=300, font=(core.MONO_FAMILY, 8)).pack(anchor="w")
-            text = tk.Text(box, width=40, height=9, wrap="none", font=(core.MONO_FAMILY, 9), undo=True, padx=8, pady=8)
-            text.insert("1.0", "\n".join(lines))
-            text.pack(anchor="w", fill="x", pady=(4, 0))
-            boxes[name] = text
-        tk.Label(body, fg=grey, justify="left", wraplength=640, font=(core.MONO_FAMILY, 8),
-                 text="Empty lines and lines starting with # are ignored. Only works while AIPet is running and its "
-                      "hooks are installed for this config; the VS Code extension sends no permission events."
-                 ).pack(anchor="w", pady=(10, 0))
-        error = tk.Label(body, fg="#b91c1c", justify="left", wraplength=640, font=(core.MONO_FAMILY, 9))
-        error.pack(anchor="w", padx=16)
-
-        def sync(*_):  # Allow all switches the lists off
-            state = "disabled" if allow_all.get() else "normal"
-            for t in boxes.values():
-                t.configure(state=state, fg=core.T["muted"] if allow_all.get() else core.T["entry_fg"])
-            mode_hint.configure(text="Auto approval is off. Requests still need your approval." if not enabled.get()
-                                else "All requests will be approved. The lists below are ignored." if allow_all.get()
-                                else "Whitelist matches may proceed. Blacklist matches always ask you.")
-        allow_all.trace_add("write", sync)
-        enabled.trace_add("write", sync)
-
-        def close():
-            wins.pop(key, None)
-            win.destroy()
-
-        pending = {"value": False}
-
-        def finish_save(rules, accepted):
-            if not win.winfo_exists():
-                return
-            try:
-                if not accepted:
-                    return
-                if not core.save_auto_approve(key, rules):
-                    error.configure(text="Couldn't save these rules. Check that ~/.aipet is writable, then try again.")
-                    return
-                close()
-                self._auto_changed()
-            finally:
-                pending["value"] = False
-                if win.winfo_exists():
-                    save_button.configure(state="normal")
-
-        def save():
-            if pending["value"]:
-                return
-            error.configure(text="")
-            lists = {}
-            for name, t in boxes.items():
-                lists[name] = [ln.rstrip() for ln in t.get("1.0", "end-1c").splitlines() if ln.strip()]
-            bad = [(name, n, pat, err) for name in lists for n, pat, err in core.bad_patterns(lists[name])]
-            if bad:
-                error.configure(text="Fix these patterns first:\n" + "\n".join(
-                    f"{name} line {n}: {pat}  ({err})" for name, n, pat, err in bad[:6]))
-                return
-            rules = {"enabled": enabled.get(), "allow_all": allow_all.get(), **lists}
-            newly_on = rules["enabled"] and not old.get("enabled")
-            all_on = rules["enabled"] and rules["allow_all"] and not (old.get("enabled") and old.get("allow_all"))
-            pending["value"] = True
-            save_button.configure(state="disabled")
-            if all_on or newly_on:
-                # Return from Aqua's button callback before opening the warning;
-                # continue saving asynchronously after the warning is destroyed.
-                win.after_idle(lambda: self.warn_auto(label, rules, parent=win,
-                               on_result=lambda accepted: finish_save(rules, accepted)))
-                return
-            finish_save(rules, True)
-
-        buttons = tk.Frame(body)
-        buttons.pack(fill="x", pady=(12, 0))
-        save_button = tk.Button(buttons, text="Save", width=12, command=save, default="active")
-        save_button.pack(side="right")
-        tk.Button(buttons, text="Cancel", width=10, command=close).pack(side="right", padx=(0, 8))
-        win.protocol("WM_DELETE_WINDOW", close)
-        win.bind("<Escape>", lambda e: close())
-        core.theme_window(win)
-        sync()
-        win.update_idletasks()
-        win.geometry(f"+{max(0, (win.winfo_screenwidth() - win.winfo_reqwidth()) // 2)}"
-                     f"+{max(0, (win.winfo_screenheight() - win.winfo_reqheight()) // 3)}")
-        if IS_MAC:
-            import mac_statusbar
-            win._mouse_bridge = mac_statusbar.PanelMouseBridge(win)
-            win.bind("<Destroy>", lambda event: win._mouse_bridge.close() if event.widget is win else None, add="+")
-
-    toggle_auto = open_auto_rules  # the menus' entry point
-
-    def warn_auto(self, label, rules, parent=None, on_result=None):
-        if rules.get("allow_all"):
-            heading = f"Auto approve everything from {label}?"
-            what = (f"Every permission request that reaches AIPet's hook from {label} will be approved at once, "
-                    "without asking you: shell commands, file edits and deletions, web access and any other tool, "
-                    "in every session there, including subagents.")
-        else:
-            n = len([x for x in rules.get("whitelist") or [] if not x.strip().startswith("#")])
-            heading = f"Turn on auto approve for {label}?"
-            what = (f"Requests from {label} that match your {n} whitelist pattern{'s' if n != 1 else ''} and none of "
-                    "your blacklist patterns will be approved without asking you, in every session there, including "
-                    "subagents. A loose pattern can approve more than you meant: check them carefully.")
-        return core.themed_dialog(
-            parent if parent is not None else self.root, f"{APP_NAME} - auto approve", kind="warning", heading=heading,
-            text=(what + "\n\nIt takes effect immediately for running sessions and only while AIPet is running.\n\n"
-                  "Turn it off any time: pet or menu-bar / tray menu > Permissions > Auto approve."),
-            buttons=(("Cancel", False, "secondary"), ("Auto approve", True, "danger")),
-            cancel=False, enter_confirms=False, on_result=on_result)
-
-    def auto_all_off(self):
-        core.save_auto_approve(None, None)
-        self._auto_changed()
-
-    def _auto_changed(self):
-        self.c_auto = core.auto_approve_targets()
-        self._icon_key = None  # the tray tooltip says when auto approve is on
-        self.refresh_menu()
-
     # ---- new version check (GitHub releases; tells you and opens the page, never installs anything)
-    def update_tick(self):
-        """Tk thread: check once a day while automatic checks are on (looked at every hour)."""
-        if self.pet.cfg.get("update_check", True) and self.update_state.due():
-            self.check_updates(False)
-        self.root.after(3600 * 1000, self.update_tick)
-
-    def check_updates(self, manual=False):
-        if self._update_busy:
-            return
-        self._update_busy = True
-
-        def job():
-            try:
-                latest = upd.latest_release()
-            except Exception as e:
-                self.update_state.save(last_check=time.time(), error=repr(e)[:200])
-                if manual:
-                    err = f"Couldn't check for a new version:\n{e}\n\nReleases: {upd.RELEASES_URL}"
-                    self.ui(lambda: self.info(err, error=True))
-                return
-            finally:
-                self._update_busy = False
-            state = self.update_state.save(last_check=time.time(), latest=latest, error="")
-            newer = upd.is_newer(latest["tag"], self.version)
-            self.update_info = latest if newer else None
-            self.ui(self._show_update_in_menus)
-            if manual:
-                self.ui(lambda: self._update_dialog(latest, newer, manual=True))
-            elif newer and latest["tag"] not in (state.get("skipped"), state.get("notified")):
-                self.update_state.save(notified=latest["tag"])
-                self.ui(lambda: self._update_dialog(latest, True))
-        threading.Thread(target=job, daemon=True).start()
-
-    def _update_dialog(self, latest, newer, manual=False):
-        if not newer:
-            known = upd.parse(self.version)
-            text = (f"You have the newest version, {upd.short(self.version)}." if known else
-                    f"This copy has no version number (built from source). The newest release is {latest['tag']}.")
-            choice = core.themed_dialog(self.root, f"{APP_NAME} - updates", text, kind="info", heading="No new version",
-                                        buttons=(("Open releases page", "open", "secondary"), ("OK", "ok", "primary")),
-                                        cancel="ok")
-            if choice == "open":
-                webbrowser.open(latest.get("url") or upd.RELEASES_URL)
-            return
-        choice = core.themed_dialog(
-            self.root, f"{APP_NAME} - update", kind="info", heading=f"AIPet {latest['tag']} is available",
-            text=(f"You have {upd.short(self.version)}. The new version is on the release page: download "
-                  f"{'AIPet-mac-arm64.zip' if IS_MAC else 'AIPet-windows-x64.zip'}, quit AIPet (tray > Quit) and "
-                  f"{'replace your copy with the app inside' if IS_MAC else 'unzip it over your AIPet folder'}. "
-                  "Your settings, hooks and backups in ~/.aipet are kept.\n\n"
-                  "The menus show the update until you install it."),
-            buttons=(("Skip this version", "skip", "secondary"), ("Later", "later", "secondary"),
-                     ("Open release page", "open", "primary")), cancel="later")
-        if choice == "open":
-            webbrowser.open(latest.get("url") or upd.RELEASES_URL)
-        elif choice == "skip":
-            self.update_state.save(skipped=latest["tag"])
-
-    def open_update(self):
-        if self.update_info:
-            self._update_dialog(self.update_info, True, manual=True)
-        else:
-            self.check_updates(True)
-
-    def _show_update_in_menus(self):
-        """The update entries live in the tray / menu-bar menu only (rebuilt when they open)."""
-        self.refresh_menu()
-
     # ---- config.json edited by hand: apply it live
-    def watch_config(self):
-        try:
-            stamp = config_stamp()
-            if stamp != self._config_stamp:
-                self._config_stamp = stamp
-                self.apply_config_file()
-        except Exception as e:
-            diagnostics.log_error(f"config watch: {e!r}")
-        self.root.after(CONFIG_WATCH_MS, self.watch_config)
-
-    def apply_config_file(self):
-        """Apply what changed in config.json since the app last saw it. A file that isn't valid JSON (an editor
-        mid-save, a typo) is skipped until it is. Returns the keys that only apply after a restart."""
-        try:
-            with open(paths.CONFIG_PATH, encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, ValueError):
-            return []
-        if not isinstance(data, dict):
-            return []
-        cfg, pet = self.pet.cfg, self.pet
-        merged = core.deep_merge(core.DEFAULT_CONFIG, data)  # nested sections (workbench...) as the app holds them
-        changed = {k: merged[k] for k in data if cfg.get(k) != merged[k]}
-        if not changed:
-            return []
-        handlers = {
+    def config_handlers(self):
+        """config.json key -> the setter that applies it now (the config watcher calls them with saving paused)."""
+        pet = self.pet
+        return {
             "theme": lambda v: (pet.apply_theme(v), hasattr(self, "theme_var") and self.theme_var.set(v == "dark")),
             "size": lambda v: pet.set_size(float(v)),
             "tooltip_text_scale": pet.set_tooltip_text_scale,
@@ -1057,38 +752,12 @@ class TrayApp:
             "click_to_focus": pet.set_click_to_focus,
             "context_banner": pet.set_context_banner,
             "all_spaces": pet.set_all_spaces,
-            "claude_answers": pet.set_claude_answers,
-            "codex_answers": pet.set_codex_answers,
+            "claude_answers": pet.answers.set_claude_answers,
+            "codex_answers": pet.answers.set_codex_answers,
             "session_tooltips": lambda v: pet.set_tooltip("session", v),
             "usage_tooltips": lambda v: pet.set_tooltip("usage", v),
             "card_scale": pet.set_card_scale,
         }
-        restart = []
-        runtime_settings.SAVE_PAUSED["v"] = True  # the setters save; the file already says so
-        try:
-            for key, value in changed.items():
-                if key in RESTART_KEYS:
-                    restart.append(key)
-                    continue
-                try:
-                    if key in handlers:
-                        handlers[key](value)
-                    cfg[key] = value  # everything else is read where it's used (sound_style, update_check...)
-                except Exception as e:
-                    diagnostics.log_error(f"config.json {key}={value!r}: {e!r}")
-        finally:
-            runtime_settings.SAVE_PAUSED["v"] = False
-        self.refresh_menu()  # menus and the settings window show the new values
-        if restart:
-            self.info("config.json changed. Applied what could be applied now; these take effect after AIPet "
-                      "restarts: " + ", ".join(sorted(restart)))
-        return restart
-
-    def toggle_update_check(self):
-        on = not self.pet.cfg.get("update_check", True)
-        self.pet.cfg["update_check"] = on
-        runtime_settings.save_setting("update_check", on)
-        self.refresh_menu()
 
     def _recheck_setup(self):
         self._close_setup()
@@ -1179,7 +848,7 @@ class TrayApp:
             counts[st] = counts.get(st, 0) + 1
         top = min(counts, key=lambda s: RANK.get(s, 9)) if counts else "idle"
         parts = [f"{counts[s]} {core.LABELS.get(s, s).rstrip('…!')}" for s in sorted(counts, key=lambda s: RANK.get(s, 9))]
-        text = f"{APP_NAME} - " + ("AUTO APPROVE ON - " if self.c_auto else "") + (
+        text = f"{APP_NAME} - " + ("AUTO APPROVE ON - " if self.approvals.targets_on else "") + (
             ", ".join(parts) if parts else "no active sessions")
         return top, text[:120]
 
@@ -1294,18 +963,18 @@ class TrayApp:
         return app_menus._live_spec(self, item, settings)
 
     def _start_timed(self, d):
-        if self.pet.start_timed_approve(d):
+        if self.pet.answers.start_timed(d):
             self.refresh_menu()
 
     def _stop_timed(self, session_id):
-        self.pet.stop_timed_approve(session_id)
+        self.pet.answers.stop_timed(session_id)
         self.refresh_menu()
 
     def _timed_countdown_items(self):
         """Right-click: every running timed auto approve, with its countdown, one click to stop it."""
-        grants, now = core.timed_grants(), time.time()
+        grants, now = permissions.timed_grants(), time.time()
         return [{"label": f"⏱ Stop auto approve: {g.get('title') or 'session'} · "
-                          f"{core.fmt_left(g['until'] - now)} left",
+                          f"{textfmt.fmt_left(g['until'] - now)} left",
                  "action": lambda sid=sid: self._stop_timed(sid), "enabled": True} for sid, g in grants.items()]
 
     def settings_item(self):
@@ -1313,131 +982,9 @@ class TrayApp:
                 "settings": True}
 
     # ---- agent network windows: one for all sessions, or one per session ("each")
-    def offer_agent_network(self):
-        """Offer the new view once, after setup and any other startup dialog have closed."""
-        if self.pet.cfg.get("agent_network_intro_seen"):
-            return
-        if not setup_is_done() or self.setup_win is not None or self.busy or self.root.grab_current() is not None:
-            self.root.after(1500, self.offer_agent_network)
-            return
-        self.pet.cfg["agent_network_intro_seen"] = True
-        runtime_settings.save_setting("agent_network_intro_seen", True)
-
-        def chosen(try_it):
-            if try_it:
-                self.show_agent_network()
-                self.refresh_menu()
-
-        core.themed_dialog(
-            self.root, "Try AIPet's agent view", kind="question", heading="Meet the agent view",
-            text="See your Claude and Codex agents in a live graph, including nested subagents, "
-                 "their tool calls, inputs, outputs and shared logs.\n\nWould you like to try it? "
-                 "You can also open it later from the AIPet menu: Agent network window.",
-            buttons=(("Not now", False, "secondary"), ("Try it", True, "primary")),
-            cancel=False, on_result=chosen)
-
-    def _agent_windows(self):
-        wins = {k: w for k, w in (getattr(self, "agents_wins", None) or {}).items() if w.alive()}
-        self.agents_wins = wins
-        return wins
-
-    def agent_network_open(self):
-        """Whether an agent network window is open. The Windows tray builds its menu on pystray's own thread, which
-        must never call into Tk: a Tk call from another thread waits for the Tk thread, and after Quit that wait never
-        ends, so the tray thread (and the process, with its icon) would stay alive. Off the Tk thread this returns the
-        answer last cached on it (by pump, the menus and the toggles)."""
-        if threading.current_thread() is getattr(self, "_tk_thread", threading.main_thread()):
-            self.c_agent_open = bool(self._agent_windows())
-        return getattr(self, "c_agent_open", False)
-
-    def agent_network_separate(self):
-        return aipet_agents_window.load_options(self.pet.cfg)["separate"]
-
-    def agent_network_item(self, key=None, label="Agent network window"):
-        """A switch: opens the agent network window (on this session), or closes it (them) when open."""
-        return {"label": label, "action": lambda: self.toggle_agent_network(key), "enabled": True, "submenu": None,
-                "checked": self.agent_network_open(),
-                "help": "A live map of a session's main agent and its subagents: what each one is doing, its model "
-                        "and context, a shared log, and prompts you can answer from there."}
-
-    def agent_network_separate_item(self):
-        return {"label": "Agent network compact mode", "action": self.toggle_agent_network_separate,
-                "enabled": True, "submenu": None, "checked": not self.agent_network_separate(),
-                "help": "Like the pet's compact mode: one agent network window for every session (PgUp / PgDn "
-                        "switch). Off: each session gets its own window."}
-
-    def reset_agent_network(self):
-        """Default appearance for the agent network windows (one window or one per session stays as it is), and every
-        open one centred on the main screen."""
-        opts = dict(aipet_agents_window.DEFAULT_OPTIONS,
-                    separate=aipet_agents_window.load_options(self.pet.cfg)["separate"])
-        self.pet.cfg[aipet_agents_window.OPTIONS_KEY] = opts
-        runtime_settings.save_setting(aipet_agents_window.OPTIONS_KEY, opts)
-        for n, w in enumerate(self._agent_windows().values()):
-            w.reset_appearance(opts, cascade=n)
-        self.refresh_menu()
-
-    def toggle_agent_network(self, key=None):
-        if self.agent_network_open():
-            for w in list(self._agent_windows().values()):
-                w.close()
-        else:
-            self.show_agent_network(key)
-        self.refresh_menu()
-
-    def toggle_agent_network_separate(self):
-        opts = aipet_agents_window.load_options(self.pet.cfg)
-        opts["separate"] = not opts["separate"]
-        self.pet.cfg[aipet_agents_window.OPTIONS_KEY] = opts
-        runtime_settings.save_setting(aipet_agents_window.OPTIONS_KEY, opts)
-        self._agent_mode_changed(None)
-
-    def _agent_mode_changed(self, source):
-        """Switched between one window and one per session: reopen what was open in the new mode."""
-        wins = self._agent_windows()
-        if wins:
-            keep = source.key if source is not None else None
-            ref = source if source is not None and source.alive() else next(iter(wins.values()))
-            try:  # the new window(s) open where this one is
-                at = ref.win.geometry()
-            except Exception:
-                at = None
-            for w in list(wins.values()):
-                w.close()
-            self.show_agent_network(keep if not self.agent_network_separate() else None, at=at)
-        self.refresh_menu()
-
-    def _agent_options_changed(self, opts, source, changed):
-        if changed == "each":
-            self._agent_mode_changed(source)
-            return
-        for w in self._agent_windows().values():  # the same look for every agent network window
-            if w is not source:
-                w.set_options(opts)
-
-    def show_agent_network(self, key=None, at=None):
-        """One window for all sessions (opening it again switches it to that session), or, in "one per session"
-        mode, that session's own window (key None: every session's)."""
-        wins = self._agent_windows()
-        new = lambda k, pinned, n=0: aipet_agents_window.AgentNetworkWindow(  # noqa: E731
-            self.root, self.pet, k, pinned=pinned, on_options=self._agent_options_changed, cascade=n, at=at)
-        if not self.agent_network_separate():
-            win = wins.get("*")
-            if win:
-                win.show_session(key)
-                win.raise_()
-            else:
-                wins["*"] = new(key, False)
-            return
-        keys = [key] if key else [i["key"] for i in aipet_agents_window.candidate_sessions(self.pet._last_items)][:6]
-        if not keys:  # no session yet: one window that waits for the first
-            wins["*"] = wins.get("*") or new(None, False)
-            return
-        for n, k in enumerate(keys):
-            if k in wins:
-                wins[k].raise_()
-            else:
-                wins[k] = new(k, True, len(wins) + n)
+    def startup_dialogs_open(self):
+        """Setup not done yet, its window or a hook job still open, or a dialog holding the grab: wait with offers."""
+        return not setup_is_done() or self.setup_win is not None or self.busy or self.root.grab_current() is not None
 
     def show_settings(self):
         if getattr(self, "settings_win", None) is not None and self.settings_win.alive():
@@ -1631,7 +1178,7 @@ class TrayApp:
         """Tray / menu bar: bring a lost pet back to the main screen's bottom-right corner (and show it if hidden)."""
         if self.hidden:
             self.show()
-        self.pet.reset_position()
+        self.pet.placement.reset_position()
 
     def toggle_mute(self):
         self.pet.muted.set(not self.pet.muted.get())
@@ -1754,7 +1301,7 @@ def main():
         runtime_settings.ensure_home()
         mark_setup_done()
         app = TrayApp()
-        app.root.after(12000, app.pet.write_diagnostics)
+        app.root.after(12000, lambda: app_diagnostics.write(app.pet))
         app.root.after(20000, app.quit)
         app.root.mainloop()
         return

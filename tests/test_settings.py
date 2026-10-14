@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import aipet
 import support
 import aipet_app
+from aipetlib.app.agent_windows import AgentWindows
 import aipet_settings as settings
 
 
@@ -72,7 +73,7 @@ class SettingsSpecTests(unittest.TestCase):
     def test_inline_slider_changes_update_and_persist_settings(self):
         pet = object.__new__(aipet.PetApp)
         pet.cfg, pet.pets = {}, {}
-        pet.reposition, pet._sync_usage_padding = MagicMock(), MagicMock()
+        pet.placement = MagicMock()  # where the window sits: not what this test is about
         with tempfile.TemporaryDirectory() as directory, \
                 support.paths(HOME_DIR=directory), \
                 support.paths(CONFIG_PATH=str(Path(directory) / 'config.json')), \
@@ -89,7 +90,7 @@ class SettingsSpecTests(unittest.TestCase):
             self.assertEqual((Path(directory) / 'answer-wait').read_text(), '75')
             self.assertEqual(aipet.SCALE['v'], 1.35 * aipet.SCALE_UNIT)
             self.assertEqual([aipet.ANSWER_WAIT['v'], aipet.DONE_TIMEOUT['v'], aipet.HEALTH['v']], [75, 8, 25])
-            pet.reposition.assert_called_once()
+            pet.placement.reposition.assert_called_once()
             pet.set_answer_wait(0)
             pet.set_done_timeout(0)
             pet.set_health_interval(0)
@@ -126,14 +127,16 @@ class SettingsSpecTests(unittest.TestCase):
             self.assertTrue(all(len(r) == 9 for r in rows), name)
 
     @patch.object(aipet_app.hi, 'list_backups', return_value=[])
-    @patch.object(aipet, 'auto_approve_rules', return_value={})
+    @patch.object(aipet.permissions, 'auto_approve_rules', return_value={})
     def test_real_spec_has_icons_and_help_for_every_page(self, *_):
         app = object.__new__(aipet_app.TrayApp)
         app.pet = MagicMock(cfg=dict(aipet.DEFAULT_CONFIG))
         app.status, app.distros, app.codex_targets = {}, [], [('Local Codex', 'codex:local')]
-        app.c_auto, app.update_info = [], None
+        app.approvals, app.updates = aipet_app.Approvals(app), MagicMock(info=None)
+        app.approvals.targets_on = []
         app.hidden = app.c_muted = app.c_notify = app.c_autostart = False
         app.c_wb, app.version = 'off', 'test'
+        app.agent_windows = AgentWindows(app)
         pages = settings.pages_from_spec(app._mac_menu_spec())
         self.assertEqual([p[0] for p in pages],
                          ["General", "Live Management", "Appearance", "Behavior", "Integrations", "Permissions", "Help"])

@@ -106,9 +106,9 @@ class PermissionCard:
         for step, text, side in ((-1, "‹", "left"), (1, "›", "right")):
             arrow = tk.Label(text_area, text=text, bg=bg, fg=self.ACCENT, cursor="hand2",
                              font=self.f(18, "bold"), padx=6, takefocus=True)
-            arrow.bind("<Button-1>", lambda e, d=step: self.app.step_prompt(self.key, d))
-            arrow.bind("<Return>", lambda e, d=step: self.app.step_prompt(self.key, d))
-            arrow.bind("<space>", lambda e, d=step: self.app.step_prompt(self.key, d))
+            arrow.bind("<Button-1>", lambda e, d=step: self.app.answers.step_prompt(self.key, d))
+            arrow.bind("<Return>", lambda e, d=step: self.app.answers.step_prompt(self.key, d))
+            arrow.bind("<space>", lambda e, d=step: self.app.answers.step_prompt(self.key, d))
             arrow.bind("<Enter>", lambda e, a=arrow: a.configure(bg=theme.T["btn_active"]))
             arrow.bind("<Leave>", lambda e, a=arrow: a.configure(bg=theme.T["bubble_bg"]))
             self.prompt_arrows.append((arrow, side))
@@ -306,16 +306,16 @@ class PermissionCard:
         """Everything the card's layout and texts depend on, except the ticking ones (how long it has waited, a timed
         auto approve's countdown)."""
         req = item.get("request") or {}
-        can_answer = bool(self.app.answers_enabled(item) and permissions.hook_waiting(item) and not self.sent)
+        can_answer = bool(self.app.answers.enabled(item) and permissions.hook_waiting(item) and not self.sent)
         stop = None if can_answer or self.sent or not req else permissions.hook_stop(item, permissions.answers_dir())
         grant = permissions.timed_grants().get(str(item.get("session_id"))) if can_answer else None
         return (item.get("state", "needs_input"), self.sent, getattr(self, "_sent_id", None),
                 json.dumps(req, sort_keys=True, default=str), item.get("pending", 0), item.get("title"),
                 tuple(r.get("id") for r in item.get("requests") or []),
                 item.get("where"), item.get("detail"), item.get("agent"), item.get("message"), bool(item.get("changed")),
-                can_answer, bool(self.app.answers_enabled(item)), json.dumps(stop, default=str),
+                can_answer, bool(self.app.answers.enabled(item)), json.dumps(stop, default=str),
                 self.app.cfg.get("codex_answers", True), preferences.ANSWER_WAIT["v"], grant is not None,
-                self.app.timed_minutes() if can_answer else None)
+                self.app.answers.timed_minutes() if can_answer else None)
 
     def _tick_texts(self, item):
         if item.get("changed"):
@@ -328,7 +328,7 @@ class PermissionCard:
 
     def _timed_text(self, grant):
         return (f"Auto approving this session \u00b7 {textfmt.fmt_left(grant['until'] - time.time())} left" if grant
-                else f"Auto approve this session for {self.app.timed_minutes()} min\u2026")
+                else f"Auto approve this session for {self.app.answers.timed_minutes()} min\u2026")
 
     def _render(self, item):
         req = item.get("request") or {}
@@ -366,7 +366,7 @@ class PermissionCard:
             self.ask.config(text=item.get("message") or "Waiting for your input")
             self.ask.pack(fill="x")
         self.wait.config(text=f"waiting {textfmt.ago(item['changed'])}" if item.get("changed") else "")
-        can_answer = self.app.answers_enabled(item) and permissions.hook_waiting(item) and not self.sent
+        can_answer = self.app.answers.enabled(item) and permissions.hook_waiting(item) and not self.sent
         who = "Codex" if item.get("agent") == "codex" else "Claude Code"
         stop = None if can_answer or self.sent or not req else permissions.hook_stop(item, permissions.answers_dir())
         if self.sent:
@@ -377,7 +377,7 @@ class PermissionCard:
         elif can_answer:
             note = ("Allow once or Deny answers this prompt right from here, or answer in the session window "
                     "(Go to window). If you do neither, the normal prompt appears.")
-        elif req and not self.app.answers_enabled(item):
+        elif req and not self.app.answers.enabled(item):
             note = (f"Answer this one in {who} (Go to window). To answer prompts here instead, switch on "
                     f"Answer {who} prompts from the pet under Permissions.")
         elif stop:
@@ -444,7 +444,7 @@ class PermissionCard:
     def _show_questions(self, req):
         """Build the question blocks once per prompt (the card refreshes every poll: keep what was picked)."""
         self.qframe.pack(fill="x")
-        readonly = not permissions.hook_waiting({"request": req}) or not self.app.answers_enabled(self._item or {})
+        readonly = not permissions.hook_waiting({"request": req}) or not self.app.answers.enabled(self._item or {})
         if self._qid == (req.get("id"), readonly):
             return
         if self._qid and self._qvars:
@@ -554,7 +554,7 @@ class PermissionCard:
             self.note.config(text="Answer every question first (pick an option or type your own).")
             return
         item = next((i for i in self.app._last_items if i["key"] == self.key), {})
-        if self.app.send_answer(self.key, "allow", answers=answers):
+        if self.app.answers.send(self.key, "allow", answers=answers):
             self.sent = "Answer"
             self._sent_id = (item.get("request") or {}).get("id")
             self.update(item or {"request": {}})
@@ -617,18 +617,18 @@ class PermissionCard:
         """Allow this prompt and add it to the auto-approve whitelist of the session's hook config, so the same
         request is approved by itself next time."""
         item = next((i for i in self.app._last_items if i["key"] == self.key), {})
-        added = self.app.whitelist_request(item)
+        added = self.app.answers.whitelist(item)
         self.answer("allow")
         if added:
             self.note.config(text=added)
 
     def go(self):
         """Open the session and show the next waiting prompt, or close a single-prompt card."""
-        if not self.app.go_to_prompt(self.key):
+        if not self.app.answers.go_to_prompt(self.key):
             self.close()
 
     def clear_prompt(self):
-        self.app.clear_prompt(self.key, getattr(self, "_req_id", None))  # the next poll moves the card on / closes it
+        self.app.answers.clear_prompt(self.key, getattr(self, "_req_id", None))  # the next poll moves the card on / closes it
 
     def auto_approve_for_a_while(self):
         """Start the timed auto approve for this session (after its confirmation), and allow the prompt on screen."""
@@ -636,12 +636,12 @@ class PermissionCard:
         if permissions.timed_grants().get(str(item.get("session_id"))):
             self.answer("allow")
             return
-        if self.app.start_timed_approve(item):
+        if self.app.answers.start_timed(item):
             self.answer("allow")
 
     def answer(self, behavior):
         item = next((i for i in self.app._last_items if i["key"] == self.key), {})
-        if self.app.send_answer(self.key, behavior):
+        if self.app.answers.send(self.key, behavior):
             self.sent = "Allow once" if behavior == "allow" else "Deny"
             self._sent_id = (item.get("request") or {}).get("id")
             self.update(next((i for i in self.app._last_items if i["key"] == self.key), {"request": {}}))

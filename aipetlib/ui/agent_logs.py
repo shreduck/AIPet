@@ -43,8 +43,7 @@ class LogPanel:
         self.box = tk.Frame(window.body)
         self.tabs = tk.Frame(self.box)
         self.tabs.pack(fill="x", padx=window.px(6))
-        self.filterbar = tk.Frame(self.box)
-        self.filterbar.pack(fill="x", padx=window.px(6), pady=(0, window.px(3)))
+        self.filterbar = tk.Frame(self.box)  # packed (with the text) by arrange, unless the logs are folded
         def filter_button(text, action):
             button = tk.Label(self.filterbar, text=text, font=window.f_small, cursor="hand2",
                               padx=window.px(3), pady=window.px(1), takefocus=1, highlightthickness=1)
@@ -69,7 +68,6 @@ class LogPanel:
                            exportselection=True)
         self.borders = {}
         self.text.configure(yscrollcommand=self.position_borders)
-        self.text.pack(fill="both", expand=True)
         self.arrange()
         self.text.bind("<Control-c>", lambda e: window._copy(self.text))
         self.text.bind("<Control-a>", lambda e: (self.text.tag_add("sel", "1.0", "end"), "break")[1])
@@ -82,10 +80,15 @@ class LogPanel:
         window = self.window
         side = window.opts.get("log_side", "bottom")
         across = side in ("left", "right")
-        for wdg in (window.graph.canvas, self.sep, self.box):
+        folded = window.opts.get("log_collapsed", False)
+        for wdg in (window.graph.canvas, self.sep, self.box, self.filterbar, self.text):
             wdg.pack_forget()
+        if not folded:  # folded: only the tabs (with [+ logs]) stay; the graph gets the room
+            self.filterbar.pack(fill="x", padx=window.px(6), pady=(0, window.px(3)))
+            self.text.pack(fill="both", expand=True)
         self.box.pack(side=side, fill="y" if across else "x")
-        self.sep.pack(side=side, fill="y" if across else "x")
+        if not folded:
+            self.sep.pack(side=side, fill="y" if across else "x")
         self.sep.configure(cursor="sb_h_double_arrow" if across else "sb_v_double_arrow")
         window.graph.canvas.pack(side=side, fill="both", expand=True)
         self.size()
@@ -234,6 +237,9 @@ class LogPanel:
         self.tailbtn = tk.Label(self.tabs, font=window.f_small, cursor="hand2", padx=window.px(3))
         self.tailbtn.pack(side="right")
         self.tailbtn.bind("<Button-1>", lambda e: window.tool("tail"))
+        self.foldbtn = tk.Label(self.tabs, font=window.f_small, cursor="hand2", padx=window.px(3))
+        self.foldbtn.pack(side="right")
+        self.foldbtn.bind("<Button-1>", lambda e: window.tool("fold_logs"))
         self.update_tailbtn()
         strip = tk.Canvas(self.tabs, height=window.f_main.metrics("linespace") + window.px(8),
                           bg=P["bg"], bd=0, highlightthickness=0)
@@ -267,14 +273,23 @@ class LogPanel:
         try:
             on = window.opts.get("log_tail", True)
             self.tailbtn.configure(text="[tail ▼]" if on else "[tail —]", bg=P["bg"], fg=P["blue"] if on else P["mu"])
+            folded = window.opts.get("log_collapsed", False)
+            self.foldbtn.configure(text="[+ logs]" if folded else "[− logs]", bg=P["bg"],
+                                   fg=P["blue"] if folded else P["mu"])
         except (tk.TclError, AttributeError):
             pass
+
+    def folded(self):
+        """The logs are folded down to their tabs: nothing to draw."""
+        return self.window.opts.get("log_collapsed", False)
 
     def draw(self, keep=None):
         """keep: the scroll position to stay at (folding an entry), instead of following the newest line.
         New lines at the end are appended (and the oldest dropped) without rebuilding the rest: rebuilding a long
         log on every refresh made the window sluggish while agents work."""
         window = self.window
+        if self.folded():
+            return
         log = self.text
         ags = window.net["agents"]
         rows = log_filters.filtered_log_rows(window.net, window.sel, self.filters)[-160:]

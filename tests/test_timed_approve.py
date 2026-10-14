@@ -8,8 +8,10 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import aipet
+import aipetlib.app.answers as answers_module
 import support
 import aipet_app
+from aipetlib.app.agent_windows import AgentWindows
 import aipet_hook as hook
 
 
@@ -51,26 +53,29 @@ class TimedApproveTests(unittest.TestCase):
     def test_start_asks_first(self):
         app = object.__new__(aipet.PetApp)
         app.cfg, app.root = {"timed_approve_minutes": 15}, MagicMock()
+        app.answers = aipet.Answers(app)
         item = {"session_id": "s-1", "title": "esign", "conv": "PdfBox"}
-        with patch.object(aipet, "themed_dialog", return_value=False) as ask:
-            self.assertFalse(app.start_timed_approve(item))
+        with patch.object(answers_module.theme, "themed_dialog", return_value=False) as ask:
+            self.assertFalse(app.answers.start_timed(item))
         self.assertIn("15 min", ask.call_args.kwargs["heading"])
         self.assertFalse(ask.call_args.kwargs["enter_confirms"])  # Enter must not start it
         self.assertEqual(aipet.timed_grants(), {})
-        with patch.object(aipet, "themed_dialog", return_value=True):
-            self.assertTrue(app.start_timed_approve(item))
+        with patch.object(answers_module.theme, "themed_dialog", return_value=True):
+            self.assertTrue(app.answers.start_timed(item))
         self.assertIn("s-1", aipet.timed_grants())
 
     @patch.object(aipet_app.hi, "list_backups", return_value=[])
-    @patch.object(aipet, "auto_approve_rules", return_value={})
+    @patch.object(aipet.permissions, "auto_approve_rules", return_value={})
     def test_live_management_and_right_click_countdowns(self, *_):
         app = object.__new__(aipet_app.TrayApp)
         app.pet = MagicMock(cfg=dict(aipet.DEFAULT_CONFIG))
-        app.pet.timed_minutes.return_value = 10
+        app.pet.answers.timed_minutes.return_value = 10
         app.status, app.distros, app.codex_targets = {}, [], []
-        app.c_auto, app.update_info = [], None
+        app.approvals, app.updates = aipet_app.Approvals(app), MagicMock(info=None)
+        app.approvals.targets_on = []
         app.hidden = app.c_muted = app.c_notify = app.c_autostart = False
         app.c_wb, app.version = "off", "test"
+        app.agent_windows = AgentWindows(app)
         app.pet._last_items = [
             {"source": "CC", "session_id": "s-1", "title": "esign", "state": "working", "agent_types": ["tester"]},
             {"source": "CC", "session_id": "s-2", "title": "notes", "state": "idle", "agent_types": []}]
@@ -90,7 +95,7 @@ class TimedApproveTests(unittest.TestCase):
         self.assertTrue(context[2]["label"].startswith("⏱ Stop auto approve: esign"))  # then the countdowns
         app.refresh_menu = MagicMock()
         context[2]["action"]()
-        app.pet.stop_timed_approve.assert_called_once_with("s-1")
+        app.pet.answers.stop_timed.assert_called_once_with("s-1")
 
 
 if __name__ == "__main__":

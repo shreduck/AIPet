@@ -12,7 +12,7 @@ import aipetlib.agents.codex as agent_codex
 import aipetlib.agents.network as agent_network
 import aipet_codex as codex
 import aipet_hook as hook
-from aipet_agents_window import candidate_sessions
+from aipetlib.ui.agent_window import candidate_sessions
 
 
 class CodexRolloutTests(unittest.TestCase):

@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import aipet
 import aipet_app
+from aipetlib.app.agent_windows import AgentWindows
 import aipetlib.agents.context as context
 import aipetlib.agents.history as agent_history
 from aipetlib.agents.claude import parse_claude
@@ -115,11 +116,13 @@ class MenuSwitchTests(unittest.TestCase):
         app = object.__new__(aipet_app.TrayApp)
         app.pet = MagicMock(cfg=dict(aipet.DEFAULT_CONFIG))
         app.status, app.distros, app.codex_targets = {}, [], []
-        app.c_auto, app.update_info = [], None
+        app.approvals, app.updates = aipet_app.Approvals(app), MagicMock(info=None)
+        app.approvals.targets_on = []
         app.hidden = app.c_muted = app.c_notify = app.c_autostart = False
         app.c_wb, app.version = 'off', 'test'
+        app.agent_windows = AgentWindows(app)
         with patch.object(aipet_app.hi, 'list_backups', return_value=[]), \
-                patch.object(aipet, 'auto_approve_rules', return_value={}), \
+                patch.object(aipet.permissions, 'auto_approve_rules', return_value={}), \
                 patch.object(aipet.permissions, 'timed_grants', return_value={}):
             looks = next(e for e in app._mac_menu_spec() if e and e['label'] == 'Appearance')['submenu']
             switch = next(e for e in looks if e and e['label'] == 'Context beside the pet')

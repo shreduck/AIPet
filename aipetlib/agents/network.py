@@ -135,7 +135,7 @@ def _read_network(item, now=None, include_tools=False, bootstrap=False):
             **{k: main_info[k] for k in ("model", "effort", "ctx", "ctx_max", "lines")}}
     agents = [main] + subs
     if include_tools:
-        agents += tool_nodes(agents, now, retention)
+        agents += tool_nodes(agents, now, retention, turn_start)
     for a in agents:
         a["model_label"] = model_name(a["model"])
         a["thought"] = next((phrase(text, 160) if kind == "say" else text for _, kind, text in reversed(a["lines"])

@@ -712,7 +712,8 @@ class GraphView:
         n_calls = sum(n for _, n in st["subagents"])
         tool_calls = sum(n for _, n in st["tools"])
         rows = (("subs", f"subagents {n_calls} ▾"), ("ctx", f"context {fmt_tokens(st['ctx_total']) or 0} ▾"),
-                ("tools", f"tools {len(st['tools'])} · {tool_calls} calls ▾"))
+                ("tools", f"tools {len(st['tools'])} · {tool_calls} calls"
+                          f" ({sum(st.get('session_tools', {}).values())} session) ▾"))
         for k, (kind, text) in enumerate(rows):
             tag = f"stat_{kind}"
             on = self.stat_open == kind
@@ -770,7 +771,13 @@ class GraphView:
                           f"{fmt_tokens(st.get('tokens_total')) or '0':>10}", "mu"))
             lines.append(("Σ tokens: everything each agent sent and got back (cached input included)", "mu"))
             return lines
-        lines = [(f"{name:<26} ×{n}", "") for name, n in st["tools"]] or [("# no tool calls in this task", "mu")]
+        session = st.get("session_tools", {})
+        names = [name for name, _ in st["tools"]] + sorted((n for n in session if n not in dict(st["tools"])),
+                                                           key=lambda n: (-session[n], n.lower()))
+        task = dict(st["tools"])
+        lines = [(f"{'tool':<22}{'this task':>10}{'session':>9}", "mu")]
+        lines += [(f"{name[:21]:<22}{task.get(name, 0) or '-':>10}{session.get(name, '-'):>9}", "") for name in names] \
+            or [("# no tool calls in this session", "mu")]
         lines.append(("── skills ──", "mu"))
         lines += [(f"{name:<26} ×{n}", "") for name, n in st["skills"]] or [("# no skills used", "mu")]
         if st.get("missing"):

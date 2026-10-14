@@ -43,8 +43,9 @@ def _tool_failed(output):
     return isinstance(output, dict) and bool(output.get("isError") or output.get("is_error") or output.get("error"))
 
 
-def tool_nodes(agents, now, retention):
-    """One child node and input/output log per unique tool for each calling agent."""
+def tool_nodes(agents, now, retention, turn_start=0):
+    """One child node and input/output log per unique tool for each calling agent. Its label counts the calls of the
+    whole session and of this task (since your latest prompt, turn_start), like the stats node."""
     nodes = []
     for agent in agents:
         grouped = {}
@@ -66,12 +67,14 @@ def tool_nodes(agents, now, retention):
                     rows.append((call.get("finished_t", 0), "error" if call.get("error") else "output",
                                  f"{short(call['output'], 120)}\ncall {call['id']}\n{call['output']}"))
             latest_call = max(calls, key=lambda c: c.get("finished_t") or c.get("started_t") or 0)
+            task = sum(1 for c in calls if (c.get("started_t") or c.get("finished_t") or 0) >= turn_start - 1)
             state = "working" if busy else ("error" if latest_call.get("error") else "done")
             nodes.append({"id": "tool:" + json.dumps([agent["id"], name]), "name": name,
                           "tab_name": f"{name} · {agent['name']}", "main": False, "tool": True,
                           "mcp": is_mcp_tool(name),
                           "parent": agent["id"], "depth": agent.get("depth", 0) + 1,
-                          "kind": f"{len(calls)} calls · {agent['name']}", "path": agent["path"],
+                          "kind": f"{len(calls)} calls · {task} this task · {agent['name']}",
+                          "calls": len(calls), "task_calls": task, "path": agent["path"],
                           "state": state, "mtime": latest, "first_t": min(c.get("started_t") or latest for c in calls),
                           "model": "", "effort": "", "ctx": 0, "ctx_max": 0,
                           "lines": sorted(rows, key=lambda r: r[0])[-MAX_LOG:]})

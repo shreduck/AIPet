@@ -328,7 +328,7 @@ class CodexNetworkTests(unittest.TestCase):
 
 class WindowLogicTests(unittest.TestCase):
     def test_node_clicks_restore_full_logs_but_tools_keep_their_scope(self):
-        import aipet_agents_window as win
+        import aipetlib.ui.agent_window as win
         view = object.__new__(win.AgentNetworkWindow)
         view.graph = win.agent_graph.GraphView(view)
         view.key, view.item, view.graph.panned = "session", None, False
@@ -359,7 +359,7 @@ class WindowLogicTests(unittest.TestCase):
         self.assertEqual(view.logs.filters, restricted)  # dragging the graph must not clear filters
 
     def test_node_spacing_does_not_expand_to_fill_tall_windows(self):
-        import aipet_agents_window as win
+        import aipetlib.ui.agent_window as win
         view = object.__new__(win.AgentNetworkWindow)
         view.graph = win.agent_graph.GraphView(view)
         view.s, view.graph.gz = 1.5, 1.0
@@ -384,7 +384,7 @@ class WindowLogicTests(unittest.TestCase):
                 self.assertAlmostEqual(short, tall, delta=1)
 
     def test_windows_layout_keeps_existing_spacing_and_scaling(self):
-        import aipet_agents_window as win
+        import aipetlib.ui.agent_window as win
         view = object.__new__(win.AgentNetworkWindow)
         view.graph = win.agent_graph.GraphView(view)
         view.s, view.graph.gz = 1.5, 1.0
@@ -402,7 +402,7 @@ class WindowLogicTests(unittest.TestCase):
                     self.assertGreater(tall[-1][1] - tall[1][1], short[-1][1] - short[1][1])
 
     def graph_window(self):
-        import aipet_agents_window as win
+        import aipetlib.ui.agent_window as win
         view = object.__new__(win.AgentNetworkWindow)
         view.graph = win.agent_graph.GraphView(view)
         view.graph.canvas = MagicMock()
@@ -536,7 +536,7 @@ class WindowLogicTests(unittest.TestCase):
         self.assertEqual(view.graph.gz, 1.0)
 
     def test_picks_the_session_that_needs_you_and_the_asking_agent(self):
-        import aipet_agents_window as win
+        import aipetlib.ui.agent_window as win
         items = [{"key": "a", "source": "CC", "session_id": "1", "state": "working"},
                  {"key": "b", "source": "CC", "session_id": "2", "state": "needs_input"},
                  {"key": "w", "source": "WB", "state": "needs_input"}]
@@ -552,7 +552,7 @@ class WindowLogicTests(unittest.TestCase):
 
 class WindowOptionTests(unittest.TestCase):
     def test_both_scales_default_to_100_and_preserve_explicit_preferences(self):
-        import aipet_agents_window as win
+        import aipetlib.ui.agent_window as win
         for cfg in ({}, {"agent_window": {}}, {"agent_window": {"text_scale": "bad", "scale": False}}):
             opts = win.load_options(cfg)
             self.assertEqual((opts["scale"], opts["text_scale"]), (100, 100))
@@ -560,13 +560,13 @@ class WindowOptionTests(unittest.TestCase):
         self.assertEqual((opts["scale"], opts["text_scale"]), (75, 135))
 
     def test_auto_fit_preference_is_saved_in_graph_options(self):
-        import aipet_agents_window as win
+        import aipetlib.ui.agent_window as win
         self.assertFalse(win.load_options({})["auto_fit"])
         self.assertTrue(win.load_options({"agent_window": {"auto_fit": True}})["auto_fit"])
         self.assertFalse(win.load_options({"agent_window": {"auto_fit": "yes"}})["auto_fit"])
 
     def test_options_load_and_snap(self):
-        import aipet_agents_window as win
+        import aipetlib.ui.agent_window as win
         opts = win.load_options({"agent_window": {"alpha": 73, "node_alpha": 0, "bg_alpha": 62, "on_top": "yes",
                                                   "frameless": True, "scale": 400, "separate": 1}})
         self.assertEqual((opts["alpha"], opts["node_alpha"], opts["bg_alpha"], opts["on_top"], opts["frameless"],
@@ -577,19 +577,19 @@ class WindowOptionTests(unittest.TestCase):
         self.assertEqual(win.key_color("#fbfaf7"), "#fbfaf6")  # see-through key: one notch off the background
 
     def test_logs_beside_the_graph_need_width_not_height(self):
-        import aipet_agents_window as win
+        import aipetlib.ui.agent_window as win
         below, beside = win.needed_size(2, 1, 18, 16), win.needed_size(2, 1, 18, 16, side="right")
         self.assertGreater(beside[0], below[0])
         self.assertLess(beside[1], below[1])
         self.assertEqual(win.load_options({"agent_window": {"log_side": "up"}})["log_side"], "bottom")
 
     def test_geometry_kept_when_switching_compact(self):
-        import aipet_agents_window as win
+        import aipetlib.ui.agent_window as win
         self.assertEqual(win.parse_geometry("620x480+100+-20"), (620, 480, 100, -20))
         self.assertIsNone(win.parse_geometry(""))
 
     def test_colour_mix_for_fading(self):
-        import aipet_agents_window as win
+        import aipetlib.ui.agent_window as win
         self.assertEqual(win.mix("#000000", "#ffffff", 0), "#000000")
         self.assertEqual(win.mix("#000000", "#ffffff", 1), "#ffffff")
         self.assertEqual(win.mix("#000000", "#ffffff", 0.5), "#808080")
@@ -597,7 +597,7 @@ class WindowOptionTests(unittest.TestCase):
         self.assertEqual(win.load_options({})["tidy"], False)
 
     def test_needed_size_follows_scale_agents_and_compact(self):
-        import aipet_agents_window as win
+        import aipetlib.ui.agent_window as win
         small, big = win.needed_size(2, 0.5, 9, 8), win.needed_size(2, 1.5, 27, 24)
         self.assertLess(small[0], big[0])
         self.assertLess(small[1], big[1])
@@ -607,7 +607,7 @@ class WindowOptionTests(unittest.TestCase):
 
 class FullReplyTests(unittest.TestCase):
     def test_expanded_content_formats_structures_and_decodes_only_json_escapes(self):
-        from aipet_agents_window import formatted_log_content
+        from aipetlib.ui.agent_window import formatted_log_content
         original = "# Result\n\n- First\n- Second\n\nC:\\new\\test"
         self.assertEqual(formatted_log_content(original), original)
         self.assertEqual(formatted_log_content(json.dumps(original)), original)

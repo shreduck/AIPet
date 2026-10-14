@@ -34,7 +34,7 @@ def check_assets(output):
 
 
 def check_update(token=None):
-    import aipet_update as updates
+    import aipetlib.update as updates
     import aipet_usage
     try:
         return {"release": updates.latest_release(token=token), "tls_verified": True}
@@ -75,7 +75,7 @@ def start_spaces_probe(app, output):
             flags = mac.send(w, "collectionBehavior", restype=mac.c_ulong)
             data = {"id": request["id"], "pid": os.getpid(), "time": time.time(),
                     "pointer": app.root.winfo_pointerxy(),
-                    "pointer_over_pet": app.pet._over_hit(*app.root.winfo_pointerxy()),
+                    "pointer_over_pet": app.pet.pointer.over_hit(*app.root.winfo_pointerxy()),
                     "click_through": bool(mac.send(w, "ignoresMouseEvents", restype=mac.c_bool)),
                     "mouse_events": list(mouse_events),
                     "context_menu_created": getattr(app.pet, "_context_menu_shown", False),
@@ -107,7 +107,7 @@ def start_spaces_probe(app, output):
                                                          "depth": a.get("depth", 0)}
                                                         for a in win.net["agents"]
                                                         if not a.get("main") and not a.get("tool")]}
-                                         for win in app._agent_windows().values()]
+                                         for win in app.agent_windows.open_windows().values()]
             data["pet_positions"] = {key: [p.canvas.winfo_rootx() + core.px(core.BADGE_GUTTER + getattr(p, "gutter", 0) + core.PET_W / 2),
                                             p.canvas.winfo_rooty() + core.px(90 - core.TOP_TRIM)]
                                      for key, p in app.pet.pets.items()}
@@ -153,7 +153,7 @@ def start_spaces_probe(app, output):
                     if request.get("about"):
                         app.show_about()
                     if request.get("agent_network"):
-                        app.show_agent_network()
+                        app.agent_windows.show()
                     if request.get("remap"):
                         app.root.withdraw()
                         app.root.after(100, app.root.deiconify)

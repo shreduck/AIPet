@@ -11,6 +11,7 @@ import time
 from .. import permissions
 from .. import sessions as session_text
 from .. import text as textfmt
+from ..app import diagnostics as app_diagnostics
 from ..runtime import paths
 from ..runtime import preferences
 from . import pet_style
@@ -37,7 +38,7 @@ def _context_menu_spec(app, pet):
     ]
     shared = app._mac_menu_spec()  # starts with AIPet menu... and a separator
     timers = app._timed_countdown_items()
-    network = app.agent_network_item(pet.data.get("focus", pet.key) if real_pet else None)
+    network = app.agent_windows.menu_item(pet.data.get("focus", pet.key) if real_pet else None)
     return shared[:1] + [network] + timers + [app._fast_cancel_item(pet, session),
                                   {"label": "This session", "submenu": session_actions}, None] + shared[2:]
 
@@ -93,15 +94,15 @@ def _mac_menu_spec(app, settings=False):
     codex = [target(lab, key) for lab, key in app.codex_targets] or [item("Codex not found", enabled=False)]
     cfg = app.pet.cfg
     auto = []
-    for title, entries in app.auto_sections():
+    for title, entries in app.approvals.sections():
         auto.append(item(title, submenu=[
-            item(app.auto_label(lab, key), lambda k=key, lab=lab: app.toggle_auto(k, lab),
-                 checked=key in app.c_auto) for lab, key in entries
+            item(app.approvals.label(lab, key), lambda k=key, lab=lab: app.approvals.open_editor(k, lab),
+                 checked=key in app.approvals.targets_on) for lab, key in entries
         ] or [item("Not found", enabled=False)]))
-    auto += [None, item("Turn all off", app.auto_all_off, enabled=bool(app.c_auto),
+    auto += [None, item("Turn all off", app.approvals.all_off, enabled=bool(app.approvals.targets_on),
                         help="Switches auto approve off everywhere at once.")]
-    top = [item(f"Update available: {app.update_info['tag']}...", app.open_update, icon="refresh",
-                help="A newer AIPet is out. See what changed and update."), None] if app.update_info else []
+    top = [item(f"Update available: {app.updates.info['tag']}...", app.updates.open, icon="refresh",
+                help="A newer AIPet is out. See what changed and update."), None] if app.updates.info else []
     return [app.settings_item(), None] + top + [
         item("Show pet" if app.hidden else "Hide pet", app.toggle, default=True,
              help="Hides the pet from the screen. AIPet keeps watching your sessions in the background."),
@@ -129,7 +130,7 @@ def _mac_menu_spec(app, settings=False):
                          "min": 0.5, "max": 2.5, "step": 0.05,
                          "set": app.pet.set_tooltip_text_scale, "format": lambda v: f"{int(round(v * 100))}%"}),
             item("Reset pet size", app.pet.reset_scale, help="Back to the standard size."),
-            item("Reset agent network appearance", app.reset_agent_network,
+            item("Reset agent network appearance", app.agent_windows.reset_appearance,
                  help="The agent network window's default look again (opacity, background, nodes, scale, title "
                       "bar, always on top), centred on the main screen."),
             item("Compact mode (one pet)", app.pet.toggle_compact, checked=bool(cfg.get("compact")),
@@ -237,14 +238,14 @@ def _mac_menu_spec(app, settings=False):
                 item(f"Workbench: {app.c_wb}", enabled=False),
             ]),
         ]),
-        item("Permissions" + (" (auto approve ON)" if app.c_auto else ""), icon="shield",
+        item("Permissions" + (" (auto approve ON)" if app.approvals.targets_on else ""), icon="shield",
              help="Answering permission prompts.", submenu=[
             item("Auto approve", icon="check", submenu=auto,
                  help="Approve every permission prompt from these installs without asking. Use with care."),
-            item("Answer Codex prompts from the pet", lambda: app.pet.set_codex_answers(not cfg.get("codex_answers")),
+            item("Answer Codex prompts from the pet", lambda: app.pet.answers.set_codex_answers(not cfg.get("codex_answers")),
                  checked=bool(cfg.get("codex_answers")),
                  help="Codex permission prompts get Allow / Deny buttons in the pet's popup."),
-            item("Answer Claude Code prompts from the pet", lambda: app.pet.set_claude_answers(not cfg.get("claude_answers", True)),
+            item("Answer Claude Code prompts from the pet", lambda: app.pet.answers.set_claude_answers(not cfg.get("claude_answers", True)),
                  checked=bool(cfg.get("claude_answers", True)),
                  help="Claude Code permission prompts get Allow / Deny buttons in the pet's popup."),
         ]),
@@ -253,14 +254,14 @@ def _mac_menu_spec(app, settings=False):
             item("About AIPet...", app.show_about),
             item(f"Version: {app.version}", enabled=False),
             item("Updates", icon="refresh", submenu=[
-                item("Check for updates...", lambda: app.check_updates(True)),
-                item("Check for updates automatically", app.toggle_update_check,
+                item("Check for updates...", lambda: app.updates.check(True)),
+                item("Check for updates automatically", app.updates.toggle_auto,
                      checked=bool(cfg.get("update_check", True)),
                      help="Look for a new AIPet now and then. Nothing is installed without asking."),
             ]),
             None,
             item("Diagnostics", icon="wrench", help="For when something isn't working.", submenu=[
-                item("Save diagnostics...", app.pet.save_diagnostics,
+                item("Save diagnostics...", lambda: app_diagnostics.save(app.pet),
                      help="Saves a report you can attach to a bug report."),
                 item("Open config folder", app.open_config, help="Where AIPet keeps its settings and logs."),
                 item("Log hook events (debug)", app.toggle_debug, checked=os.path.exists(paths.DEBUG_FLAG),
@@ -277,7 +278,7 @@ def _live_spec(app, item, settings=False):
     Menus show exact countdowns (they are built when opened); the settings window rounds to minutes so it
     doesn't redraw every second."""
     grants, now = permissions.timed_grants(), time.time()
-    default = app.pet.timed_minutes()
+    default = app.pet.answers.timed_minutes()
 
     def left(grant):
         secs = grant["until"] - now
@@ -286,11 +287,11 @@ def _live_spec(app, item, settings=False):
     spec = [item("Timed auto approve length", choice=True,
                  help='How long "Auto approve for ..." lasts. Every start asks you to confirm first.',
                  slider={"value": default, "min": permissions.TIMED_MIN, "max": permissions.TIMED_MAX, "step": 1,
-                         "set": app.pet.set_timed_minutes, "format": lambda v: f"{int(v)} min"},
-                 submenu=[item(f"{m} min", lambda m=m: app.pet.set_timed_minutes(m), checked=default == m)
+                         "set": app.pet.answers.set_timed_minutes, "format": lambda v: f"{int(v)} min"},
+                 submenu=[item(f"{m} min", lambda m=m: app.pet.answers.set_timed_minutes(m), checked=default == m)
                           for m in (5, 10, 15, 30, 60)]),
-            dict(app.agent_network_item(None), icon="link"),
-            app.agent_network_separate_item(),
+            dict(app.agent_windows.menu_item(None), icon="link"),
+            app.agent_windows.separate_item(),
             None]
     sessions = [d for d in app.pet._last_items if d.get("source") == "CC" and d.get("session_id")]
     for d in sessions:
@@ -309,7 +310,7 @@ def _live_spec(app, item, settings=False):
         entries += [None, item(f"Subagents running: {len(agents)}" if agents else "No subagents running",
                                enabled=False)]
         entries += [item(f"• {a}", enabled=False) for a in agents]
-        entries += [None, item("Agent network...", lambda k=d.get("key"): app.show_agent_network(k))]
+        entries += [None, item("Agent network...", lambda k=d.get("key"): app.agent_windows.show(k))]
         said = session_text.last_said(d)  # the newest reply phrase or your latest prompt, from the transcript
         who = "Codex" if d.get("agent") == "codex" else "Claude"
         said_text = (f"{who if said[0] == 'ai' else 'You'}: “{said[1]}”" if said else "")

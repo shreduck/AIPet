@@ -12,7 +12,7 @@ class CardRefreshTests(unittest.TestCase):
         from aipetlib.ui import permission_card
         self.module = permission_card
         card = self.card = object.__new__(permission_card.PermissionCard)
-        card.app = SimpleNamespace(answers_enabled=lambda _: True, cfg={}, timed_minutes=lambda: 10)
+        card.app = SimpleNamespace(answers=SimpleNamespace(enabled=lambda _: True, timed_minutes=lambda: 10), cfg={})
         card.sent, card._view, card._timed_grant = None, None, False
         card._render, card._tick_texts = MagicMock(), MagicMock()
         self.waiting = True

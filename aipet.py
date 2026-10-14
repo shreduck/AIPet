@@ -18,6 +18,10 @@ Probe: python  aipet.py --probe-workbench   (prints what Workbench returns)
 Standard library only (tkinter, urllib, winsound).
 """
 import aipetlib.vscode as vscode
+import aipetlib.app.diagnostics as app_diagnostics
+from aipetlib.app.placement import Placement
+from aipetlib.app.pointer import Pointer
+from aipetlib.app.answers import Answers
 import aipetlib.housekeeping as housekeeping
 import aipetlib.ui.sounds as sounds
 import aipetlib.ui.appearance_controls as appearance_controls
@@ -239,93 +243,6 @@ class Pet(PetView):
         return font_metrics._char_w(font)
 
 
-# --------------------------------------------------------------------------- diagnostics
-def diagnostics_report(app=None):
-    """Plain-text report for debugging a machine we can't test (no prompts, commands or session contents)."""
-    import platform
-    import traceback
-    lines = []
-
-    def add(k, v):
-        lines.append(f"{k}: {v}")
-
-    def attempt(name, fn):
-        try:
-            add(name, fn())
-        except Exception:
-            add(name, "FAILED\n    " + traceback.format_exc(limit=3).strip().replace("\n", "\n    "))
-
-    add("time", time.strftime("%Y-%m-%d %H:%M:%S"))
-    attempt("version", lambda: __import__("aipet_update").current_version())
-    add("platform", f"{platform.platform()} ({platform.machine()})")
-    add("python", f"{sys.version.split()[0]} frozen={getattr(sys, 'frozen', False)} exe={sys.executable}")
-    add("meipass", getattr(sys, "_MEIPASS", "-"))
-    attempt("tk", lambda: f"TkVersion={tk.TkVersion} patchlevel={app.root.tk.call('info', 'patchlevel')} "
-                          f"windowing={app.root.tk.call('tk', 'windowingsystem')}" if app else tk.TkVersion)
-    attempt("pillow", lambda: __import__("PIL").__version__)
-    add("style", STYLE["v"])
-    add("scale", SCALE["v"])
-    add("png_photos", _PNG_PHOTOS["on"])
-    add("sprite_dir", f"{SPRITE_DIR} exists={os.path.isdir(SPRITE_DIR)}")
-    attempt("sprite_files", lambda: sorted(os.listdir(SPRITE_DIR)))
-    attempt("load_sprites", lambda: "ok " + str(load_sprites(SPRITE_DIR)["img"]["robot"].size)
-            if load_sprites(SPRITE_DIR) else "False (see error.log)")
-
-    def test_imagetk():
-        from PIL import Image, ImageTk
-        ph = ImageTk.PhotoImage(Image.new("RGBA", (4, 4), (255, 0, 0, 255)))
-        return f"ok {ph.width()}x{ph.height()}"
-
-    def test_png():
-        import base64
-        import io
-        from PIL import Image
-        buf = io.BytesIO()
-        Image.new("RGBA", (4, 4), (255, 0, 0, 128)).save(buf, "PNG")
-        ph = tk.PhotoImage(data=base64.b64encode(buf.getvalue()).decode("ascii"), format="png")
-        return f"ok {ph.width()}x{ph.height()} red-pixel={ph.get(1, 1)}"
-
-    def test_robot():
-        spr = load_sprites()
-        if not spr:
-            return "no sprites"
-        im = robot_image("happy", ("amber", "green", "off"), spr)
-        ph = sprite_photo(("diag",), im, im.width * 2, im.height * 2)
-        return f"ok {ph.width()}x{ph.height()} centre-pixel={ph.get(im.width, im.height)}"
-    attempt("imagetk_photo", test_imagetk)
-    attempt("png_photo", test_png)
-    attempt("robot_photo", test_robot)
-
-    def test_vscode():  # where the open VS Code folders come from (counts only, no paths)
-        rep = []
-        vscode.vscode_open_folders(report=rep)
-        return "; ".join(rep) or "no VS Code user folder found"
-    attempt("vscode_open_folders", test_vscode)
-    if IS_MAC:
-        def test_screens():
-            import mac_statusbar
-            return f"full={mac_statusbar.screen_rects(False)} visible={mac_statusbar.screen_rects(True)}"
-        attempt("screens", test_screens)
-    if app:
-        r = app.root
-        attempt("window", lambda: f"geometry={r.winfo_geometry()} viewable={r.winfo_viewable()} "
-                                  f"state={r.state()} screen={r.winfo_screenwidth()}x{r.winfo_screenheight()} "
-                                  f"anchor={app.anchor}")
-        for key, pet in list(app.pets.items())[:6]:
-            c = pet.canvas
-            attempt(f"pet {key[:14]}", lambda c=c, pet=pet: (
-                f"state={pet.data.get('state')} mapped={c.winfo_ismapped()} size={c.winfo_width()}x{c.winfo_height()} "
-                f"items={len(c.find_all())} images={sum(1 for i in c.find_all() if c.type(i) == 'image')} "
-                f"rects={sum(1 for i in c.find_all() if c.type(i) == 'rectangle')} rect_sprites={RECT_SPRITES}"))
-    try:
-        with open(os.path.join(HOME_DIR, "error.log"), encoding="utf-8") as f:
-            tail = f.read()[-4000:]
-    except OSError:
-        tail = "(none)"
-    lines += ["", "---- error.log (tail)", tail]
-    return "\n".join(lines) + "\n"
-
-
 # --------------------------------------------------------------------------- multi-monitor placement
 from aipetlib.geometry import _MAC_SCREENS, fit_on_screen, geo, mac_screen_at, work_area  # noqa: E402,F401
 
@@ -400,8 +317,10 @@ class PetApp:
         self.stack = tk.Frame(root, bg=TRANSPARENT)  # notification bubbles, stacked above the pets
         self.stack.pack(side="top", anchor="e")
         self.frame = tk.Frame(root, bg=TRANSPARENT)
-        self._usage_frame_pad = px(USAGE_EDGE_ROOM)
-        self.frame.pack(side="top", anchor="e", padx=(0, self._usage_frame_pad))
+        self.placement = Placement(self)  # where the window sits, and the shared right margin
+        self.pointer = Pointer(self)  # dragging, clicks and click-through
+        self.answers = Answers(self)  # answering the hooks from the pet
+        self.frame.pack(side="top", anchor="e", padx=(0, self.placement.usage_frame_pad))
 
         self.pets, self.order, self.prev_states = {}, [], {}
         self.prev_agents, self.done_flash = {}, {}  # subagent counts; session key -> time its brief "done" check ends
@@ -414,7 +333,6 @@ class PetApp:
         self.first_refresh = True
         self.muted = tk.BooleanVar(value=not self.cfg["sounds"])
         self.tip = None
-        self.drag = None
         self.menu_pet = None
         self.context_menu_spec = None
         self._menu_open = False
@@ -441,13 +359,13 @@ class PetApp:
         m.add_command(label="Clear finished after...", command=self.open_done_slider)
         m.add_command(label="Health check every...", command=self.open_health_slider)
         self.codex_answer_var = tk.BooleanVar(value=bool(self.cfg.get("codex_answers")))
-        self._write_codex_flag()
+        self.answers.write_codex_flag()
         m.add_checkbutton(label="Answer Codex prompts from the pet", variable=self.codex_answer_var,
-                          command=lambda: self.set_codex_answers(self.codex_answer_var.get()))
+                          command=lambda: self.answers.set_codex_answers(self.codex_answer_var.get()))
         self.claude_answer_var = tk.BooleanVar(value=bool(self.cfg.get("claude_answers", True)))
-        self._write_claude_flag()
+        self.answers.write_claude_flag()
         m.add_checkbutton(label="Answer Claude Code prompts from the pet", variable=self.claude_answer_var,
-                          command=lambda: self.set_claude_answers(self.claude_answer_var.get()))
+                          command=lambda: self.answers.set_claude_answers(self.claude_answer_var.get()))
         self.compact_var = tk.BooleanVar(value=bool(self.cfg.get("compact")))
         m.add_checkbutton(label="Compact mode (one pet)", variable=self.compact_var, command=self.toggle_compact)
         self.context_banner_var = tk.BooleanVar(value=bool(self.cfg.get("context_banner", True)))
@@ -476,7 +394,7 @@ class PetApp:
         m.add_separator()
         m.add_checkbutton(label="Mute sounds", variable=self.muted)
         m.add_command(label="Clear finished", command=self.clear_finished)
-        m.add_command(label="Save diagnostics...", command=self.save_diagnostics)
+        m.add_command(label="Save diagnostics...", command=lambda: app_diagnostics.save(self))
         m.add_separator()
         m.add_command(label="Workbench: " + ("starting…" if self.wb else "off"), state="disabled")
         self.wb_menu_index = m.index("end")
@@ -485,10 +403,10 @@ class PetApp:
         style_menu(m)
         native_menu_theme()
 
-        self.anchor = self.default_anchor()  # bottom-right of the main screen
+        self.placement.anchor = self.placement.default_anchor()  # bottom-right of the main screen
         self.size_win, self._menu_xy = None, None
         self.clickthru = ClickThrough(root) if self.cfg.get("click_through", True) else None
-        self._pass = None
+        self.pointer.passing = None
         self.refresh()
         self.animate()
         if IS_MAC:
@@ -498,7 +416,7 @@ class PetApp:
             root.bind("<Destroy>", lambda event: self._mouse_bridge.close()
                       if event.widget is root else None, add="+")
         if self.clickthru:
-            root.after(500, self._pass_tick)
+            root.after(500, self.pointer.pass_tick)
         root.after(60 * 1000, self._sweep_usage)
         if IS_MAC or os.name == "nt":
             root.after(700, self._apply_all_spaces)
@@ -513,7 +431,7 @@ class PetApp:
         now = time.time()
         items = [i for i in items
                  if not (hide and i["state"] in ("done", "idle") and i.get("changed") and now - i["changed"] > hide)]
-        navigation = getattr(self, "_prompt_navigation", None)
+        navigation = getattr(getattr(self, "answers", None), "navigation", None)
         if navigation:
             items = navigation.project(items)
         self._agent_items = [i for i in items if i.get("source") == "CC"]
@@ -603,8 +521,8 @@ class PetApp:
                 for k in keys:
                     self.pets[k].canvas.pack(side="left", padx=2)
                 self.order = keys
-                self._sync_usage_padding()
-                self.reposition()
+                self.placement.sync_usage_padding()
+                self.placement.reposition()
 
             self.sync_bubbles(real)
             if self.wb and not self.context_menu_spec:
@@ -650,114 +568,6 @@ class PetApp:
                 f.write(str(time.time()))
         except OSError:
             pass
-
-    def send_answer(self, key, behavior, answers=None, permissions=None):
-        """Hand the user's click to the waiting PermissionRequest hook. Returns True if it was written.
-        answers: for a question, {question text: label, or [labels] for multi-select}.
-        permissions: Claude Code's own suggestions to apply with the allow (its "don't ask again" choices)."""
-        item = next((i for i in self._last_items if i["key"] == key), None)
-        req = (item or {}).get("request") or {}
-        if not self.answers_enabled(item) or not hook_waiting(item) or behavior not in ("allow", "deny", "release"):
-            return False
-        name = answer_name(item)
-        try:
-            os.makedirs(answers_dir(), exist_ok=True)
-            path = os.path.join(answers_dir(), name + ".json")
-            with open(path + ".tmp", "w", encoding="utf-8") as f:
-                json.dump(dict({"behavior": behavior, "t": time.time()}, **({"answers": answers} if answers else {}),
-                               **({"permissions": permissions} if permissions else {})), f)
-            os.replace(path + ".tmp", path)
-            return True
-        except OSError:
-            return False
-
-    def go_to_prompt(self, key):
-        """Go to window for a session that is asking: Codex shows its own prompt only once AIPet's hook lets go of
-        it, so let go first (its own prompt has choices the pet doesn't, like always allowing a tool). Claude Code
-        shows its prompt alongside anyway, so the pet's buttons stay."""
-        item = next((i for i in self._last_items if i["key"] == key), None)
-        if item and item.get("agent") == "codex" and item.get("state") == "needs_input":
-            self.send_answer(key, "release")
-        self.focus_key(key)
-        return self.step_prompt(key)
-
-    def step_prompt(self, key, step=1):
-        """Select another waiting prompt without answering it or opening its session."""
-        item = next((i for i in self._last_items if i["key"] == key), None)
-        if item:
-            from aipetlib.prompt_navigation import PromptNavigation
-            if not hasattr(self, "_prompt_navigation"):
-                self._prompt_navigation = PromptNavigation()
-            if self._prompt_navigation.advance(item, step):
-                # Update presentation immediately without starting a second poll loop.
-                self._last_items = self._prompt_navigation.project(self._last_items)
-                by_key = {i["key"]: i for i in self._last_items}
-                if hasattr(self, "_agent_items"):
-                    self._agent_items = [by_key.get(i["key"], i) for i in self._agent_items]
-                self.sync_bubbles(self._last_items)
-                return True
-        return False
-
-    def timed_minutes(self):
-        try:
-            return max(TIMED_MIN, min(TIMED_MAX, int(self.cfg.get("timed_approve_minutes", TIMED_DEFAULT))))
-        except (TypeError, ValueError):
-            return TIMED_DEFAULT
-
-    def set_timed_minutes(self, minutes):
-        self.cfg["timed_approve_minutes"] = max(TIMED_MIN, min(TIMED_MAX, int(round(float(minutes)))))
-        save_setting("timed_approve_minutes", self.cfg["timed_approve_minutes"])
-
-    def start_timed_approve(self, item, minutes=None):
-        """Auto approve every permission prompt from this session for N minutes, after a safety confirmation.
-        Returns True once the grant is running."""
-        if not item or not item.get("session_id"):
-            return False
-        minutes = minutes or self.timed_minutes()
-        name = item.get("title") or "this session"
-        if item.get("conv"):
-            name += f" \u00b7 {item['conv']}"
-        ok = themed_dialog(
-            self.root, "AIPet", kind="warning", heading=f"Auto approve {name} for {minutes} min?",
-            text=(f"Every permission prompt from this session (commands, file edits, tool calls) will be approved "
-                  f"without asking for the next {minutes} minutes. Other sessions keep asking, and questions from the "
-                  "AI still wait for you.\n\nLive Management in the right-click menu shows the countdown and can "
-                  "stop it early. It also stops when AIPet quits."),
-            buttons=(("Cancel", False, "secondary"), (f"Auto approve {minutes} min", True, "danger")),
-            cancel=False, enter_confirms=False)
-        if not ok:
-            return False
-        return set_timed_grant(item["session_id"], minutes, name)
-
-    def stop_timed_approve(self, session_id):
-        stop_timed_grant(session_id)
-
-    def clear_prompt(self, key, req_id):
-        """Drop one permission prompt from a session that still shows it although nobody is asking anymore (its
-        subagent died on an API error, say). A hook still waiting for it notices and lets go."""
-        item = next((i for i in self._last_items if i["key"] == key), None)
-        path = (item or {}).get("path")
-        if not path or not req_id:
-            return False
-        try:
-            with open(path, encoding="utf-8") as f:
-                rec = json.load(f)
-            reqs = [r for r in (rec.get("requests") or ([rec["request"]] if rec.get("request") else []))
-                    if isinstance(r, dict) and r.get("id") != req_id]
-            now = time.time()
-            rec.update(requests=reqs, request=reqs[0] if reqs else {}, updated=now)
-            if not reqs and rec.get("state") == "needs_input":
-                rec.update(state="working", message="", wait_agent="", changed=now)
-            elif reqs:
-                rec["message"] = f"Claude needs your permission to use {reqs[0].get('tool') or 'a tool'}"
-            tmp = path + ".pet.tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(rec, f)
-            os.replace(tmp, path)
-            return True
-        except (OSError, ValueError) as e:
-            log_error(f"clear prompt: {e!r}")
-            return False
 
     def open_detail(self, key):
         d = self.details.get(key)
@@ -936,33 +746,6 @@ class PetApp:
         elif d.get("source") == "WB" and self.wb:
             self.wb.dismiss(d["key"])
 
-    def write_diagnostics(self):
-        """Write ~/.aipet/diagnostics.txt (versions, sprite loading, image tests, window state, recent errors).
-        Returns the path, or None if it failed."""
-        path = os.path.join(HOME_DIR, "diagnostics.txt")
-        try:
-            text = diagnostics_report(self)
-            os.makedirs(HOME_DIR, exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(text)
-            return path
-        except Exception as e:
-            log_error(f"diagnostics failed: {e!r}")
-            return None
-
-    def save_diagnostics(self):
-        """Write the diagnostics and open them, so someone on a machine we can't test can send them."""
-        path = self.write_diagnostics()
-        if not path:
-            return
-        try:
-            if os.name == "nt":
-                os.startfile(path)
-            else:
-                subprocess.Popen(["open" if IS_MAC else "xdg-open", path])
-        except (AttributeError, OSError):
-            pass
-
     def clear_finished(self):
         """Dismiss every finished session - all of them, also when compact mode shows them in one pet."""
         for it in list(self._last_items):
@@ -970,105 +753,8 @@ class PetApp:
                 self.dismiss_item(it)
 
     # ---- window
-    def _sync_usage_padding(self):
-        """Share one right margin across the overlay instead of padding every pet."""
-        last = self.pets.get(self.order[-1]) if self.order else None
-        extra = getattr(last, "usage_extra", 0) if last else 0
-        padding = max(0, px(USAGE_EDGE_ROOM - extra))
-        delta = padding - self._usage_frame_pad
-        if delta:
-            self._usage_frame_pad = padding
-            self.frame.pack_configure(padx=(0, padding))
-        return delta
-
-    def reposition(self, ref=None):
-        """Keep the bottom-right corner (the anchor) where it is while the pets change size, but inside the monitor the
-        pet is on. That monitor is found from the middle of the window as it is now, not from the anchor: an anchor
-        just across a monitor edge used to pull a growing pet onto the neighbouring screen. The anchor follows any
-        clamping, so the next resize starts from where the pet really is."""
-        r = self.root
-        r.update_idletasks()
-        w, h = r.winfo_reqwidth(), r.winfo_reqheight()
-        ax, ay = self.anchor
-        if ref is None:
-            try:
-                cw, ch = r.winfo_width(), r.winfo_height()
-                ref = (r.winfo_x() + cw // 2, r.winfo_y() + ch // 2) if cw > 1 and ch > 1 else (ax - 1, ay - 1)
-            except tk.TclError:
-                ref = (ax - 1, ay - 1)
-        x, y = geometry.fit_on_screen(ax - w, ay - h, w, h, ref, r)
-        r.geometry(geometry.geo(x, y))
-        self.anchor = [x + w, y + h]
-
-    def default_anchor(self):
-        """Where the pet's bottom-right corner starts: the main screen's bottom-right corner, just above the Windows
-        taskbar; on macOS just above the Dock (the visible area of the main screen)."""
-        r = self.root
-        if IS_MAC:
-            area = geometry.mac_screen_at(1, 1)  # the main screen holds Tk's origin
-            if area:
-                return [area[2] - 24, area[3] - 8]
-        return [r.winfo_screenwidth() - 24, r.winfo_screenheight() - 60]
-
-    def shift_for_width(self, delta):
-        """The overlay is about to become delta px wider (narrower if negative): move it now, before Tk redraws, so the
-        new size and position land together and the pet stays put (reposition() would redraw at the old position
-        first, flashing the pet sideways). Falls back to reposition() before the window is shown."""
-        r = self.root
-        try:
-            w, h = r.winfo_width(), r.winfo_height()
-            if w <= 1 or h <= 1:
-                r.after_idle(self.reposition)
-                return
-            w += delta
-            ref = (r.winfo_x() + r.winfo_width() // 2, r.winfo_y() + h // 2)
-            x, y = geometry.fit_on_screen(self.anchor[0] - w, self.anchor[1] - h, w, h, ref, r)
-            r.geometry(geometry.geo(x, y))
-            self.anchor = [x + w, y + h]
-        except tk.TclError:
-            r.after_idle(self.reposition)
-
-    def reset_position(self):
-        """Last resort for a pet lost off screen: back to the main screen's bottom-right corner."""
-        self.anchor = self.default_anchor()
-        self.reposition(ref=(self.anchor[0] - 1, self.anchor[1] - 1))
-        try:
-            self.root.deiconify()
-            self.root.lift()
-            self.root.attributes("-topmost", True)
-        except tk.TclError:
-            pass
-
     # ---- click-through: the window is one rectangle around all pets, but only the robots and the "needs you" bubbles
     # should catch clicks. The pointer is polled, and the window passes clicks through whenever it isn't over those.
-    def _over_hit(self, x, y, margin=3):
-        for pet in list(self.pets.values()):
-            c = pet.canvas
-            try:
-                if not c.winfo_ismapped():
-                    continue
-                ox, oy = c.winfo_rootx(), c.winfo_rooty()
-                boxes = [c.bbox(t) for t in ("hit", "ans", "badge", "usage") if c.find_withtag(t)] or [c.bbox("all")]  # mole/cat: all
-            except tk.TclError:
-                continue
-            for bb in boxes:
-                if bb and ox + bb[0] - margin <= x <= ox + bb[2] + margin and oy + bb[1] - margin <= y <= oy + bb[3] + margin:
-                    return True
-        return False
-
-    def _pass_tick(self):
-        try:
-            x, y = self.root.winfo_pointerxy()
-            want = not (self._menu_open or self.drag is not None or self._over_hit(x, y))
-            if want != self._pass:
-                self._pass = want
-                self.clickthru.set(want)
-                if want:
-                    self.hide_tip()
-        except Exception as e:
-            log_error(f"click-through: {e!r}")
-        self.root.after(50, self._pass_tick)
-
     def animate(self):
         t = time.time() - self.t0
         try:
@@ -1080,51 +766,6 @@ class PetApp:
                     log_error("draw failed:\n" + traceback.format_exc(limit=4))
         finally:
             self.root.after(50, self.animate)
-
-    def on_press(self, e):
-        self.drag = [e.x_root, e.y_root, self.root.winfo_x(), self.root.winfo_y(), False]
-
-    def on_drag(self, e):
-        if not self.drag:
-            return
-        sx, sy, wx, wy, _ = self.drag
-        dx, dy = e.x_root - sx, e.y_root - sy
-        if abs(dx) + abs(dy) > 4:
-            self.drag[4] = True
-        if self.drag[4]:
-            self.hide_tip()
-            self.root.geometry(f"+{wx + dx}+{wy + dy}")
-
-    def on_release(self, e, pet):
-        if IS_MAC and (e.state & 0x4):  # Control-click is a context menu, never a session click.
-            self.drag = None
-            pet._on_bubble, pet._on_badge = False, None
-            return "break"
-        on_bubble, pet._on_bubble = pet._on_bubble, False
-        on_badge, pet._on_badge = pet._on_badge, None
-        if self.drag and self.drag[4]:
-            self.root.update_idletasks()
-            self.anchor = [self.root.winfo_x() + self.root.winfo_width(),
-                           self.root.winfo_y() + self.root.winfo_height()]
-        elif on_badge in ("__expand", "__collapse"):  # compact mode: show every session's badge, or the merged one
-            self.badges_expanded = on_badge == "__expand"
-        elif on_badge and on_badge != "_none":  # a badge: that session's prompt window, or its window if it isn't waiting
-            item = next((i for i in self._last_items if i["key"] == on_badge), None)
-            if item:
-                self.ack[on_badge] = True
-                if item.get("state") == "needs_input":
-                    self.open_detail(on_badge)
-                elif self.cfg.get("click_to_focus", True):
-                    import types
-                    self.focus_session(types.SimpleNamespace(key=on_badge, data=item))
-        elif on_bubble and pet.key != "_none":
-            self._acknowledge(pet)
-            self.open_detail(pet.data.get("focus", pet.key))  # the bubble: the full question and the answer buttons
-        else:
-            self._acknowledge(pet)  # click: acknowledge (stops jumping / reminders) and go to the session's window
-            if pet.key != "_none" and self.cfg.get("click_to_focus", True):
-                self.focus_session(pet)
-        self.drag = None
 
     def _acknowledge(self, pet):
         pet.acked = True
@@ -1156,51 +797,6 @@ class PetApp:
                  badge_titles=[m.get("conv") or "" for m in shown],
                  auto_flash=any(m.get("auto_flash") for m in members))
         return [g]
-
-    def answers_enabled(self, item):
-        agent = "codex" if (item or {}).get("agent") == "codex" else "claude"
-        return bool(self.cfg.get(agent + "_answers", True))
-
-    def set_claude_answers(self, on):
-        """Choose whether Claude hooks wait for an answer from the pet."""
-        self.cfg["claude_answers"] = bool(on)
-        save_setting("claude_answers", self.cfg["claude_answers"])
-        self.claude_answer_var.set(self.cfg["claude_answers"])
-        self._write_claude_flag()
-        self.sync_bubbles(self._last_items)
-
-    def _write_claude_flag(self):
-        # An opt-out preserves Claude answering for existing installations.
-        flag = os.path.join(HOME_DIR, "no-claude-answers")
-        try:
-            if not self.cfg.get("claude_answers", True):
-                os.makedirs(HOME_DIR, exist_ok=True)
-                open(flag, "w").close()
-            elif os.path.exists(flag):
-                os.remove(flag)
-        except OSError:
-            pass
-
-    def set_codex_answers(self, on):
-        """Codex asks its hooks before showing its own prompt: with this on, the pet waits for your click first (up to
-        the answer timeout), so Codex's prompt only appears if you don't answer on the pet."""
-        self.cfg["codex_answers"] = bool(on)
-        save_setting("codex_answers", self.cfg["codex_answers"])
-        if self.codex_answer_var.get() != self.cfg["codex_answers"]:
-            self.codex_answer_var.set(self.cfg["codex_answers"])
-        self._write_codex_flag()
-        self.sync_bubbles(self._last_items)
-
-    def _write_codex_flag(self):
-        flag = os.path.join(HOME_DIR, "codex-answers")  # read by the hooks, including WSL ones (shared folder)
-        try:
-            if self.cfg.get("codex_answers"):
-                os.makedirs(HOME_DIR, exist_ok=True)
-                open(flag, "w").close()
-            elif os.path.exists(flag):
-                os.remove(flag)
-        except OSError:
-            pass
 
     def set_session_titles(self, mode):
         """Session name (default) or latest prompt as the extra title (same-folder sessions, expanded badges)."""
@@ -1270,7 +866,7 @@ class PetApp:
         if self._menu_open:
             return "break"
         self.hide_tip()
-        self.drag = None
+        self.pointer.drag = None
         if pet:
             pet._on_bubble, pet._on_badge = False, None
         self.menu_pet = pet
@@ -1282,7 +878,7 @@ class PetApp:
             try:
                 if self.clickthru:
                     self.clickthru.set(False)
-                    self._pass = False
+                    self.pointer.passing = False
                 entries = self.context_menu_spec(pet)
                 native = False
                 if NATIVE_WIN_MENU:
@@ -1374,34 +970,6 @@ class PetApp:
         rescale_card_fonts()
         for d in list(self.details.values()):
             d.apply_scale()
-
-    def whitelist_request(self, item):
-        """Add the prompt on this session's card to its hook config's auto-approve whitelist, as an exact match:
-        the whole command (or path, URL...), or the tool itself when it has no such argument (MCP tools). Returns a
-        line for the card, or None if nothing was saved."""
-        req = (item or {}).get("request") or {}
-        tool = req.get("tool") or ""
-        if not tool:
-            return None
-        subject = req.get("subject") if req.get("primary") else ""
-        pattern = re.escape(subject) if subject else re.escape(tool)
-        key = auto_approve_key_for(item)
-        rules = auto_approve_rules().get(key) or default_auto_rules()
-        white = [x for x in rules.get("whitelist") or [] if str(x).strip()]
-        if pattern not in white:
-            white.append(pattern)
-        black = rules.get("blacklist")
-        if black == DEFAULT_BLACKLIST and len(white) == 1:
-            # the default "ask for everything" would keep the whitelist from ever applying; with a fresh list of exact
-            # matches only, nothing broader gets through
-            black = []
-        rules = dict(rules, enabled=True, whitelist=white, blacklist=black)
-        if not save_auto_approve(key, rules):
-            return None
-        blocked = any(_search(p, subject or tool) for p in (black or []))
-        what = "this exact command" if subject else f"every {tool} request"
-        return (f"Allowed, and {what} is now on the auto-approve whitelist ({key})."
-                + (" Your blacklist still asks for it, though." if blocked else ""))
 
     def set_tooltip(self, kind, on):
         return tooltips.set_tooltip(self, kind, on)

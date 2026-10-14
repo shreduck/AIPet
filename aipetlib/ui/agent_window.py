@@ -25,11 +25,11 @@ import time
 import tkinter as tk
 from tkinter import font as tkfont
 
-import aipet as core
+from aipetlib.ui import theme
 from aipetlib.runtime import diagnostics
 from aipetlib.agents import log_filters, network, stats
 from aipetlib.agents.tools import is_mcp_tool
-from aipetlib.ui.agent_common import (  # noqa: F401  (re-exported: the app and tests use these names here)
+from aipetlib.ui.agent_common import (  # noqa: F401  (the window's values, also read from here)
     REFRESH_MS, FRAME_MS, IS_MAC, ALPHA_MIN, ALPHA_STEP, OPACITY_STEP, SCALE_MIN, SCALE_MAX, SCALE_STEP,
     TEXT_SCALE_MIN, TEXT_SCALE_MAX, TEXT_SCALE_STEP, ZOOM_MIN, ZOOM_MAX, OPTIONS_KEY, DEFAULT_OPTIONS, LOG_SIDES,
     HINT, BG_OPACITY, _snap, load_options, log_preview, formatted_log_content, key_color, dither, needed_size,
@@ -197,6 +197,8 @@ class AgentNetworkWindow(agent_controls.WindowControls):
         w.bind("<Up>", key(lambda: self.prompt.step_option(-1) if self.prompt.overlay_open else self.logs.text.yview_scroll(-1, "units")))
         for k in ("a", "A"):
             w.bind(k, key(lambda: self.select(-1)))
+        for k in ("l", "L"):
+            w.bind(k, key(lambda: self.tool("fold_logs")))
         for k in ("plus", "equal", "KP_Add"):
             w.bind(f"<{k}>", key(lambda: self.graph.zoom(1.25)))
         for k in ("minus", "KP_Subtract"):
@@ -258,7 +260,7 @@ class AgentNetworkWindow(agent_controls.WindowControls):
     # ---- theme
     @property
     def P(self):
-        return PALETTES.get(core.T.get("name"), PALETTES["light"])
+        return PALETTES.get(theme.T.get("name"), PALETTES["light"])
 
     # ---- data
     def show_session(self, key=None):

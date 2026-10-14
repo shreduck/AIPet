@@ -330,11 +330,14 @@ A live map of one session: the main agent and every subagent it started, Claude 
 - **Tool nodes** sit under the agent that called them, with a gear icon. Each unique tool, including MCP tools,
   gets one node per calling agent. Clicking it selects the calling agent and filters its log to that tool's inputs
   and outputs, matched by call ID. The graph settings include a **tool calls** toggle. Tool nodes do not count as subagents
-  or add model context to the stats.
+  or add model context to the stats. A tool node counts its calls for the whole session and for this task (since your
+  latest prompt): *12 calls · 2 this task*; the stats node's *tools* line and drop-down give both too.
 - Finished subagents remain visible across new messages until unused for **80% of Clear finished after**
   (3 minutes means 2 minutes 24 seconds). Reuse resets the timer; active agents and their parent branches stay
   visible, and setting the session timeout to **never** also disables subagent expiry.
-- **Logs** below the graph, or above, left or right of it (settings: *logs position*). Every other entry is shaded,
+- **Logs** below the graph, or above, left or right of it (settings: *logs position*). *[− logs]* at the end of the
+  tabs (or `l`, or *folded* in the settings) folds them down to their tabs and gives the graph the room; *[+ logs]*
+  brings them back. Every other entry is shaded,
   and each agent's final reply (its result) is tinted green with a green mark before it. Drag the line between graph and logs to
   resize them (up to 80% of the window); *tail* (settings, or `[tail ▼]` at the end of the tabs) follows the newest
   line, and unfolding an entry switches it off so what you opened stays in sight; select text and Ctrl+C to
@@ -360,7 +363,8 @@ A live map of one session: the main agent and every subagent it started, Claude 
   *aipet: always (whitelist)* (AIPet's own auto-approve list), Claude Code prompts list Claude Code's own choices
   when it offers them, marked *claude:* (e.g. *claude: allow Bash(npm test:\*) always, in this project*, or a
   permission mode for this session); picking one allows the prompt and Claude Code saves that rule itself. Codex
-  doesn't offer such choices to hooks: use *answer in codex* for its own.
+  doesn't offer such choices to hooks: use *answer in codex* for its own. *aipet: auto approve this session for N min…*
+  works as on the card: after its confirmation every prompt of that session is approved for a while, this one too.
 - **Codex prompts and Go to window**: while AIPet's hook holds a Codex prompt, Codex waits for it and shows nothing.
   *Go to window* (on the card) and *Answer in Codex* (in the agent network) hand the prompt back, so Codex shows its own
   prompt with all its choices, like always allowing that tool. Claude Code shows its own prompt alongside the pet's
@@ -535,7 +539,7 @@ From source, the Windows hook runs via `pythonw` and the script, so no exe is ne
 ## Files
 | File | Purpose |
 |---|---|
-| `aipet_app.py` | Entry point: tray, application actions, autostart, config watcher |
+| `aipet_app.py` | Entry point: tray, application actions, autostart; wires the controllers in `aipetlib/app/` |
 | `aipet.py` | Pet runtime coordination, shared state and compatibility entry points |
 | `aipetlib/runtime/` | Paths, live preference holders, reading and saving `config.json`, and the error log, shared by the app and background workers |
 | `aipetlib/agents/` | The agent network backend: Claude/Codex transcript adapters, incremental history, tool calls, network assembly, log filters, stats and the background tracker (no Tk) |
@@ -543,16 +547,17 @@ From source, the Windows hook runs via `pythonw` and the script, so no exe is ne
 | `aipetlib/housekeeping.py` | Sweeping leftovers (half-written files, dead hooks' answers, old debug logs) |
 | `aipetlib/geometry.py`, `windows.py`, `mac_panels.py`, `click_through.py` | Monitor geometry and native window behavior |
 | `aipetlib/vscode.py`, `workbench.py`, `hook_events.py` | Editor routing, MCP polling and hook event transitions |
-| `aipetlib/ui/` | Pet rendering (`pet_style`, `pet_view`, `sprites`, `theme`), permission cards, tooltips, size sliders, menu definitions, the chimes (`sounds`), and the agent-window components (`agent_logs`, `agent_graph`, `agent_prompts`, `agent_menu`, `agent_controls`) with their shared values (`agent_common`) |
+| `aipetlib/ui/` | Pet rendering (`pet_style`, `pet_view`, `sprites`, `theme`), permission cards, tooltips, size sliders, menu definitions, the chimes (`sounds`), the agent network window (`agent_window`) and its components (`agent_logs`, `agent_graph`, `agent_prompts`, `agent_menu`, `agent_controls`) with their shared values (`agent_common`) |
 | `aipetlib/text.py` | Plain-text helpers: phrases, "3m ago", countdowns |
+| `aipetlib/update.py` | Releases: this build's version and the newest one on GitHub |
+| `aipetlib/app/` | The apps' controllers, each owning one part: `updates` (the daily check, its menu entries and dialog), `agent_windows` (the agent network windows the tray opens and their menu switches), `approvals` (auto approve rules per hook target: the rules window and its menu entries), `config_watch` (config.json edited by hand, applied live), `diagnostics` (Save diagnostics...), `placement` (the pets' anchored corner and shared margin), `pointer` (dragging, clicks, click-through), `answers` (answering the hooks: send, let go, timed approve, whitelist, the answering switches) |
+| `aipetlib/integrations/` | Hook targets (`targets`: the keys of this machine, WSL and Codex targets); the installer follows in stage 9 |
 | `aipet_settings.py` | The AIPet menu window (built from the same menu definition) |
 | `aipet_agents.py` | Temporary facade over `aipetlib/agents/` (to be removed) |
-| `aipet_agents_window.py` | Agent-window lifecycle and state; delegates graph, logs, prompts, controls and widget construction |
 | `aipet_guide.py` | The settings guide for AI assistants (Copy settings guide for AI) |
 | `aipet_hook.py` | The hook Claude Code and Codex run on each event |
 | `hooks_installer.py` | settings.json / hooks.json merge and remove, backups and restore, the Cowork plugin |
 | `aipet_usage.py`, `aipet_claude_usage.py` | Usage-limit readings |
-| `aipet_update.py` | The daily update check |
 | `mac_statusbar.py` | The macOS menu-bar icon and native panels |
 | `legacy.py` | Moving over from Claude Pet (removable later) |
 | `build.bat`, `build_mac.sh`, `.github/workflows/` | Builds and the macOS self-test |

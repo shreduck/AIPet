@@ -23,9 +23,16 @@ class WindowControls:
             self.close()
             return "break"
         toggles = {"frame": "frameless", "pin": "on_top", "each": "separate", "tabs": "tabbed", "tidy": "tidy",
-                   "tail": "log_tail", "tools": "tools", "auto_fit": "auto_fit"}
+                   "tail": "log_tail", "tools": "tools", "auto_fit": "auto_fit", "fold_logs": "log_collapsed"}
         if name in toggles:
             o[toggles[name]] = not o[toggles[name]]
+            if name == "fold_logs":  # only the tabs stay, or the logs come back (drawn now: skipped while folded)
+                self.logs.arrange()
+                self.logs.update_tailbtn()
+                self.graph.center_next = True
+                if not o["log_collapsed"]:
+                    self.logs.invalidate()
+                    self.logs.draw()
             if name == "tail":
                 self.logs.update_tailbtn()
                 if o["log_tail"]:
@@ -81,8 +88,9 @@ class WindowControls:
             self.graph.center_next = True
         if any(self.opts.get(k) != old.get(k) for k in ("scale", "text_scale")):
             self._apply_scale()
-        if any(self.opts.get(k) != old.get(k) for k in ("log_side", "log_lines", "log_cols")):
+        if any(self.opts.get(k) != old.get(k) for k in ("log_side", "log_lines", "log_cols", "log_collapsed")):
             self.logs.arrange()
+            self.logs.update_tailbtn()
         if self.opts.get("tools") != old.get("tools"):
             self._refresh()
         self._apply_options()

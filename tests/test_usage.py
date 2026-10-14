@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import aipet
 import aipet_hook
-import aipet_update
+import aipetlib.update as aipet_update
 import aipet_selftest
 import aipet_claude_usage as claude_usage
 import aipet_usage as usage
@@ -88,9 +88,10 @@ class UsageTests(unittest.TestCase):
         pet.usage_extra = 0
         app.pets, app.order = {"pet": pet}, ["pet"]
         app.frame = MagicMock()
-        app._usage_frame_pad = aipet.px(aipet.USAGE_EDGE_ROOM)
+        app.placement = aipet.Placement(app)
+        app.placement.usage_frame_pad = aipet.px(aipet.USAGE_EDGE_ROOM)
         pet.usage_extra = 12
-        adjustment = app._sync_usage_padding()
+        adjustment = app.placement.sync_usage_padding()
         self.assertEqual(adjustment + aipet.px(12), 0)
 
     def test_usage_badge_sits_beside_lower_body(self):

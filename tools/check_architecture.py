@@ -26,11 +26,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 BASELINE = Path(__file__).with_name("architecture_baseline.json")
 
-ENTRY_MODULES = {"aipet", "aipet_app", "aipet_agents", "aipet_agents_window", "aipet_settings", "aipet_guide",
-                 "aipet_selftest", "aipet_update", "hooks_installer", "legacy"}
+ENTRY_MODULES = {"aipet", "aipet_app", "aipet_agents", "aipet_settings", "aipet_guide",
+                 "aipet_selftest", "hooks_installer", "legacy"}
 GUI_PACKAGES = {"tkinter", "_tkinter", "PIL", "pystray", "pyvda", "comtypes", "objc", "AppKit"}
 HEADLESS = ["aipetlib.agents", "aipetlib.runtime", "aipetlib.config", "aipetlib.records", "aipetlib.text",
-            "aipetlib.housekeeping", "aipetlib.ui.sounds",
+            "aipetlib.housekeeping", "aipetlib.ui.sounds", "aipetlib.update", "aipetlib.integrations.targets",
             "aipetlib.workbench", "aipetlib.codex_questions", "aipetlib.gestures", "aipetlib.hook_events",
             "aipetlib.sessions", "aipetlib.permissions"]
 # What hooks_installer.deploy_files copies to ~/.aipet/bin for the source hook (keep both lists in step)
@@ -43,7 +43,7 @@ SERVICE_FREE = ["aipetlib.agents", "aipetlib.runtime", "aipetlib.text", "aipetli
                 "aipetlib.sessions", "aipetlib.ui.pet_style", "aipetlib.ui.pet_view", "aipetlib.ui.tooltips",
                 "aipetlib.ui.appearance_controls", "aipetlib.ui.permission_card", "aipetlib.ui.agent_common",
                 "aipetlib.ui.agent_prompts", "aipetlib.ui.agent_logs", "aipetlib.ui.agent_shell", "aipetlib.ui.agent_graph",
-                "aipetlib.ui.agent_controls", "aipetlib.ui.agent_menu", "aipetlib.ui.sounds", "aipetlib.housekeeping", "aipetlib.ui.app_menus",
+                "aipetlib.ui.agent_controls", "aipetlib.ui.agent_menu", "aipetlib.ui.agent_window", "aipetlib.ui.sounds", "aipetlib.housekeeping", "aipetlib.update", "aipetlib.app", "aipetlib.integrations", "aipetlib.ui.app_menus",
                 "aipetlib.hook_events"]
 
 

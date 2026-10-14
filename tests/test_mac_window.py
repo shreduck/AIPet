@@ -18,7 +18,7 @@ class MacWindowTests(unittest.TestCase):
         from unittest.mock import patch
         import aipet
         import aipetlib.agents.log_filters as agent_log_filters
-        from aipet_agents_window import AgentNetworkWindow
+        from aipetlib.ui.agent_window import AgentNetworkWindow
 
         root = aipet.MacPetWindow()
         root.withdraw()
@@ -70,7 +70,7 @@ class MacWindowTests(unittest.TestCase):
         from unittest.mock import patch
         import aipet
         import aipetlib.agents.log_filters as agent_log_filters
-        from aipet_agents_window import AgentNetworkWindow
+        from aipetlib.ui.agent_window import AgentNetworkWindow
 
         root = aipet.MacPetWindow()
         root.withdraw()
@@ -120,7 +120,7 @@ class MacWindowTests(unittest.TestCase):
         from types import SimpleNamespace
         from unittest.mock import patch
         import aipet
-        from aipet_agents_window import AgentNetworkWindow, DEFAULT_OPTIONS
+        from aipetlib.ui.agent_window import AgentNetworkWindow, DEFAULT_OPTIONS
 
         root = aipet.MacPetWindow()
         root.withdraw()
@@ -167,7 +167,7 @@ class MacWindowTests(unittest.TestCase):
     def test_log_filter_toolbar_aligns_and_wraps_without_overlapping_logs(self):
         from types import SimpleNamespace
         import aipet
-        from aipet_agents_window import AgentNetworkWindow
+        from aipetlib.ui.agent_window import AgentNetworkWindow
 
         root = aipet.MacPetWindow()
         root.withdraw()
@@ -211,7 +211,7 @@ class MacWindowTests(unittest.TestCase):
     def test_agent_network_opens_with_and_without_sessions(self):
         from types import SimpleNamespace
         import aipet
-        from aipet_agents_window import AgentNetworkWindow
+        from aipetlib.ui.agent_window import AgentNetworkWindow
 
         root = aipet.MacPetWindow()
         root.withdraw()
@@ -239,7 +239,7 @@ class MacWindowTests(unittest.TestCase):
     def test_resize_preserves_ui_scale_and_text_size(self):
         from types import SimpleNamespace
         import aipet
-        from aipet_agents_window import AgentNetworkWindow
+        from aipetlib.ui.agent_window import AgentNetworkWindow
 
         root = aipet.MacPetWindow()
         root.withdraw()
@@ -286,10 +286,12 @@ class MacWindowTests(unittest.TestCase):
 
         def open_settings():
             app = object.__new__(aipet_app.TrayApp)
-            app.root, app._auto_changed = root, MagicMock()
-            app.open_auto_rules(key, "Isolated persistence test")
+            app.root = root
+            app.approvals = aipet_app.Approvals(app)
+            app.approvals.changed = MagicMock()
+            app.approvals.open_editor(key, "Isolated persistence test")
             root.update()
-            return app, app.auto_wins[key]
+            return app, app.approvals.editors[key]
 
         failures = []
         try:
@@ -323,7 +325,7 @@ class MacWindowTests(unittest.TestCase):
                     if failures:
                         raise failures[0]
                     self.assertFalse(settings.winfo_exists())
-                    app._auto_changed.assert_called_once()
+                    app.approvals.changed.assert_called_once()
                     self.assertEqual(json.loads(path.read_text()), {"targets": {key: expected}, "timed": {}})
                     self.assertEqual(aipet.auto_approve_rules()[key], expected)
                     self.assertFalse(Path(str(path) + ".tmp").exists())
@@ -355,7 +357,9 @@ class MacWindowTests(unittest.TestCase):
         root.title("AIPet modal regression")
         root.update()
         app = object.__new__(aipet_app.TrayApp)
-        app.root, app._auto_changed = root, MagicMock()
+        app.root = root
+        app.approvals = aipet_app.Approvals(app)
+        app.approvals.changed = MagicMock()
 
         def descendants(widget):
             for child in widget.winfo_children():
@@ -373,13 +377,13 @@ class MacWindowTests(unittest.TestCase):
             bridge._dispatch(2, 1, x, y, 0)
 
         try:
-            with patch.object(aipet, "auto_approve_rules", return_value={}), \
-                    patch.object(aipet, "save_auto_approve", return_value=True) as save:
+            with patch.object(aipet.permissions, "auto_approve_rules", return_value={}), \
+                    patch.object(aipet.permissions, "save_auto_approve", return_value=True) as save:
                 for accept, saved in ((False, True), (None, True), (True, False), (True, True)):
                     save.reset_mock()
                     save.return_value = saved
-                    app.open_auto_rules("test-only", "Test only (nothing is saved)")
-                    settings = app.auto_wins["test-only"]
+                    app.approvals.open_editor("test-only", "Test only (nothing is saved)")
+                    settings = app.approvals.editors["test-only"]
                     root.update()
                     next(w for w in descendants(settings) if isinstance(w, tk.Checkbutton)).invoke()
                     def dismiss_warning():
@@ -427,8 +431,8 @@ class MacWindowTests(unittest.TestCase):
         item = {"key": "test-only", "agent": "codex", "title": "Test permission", "state": "needs_input",
                 "request": {"id": "test-only", "tool": "Test", "detail": "No command is executed"}}
         app = SimpleNamespace(root=root, cfg={"all_spaces": True}, details={}, _last_items=[item],
-                              timed_minutes=lambda: 5,
-                              answers_enabled=lambda _: True, send_answer=MagicMock(return_value=False))
+                              answers=SimpleNamespace(timed_minutes=lambda: 5,
+                                  enabled=lambda _: True, send=MagicMock(return_value=False)))
         detail = None
         try:
             with patch.object(aipet_sprites, "load_sprites", return_value=None), patch.object(aipet.permissions, "hook_waiting", return_value=True):
@@ -449,7 +453,7 @@ class MacWindowTests(unittest.TestCase):
                     detail._mouse_bridge._dispatch(1, 1, x, y, 0)
                     detail._mouse_bridge._dispatch(2, 1, x, y, 0)
                     root.update()
-                    app.send_answer.assert_called_with("test-only", answer)
+                    app.answers.send.assert_called_with("test-only", answer)
         finally:
             if detail:
                 detail.close()
@@ -514,7 +518,7 @@ class MacWindowTests(unittest.TestCase):
         import Quartz
         import aipet
         import mac_statusbar as mac
-        from aipet_agents_window import AgentNetworkWindow
+        from aipetlib.ui.agent_window import AgentNetworkWindow
 
         workspace = mac.send(mac.cls("NSWorkspace"), "sharedWorkspace")
         previous = mac.send(workspace, "frontmostApplication")

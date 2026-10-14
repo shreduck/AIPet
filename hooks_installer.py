@@ -67,12 +67,8 @@ MARKER = re.compile(r"(aipet|claude[-_]pet)[-_]hook", re.I)  # LEGACY: claude-pe
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 IGNORED_DISTROS = {"docker-desktop", "docker-desktop-data", "rancher-desktop", "rancher-desktop-data"}
 IS_MAC = sys.platform == "darwin"
-LOCAL = "mac" if IS_MAC else "windows"  # key of the machine this app runs on
-
-
 # Target keys: "windows" / "mac" / "wsl:<distro>" for Claude Code, the same with a "codex:" prefix for Codex.
-def is_codex(key):
-    return key.startswith("codex:")
+from aipetlib.integrations.targets import LOCAL, is_codex  # noqa: E402,F401  (their owner; used here and by callers)
 
 
 def _base(key):

@@ -10,6 +10,7 @@ from unittest.mock import patch
 import aipet
 import support
 from aipetlib.prompt_navigation import PromptNavigation
+from aipetlib.app.answers import Answers
 
 
 def session(key="cc:fixture", agent="codex"):
@@ -32,7 +33,8 @@ def application(items):
     app.details = {}
     app.focused, app.sent = [], []
     app.focus_key = app.focused.append
-    app.send_answer = lambda key, behavior: app.sent.append((key, behavior,
+    app.answers = Answers(app)
+    app.answers.send = lambda key, behavior: app.sent.append((key, behavior,
         next(i for i in app._last_items if i["key"] == key)["request"]["id"])) or False
     app.refresh = lambda: setattr(app, "_last_items", app.collect())
     return app
@@ -45,7 +47,7 @@ class PromptNavigationTests(unittest.TestCase):
         app = application([raw])
         with patch.object(aipet, "read_claude_code_sessions", side_effect=lambda _: [copy.deepcopy(raw)]):
             for step, index in ((-1, 1), (1, 0), (1, 1), (-1, 0)):
-                self.assertTrue(app.step_prompt(raw["key"], step))
+                self.assertTrue(app.answers.step_prompt(raw["key"], step))
                 for _ in range(3):
                     app.refresh()
                     self.assertEqual(app._last_items[0]["request"], raw["requests"][index])
@@ -58,13 +60,13 @@ class PromptNavigationTests(unittest.TestCase):
         original = copy.deepcopy(raw)
         app = application([raw])
         with patch.object(aipet, "read_claude_code_sessions", side_effect=lambda _: [copy.deepcopy(raw)]):
-            self.assertTrue(app.go_to_prompt(raw["key"]))
+            self.assertTrue(app.answers.go_to_prompt(raw["key"]))
             for _ in range(4):
                 app.refresh()
                 self.assertEqual(app._last_items[0]["request"]["id"], raw["requests"][1]["id"])
                 self.assertEqual(app._last_items[0]["wait_agent"], "hat-agent")
                 self.assertEqual(app._agent_items[0]["request"], raw["requests"][1])
-            self.assertTrue(app.go_to_prompt(raw["key"]))
+            self.assertTrue(app.answers.go_to_prompt(raw["key"]))
             self.assertEqual(app._last_items[0]["request"], raw["request"])
         self.assertEqual(raw, original)
         self.assertEqual(app._last_items[0]["requests"], original["requests"])
@@ -90,22 +92,22 @@ class PromptNavigationTests(unittest.TestCase):
         for item in (dict(session(), state="working"), dict(session(), requests=[session()["request"]])):
             with self.subTest(item=item):
                 app = application([item])
-                self.assertFalse(app.go_to_prompt(item["key"]))
+                self.assertFalse(app.answers.go_to_prompt(item["key"]))
                 self.assertEqual(app.focused, [item["key"]])
-                self.assertFalse(app._prompt_navigation.selected)
+                self.assertFalse(app.answers.navigation.selected)
 
     def test_claude_navigation_never_releases_hook(self):
         item = session(agent="claude")
         app = application([item])
         with patch.object(aipet, "read_claude_code_sessions", return_value=[item]):
-            self.assertTrue(app.go_to_prompt(item["key"]))
+            self.assertTrue(app.answers.go_to_prompt(item["key"]))
         self.assertEqual(app.sent, [])
 
     def test_immediate_advance_does_not_start_an_extra_poll(self):
         item = session()
         app = application([item])
         app.refresh = lambda: self.fail("navigation must not schedule another poll loop")
-        self.assertTrue(app.go_to_prompt(item["key"]))
+        self.assertTrue(app.answers.go_to_prompt(item["key"]))
         self.assertEqual(app._agent_items[0]["request"], item["requests"][1])
 
     def test_selected_hook_answer_and_release_target_current_request(self):
@@ -113,8 +115,8 @@ class PromptNavigationTests(unittest.TestCase):
         for request in item["requests"]:
             request.update(source="hook", answerable=True)
         app = application([item])
-        app.send_answer = aipet.PetApp.send_answer.__get__(app)
-        app.answers_enabled = lambda _: True
+        app.answers.send = Answers.send.__get__(app.answers)
+        app.answers.enabled = lambda _: True
         with tempfile.TemporaryDirectory() as directory, support.paths(HOME_DIR=directory), \
                 patch.object(aipet, "read_claude_code_sessions", return_value=[item]):
             from aipetlib.permissions import answer_name
@@ -122,14 +124,14 @@ class PromptNavigationTests(unittest.TestCase):
             answers.mkdir()
             for request in item["requests"]:
                 (answers / (answer_name(dict(item, request=request)) + ".waiting")).touch()
-            self.assertTrue(app.go_to_prompt(item["key"]))
+            self.assertTrue(app.answers.go_to_prompt(item["key"]))
             names = [answer_name(dict(item, request=r)) for r in item["requests"]]
             self.assertEqual(json.loads((answers / (names[0] + ".json")).read_text())["behavior"], "release")
             self.assertFalse((answers / (names[1] + ".json")).exists())
-            self.assertTrue(app.send_answer(item["key"], "allow", answers={"Which hat?": "Cap"}))
+            self.assertTrue(app.answers.send(item["key"], "allow", answers={"Which hat?": "Cap"}))
             self.assertEqual(json.loads((answers / (names[1] + ".json")).read_text())["answers"],
                              {"Which hat?": "Cap"})
-            self.assertTrue(app.go_to_prompt(item["key"]))
+            self.assertTrue(app.answers.go_to_prompt(item["key"]))
             self.assertEqual(json.loads((answers / (names[1] + ".json")).read_text())["behavior"], "release")
         self.assertEqual(len(item["requests"]), 2)
 
@@ -153,7 +155,7 @@ class PromptNavigationGuiTests(unittest.TestCase):
         raw["pending"] = 3
         app = application([raw])
         app.root, app.details = fixture.root, {}
-        app.answers_enabled, app.timed_minutes = lambda _: True, lambda: 5
+        app.answers.enabled, app.answers.timed_minutes = lambda _: True, lambda: 5
         with patch.object(component.permissions, "hook_waiting", return_value=True), \
                 patch.object(sprites, "load_sprites", return_value=None):
             card = aipet.Detail(app, raw["key"], raw)
@@ -209,7 +211,7 @@ class PromptNavigationGuiTests(unittest.TestCase):
         original = copy.deepcopy(raw)
         app = application([raw])
         app.root, app.details = fixture.root, {}
-        app.answers_enabled, app.timed_minutes = lambda _: True, lambda: 5
+        app.answers.enabled, app.answers.timed_minutes = lambda _: True, lambda: 5
         fixture.window.pet = app
         with patch.object(aipet, "read_claude_code_sessions", side_effect=lambda _: [copy.deepcopy(raw)]), \
                 patch.object(sprites, "load_sprites", return_value=None):
