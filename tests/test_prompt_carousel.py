@@ -22,13 +22,21 @@ class CarouselTests(unittest.TestCase):
         fake_tk.Label.return_value.winfo_reqwidth.return_value = 40  # widget sizes for laying out the answers
         for target, name, value in ((component, "tk", fake_tk),
                                     (component.permission_rules, "hook_waiting", lambda _: True),
-                                    (component.common, "prompt_agent", lambda net, item: 0)):
+                                    (component.common, "prompt_agent", lambda net, item: 0),
+                                    (component.permission_rules, "timed_grants", lambda: self.grants)):
             stub = patch.object(target, name, value)
             stub.start()
             self.addCleanup(stub.stop)
         self.sent = []
+        self.grants, self.confirm = {}, True
+
+        def start_timed_approve(item):  # the pet's confirmation dialog: True once the grant runs
+            if self.confirm:
+                self.grants[item["session_id"]] = {"until": 9e9}
+            return self.confirm
         pet = SimpleNamespace(answers_enabled=lambda _: True, open_detail=lambda key: None,
-                              go_to_prompt=lambda key: None,
+                              go_to_prompt=lambda key: None, timed_minutes=lambda: 15,
+                              start_timed_approve=start_timed_approve,
                               send_answer=lambda key, behavior, **kw: self.sent.append((behavior, kw)) or True)
         self.window = SimpleNamespace(
             win=MagicMock(), P={k: "#000000" for k in ("node", "red", "mu", "hi", "tx", "bar", "line", "redbg", "blue")},
@@ -115,6 +123,40 @@ class CarouselTests(unittest.TestCase):
         self.prompt.draw()
         self.assertEqual(self.prompt.q_index, 0)
         self.assertFalse(any(self.prompt.is_answered(k) for k in range(3)))
+
+
+    # ---- a permission: auto approve this session for a while, as on the card
+    def permission(self, session_id="s1"):
+        self.window.item = {"agent": "claude", "state": "needs_input", "session_id": session_id,
+                            "request": {"id": "p1", "tool": "Bash", "detail": "ls", "answerable": True}}
+        self.prompt.sig = None
+        self.prompt.draw()
+        self.prompt.open(True)
+
+    def test_permission_offers_a_timed_auto_approve(self):
+        self.permission()
+        self.assertEqual(self.labels(), ["allow once", "aipet: always (whitelist)",
+                                         "aipet: auto approve this session for 15 min…", "deny", "full card",
+                                         "go to window"])
+        self.choose("aipet: auto approve this session for 15 min…")
+        self.assertIn("s1", self.grants)
+        self.assertEqual(self.sent, [("allow", {"answers": None})])
+
+    def test_cancelled_confirmation_answers_nothing(self):
+        self.confirm = False
+        self.permission()
+        self.choose("aipet: auto approve this session for 15 min…")
+        self.assertEqual(self.sent, [])
+
+    def test_while_auto_approving_it_just_allows(self):
+        self.grants["s1"] = {"until": 9e9}
+        self.permission()
+        self.choose("aipet: auto approving this session · allow")
+        self.assertEqual(self.sent, [("allow", {"answers": None})])
+
+    def test_no_session_no_timed_choice(self):
+        self.permission(session_id=None)
+        self.assertNotIn("aipet: auto approve this session for 15 min…", self.labels())
 
 
 if __name__ == "__main__":

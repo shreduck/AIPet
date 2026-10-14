@@ -173,8 +173,13 @@ class PromptPanel:
                 agent_name = "codex" if (item or {}).get("agent") == "codex" else "claude"
                 self.options.append((f"{agent_name}: {common.suggestion_label(sug)}",
                                      lambda sug=sug: self.send("allow", permissions=[sug])))
-            self.options += [("aipet: always (whitelist)", self.always),
-                             ("deny", lambda: self.send("deny"))]
+            self.options.append(("aipet: always (whitelist)", self.always))
+            if (item or {}).get("session_id"):  # like the card: every prompt of this session, for a while
+                grant = permission_rules.timed_grants().get(str(item["session_id"]))
+                self.options.append(("aipet: auto approving this session · allow" if grant else
+                                     f"aipet: auto approve this session for {window.pet.timed_minutes()} min…",
+                                     self.timed))
+            self.options.append(("deny", lambda: self.send("deny")))
         n_answers = len(self.options)
         self.options.append(("full card", lambda: window.pet.open_detail(window.key)))
         codex = (item or {}).get("agent") == "codex"
@@ -448,6 +453,13 @@ class PromptPanel:
         window.pet.go_to_prompt(window.key)
         self.sig = None  # rebuilt as "answer it in the window"
         self.open(False)
+
+    def timed(self):
+        """Auto approve this session's prompts for a while (after the pet's confirmation), and allow this one."""
+        window = self.window
+        item = window.item or {}
+        if permission_rules.timed_grants().get(str(item.get("session_id"))) or window.pet.start_timed_approve(item):
+            self.send("allow")
 
     def always(self):
         window = self.window

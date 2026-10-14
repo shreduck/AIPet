@@ -361,7 +361,8 @@ A live map of one session: the main agent and every subagent it started, Claude 
   *aipet: always (whitelist)* (AIPet's own auto-approve list), Claude Code prompts list Claude Code's own choices
   when it offers them, marked *claude:* (e.g. *claude: allow Bash(npm test:\*) always, in this project*, or a
   permission mode for this session); picking one allows the prompt and Claude Code saves that rule itself. Codex
-  doesn't offer such choices to hooks: use *answer in codex* for its own.
+  doesn't offer such choices to hooks: use *answer in codex* for its own. *aipet: auto approve this session for N min…*
+  works as on the card: after its confirmation every prompt of that session is approved for a while, this one too.
 - **Codex prompts and Go to window**: while AIPet's hook holds a Codex prompt, Codex waits for it and shows nothing.
   *Go to window* (on the card) and *Answer in Codex* (in the agent network) hand the prompt back, so Codex shows its own
   prompt with all its choices, like always allowing that tool. Claude Code shows its own prompt alongside the pet's
