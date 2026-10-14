@@ -34,7 +34,7 @@ class QuestionOverlayGuiTests(unittest.TestCase):
             self.addCleanup(stub.stop)
         self.window = w = SimpleNamespace(win=self.root, P={"node": "#20242b", "tx": "#dddddd",
             "hi": "#ffffff", "red": "#ff9999", "mu": "#aaaaaa", "bar": "#15191f",
-            "line": "#444444", "redbg": "#442222"}, px=lambda n: int(n),
+            "line": "#444444", "redbg": "#442222", "blue": "#7fb4f0"}, px=lambda n: int(n),
             f_small=("Arial", 11), f_main=("Arial", 12), f_bold=("Arial", 12, "bold"),
             key="isolated-fixture", theme="dark", s=1,
             net={"agents": [{"name": "Codex", "id": "main"}]})
