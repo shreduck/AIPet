@@ -16,6 +16,8 @@ Rules
        module_services   `sys.modules[__name__]` passes a whole entry module as the services object
        services_refs     `services.X` lookups in aipetlib: what components still reach through the services object
      Lower counts are reported so the baseline can be tightened with --update-baseline.
+  6. The compatibility facades removed in stage 11 (REMOVED_MODULES) stay removed, and nothing imports them.
+  7. Entry modules (NO_REEXPORTS) import only what they use: no re-exports for other code to reach through.
 """
 import argparse
 import ast
@@ -26,12 +28,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 BASELINE = Path(__file__).with_name("architecture_baseline.json")
 
-ENTRY_MODULES = {"aipet", "aipet_app", "aipet_agents", "aipet_settings", "aipet_guide",
-                 "aipet_selftest", "hooks_installer", "legacy", "aipet_hook"}
+ENTRY_MODULES = {"aipet", "aipet_app", "aipet_settings", "aipet_guide", "aipet_selftest", "aipet_hook"}
+# Compatibility facades removed in stage 11: they must not come back, and nothing may import them
+REMOVED_MODULES = {"aipet_agents", "aipet_agents_window", "aipet_update", "hooks_installer", "legacy", "aipet_codex",
+                   "aipetlib.hook_events"}
+# Entry modules that may only import what they use themselves (no re-exports for other code to reach through)
+NO_REEXPORTS = ["aipet", "aipet_app", "aipet_settings"]
 GUI_PACKAGES = {"tkinter", "_tkinter", "PIL", "pystray", "pyvda", "comtypes", "objc", "AppKit"}
 HEADLESS = ["aipet_hook_runtime", "aipetlib.agents", "aipetlib.runtime", "aipetlib.config", "aipetlib.records", "aipetlib.text",
             "aipetlib.housekeeping", "aipetlib.ui.sounds", "aipetlib.update", "aipetlib.integrations.targets",
-            "aipetlib.workbench", "aipetlib.codex_questions", "aipetlib.gestures", "aipetlib.hook_events",
+            "aipetlib.workbench", "aipetlib.codex_questions", "aipetlib.gestures",
             "aipetlib.sessions", "aipetlib.permissions",
             "aipetlib.integrations.locations", "aipetlib.integrations.protocol", "aipetlib.integrations.settings",
             "aipetlib.integrations.commands", "aipetlib.integrations.deployment", "aipetlib.integrations.backups",
@@ -50,8 +56,7 @@ SERVICE_FREE = ["aipetlib.agents", "aipetlib.runtime", "aipetlib.text", "aipetli
                 "aipetlib.sessions", "aipetlib.ui.pet_style", "aipetlib.ui.pet_view", "aipetlib.ui.tooltips",
                 "aipetlib.ui.appearance_controls", "aipetlib.ui.tray_icons", "aipetlib.ui.legacy_migration", "aipetlib.ui.native_menu", "aipetlib.ui.permission_card", "aipetlib.ui.agent_common",
                 "aipetlib.ui.agent_prompts", "aipetlib.ui.agent_logs", "aipetlib.ui.agent_shell", "aipetlib.ui.agent_graph",
-                "aipetlib.ui.agent_controls", "aipetlib.ui.agent_menu", "aipetlib.ui.agent_window", "aipetlib.ui.sounds", "aipetlib.housekeeping", "aipetlib.update", "aipetlib.app", "aipetlib.integrations", "aipetlib.ui.app_menus",
-                "aipetlib.hook_events"]
+                "aipetlib.ui.agent_controls", "aipetlib.ui.agent_menu", "aipetlib.ui.agent_window", "aipetlib.ui.sounds", "aipetlib.housekeeping", "aipetlib.update", "aipetlib.app", "aipetlib.integrations", "aipetlib.ui.app_menus"]
 
 
 def module_files():
@@ -140,6 +145,39 @@ def count_module_services(tree):
                and node.value.value.id == "sys" and isinstance(node.slice, ast.Name) and node.slice.id == "__name__")
 
 
+def raw_imports(tree):
+    """Every module an import statement names (also ones that no longer exist): `import a.b`, `from a import b`."""
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            names.add(node.module)
+            names.update(f"{node.module}.{alias.name}" for alias in node.names)
+    return names
+
+
+def reexports(tree):
+    """Names a module imports at top level but never uses itself: re-exports for others to reach through."""
+    imported = {}
+    for node in tree.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                if alias.name != "*":
+                    imported[(alias.asname or alias.name).split(".")[0]] = node.lineno
+    used = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Store):
+            used.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            base = node
+            while isinstance(base, ast.Attribute):
+                base = base.value
+            if isinstance(base, ast.Name):
+                used.add(base.id)
+    return sorted(name for name in imported if name not in used)
+
+
 def analyse():
     local = module_files()
     graph, trees = {}, {}
@@ -172,6 +210,17 @@ def analyse():
             if any((isinstance(node, ast.Name) and node.id == "services") or
                    (isinstance(node, ast.arg) and node.arg == "services") for node in ast.walk(trees[name])):
                 errors.append(f"rule 4: {name} has an explicit interface but uses a services object")
+
+    for name in sorted(local):
+        if name in REMOVED_MODULES:
+            errors.append(f"rule 6: {name} was removed in stage 11 (a compatibility facade); use its owner")
+        for bad in sorted(raw_imports(trees[name]) & REMOVED_MODULES):
+            errors.append(f"rule 6: {name} imports the removed facade {bad}; import its owner")
+    for name in NO_REEXPORTS:
+        if name in trees:
+            for unused in reexports(trees[name]):
+                errors.append(f"rule 7: {name} imports {unused} without using it; other code must import it "
+                              f"from its owner, not through {name}")
 
     counts = {"services_core": {}, "module_services": {}, "services_refs": {}}
     for name, tree in trees.items():

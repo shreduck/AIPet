@@ -11,7 +11,7 @@ macOS LaunchAgent com.claudepet.app) and named its hooks claude-pet-hook. On fir
 * leaves a note in the old folder.
 
 Hooks in settings.json are updated by the normal "hooks point at an older location" prompt afterwards (they are
-recognised by name, see hooks_installer.MARKER). Anything still on the old name keeps working; AIPet reminds the
+recognised by name, see aipetlib.integrations.protocol.MARKER). Anything still on the old name keeps working; AIPet reminds the
 user once a day what to update (findings()).
 
 Everything about the old name lives here, plus lines marked "LEGACY" elsewhere: dropping legacy support later means

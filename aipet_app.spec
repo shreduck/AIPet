@@ -3,7 +3,7 @@
 #     python -m PyInstaller --noconfirm --clean aipet_app.spec
 # Windows: one folder, dist/AIPet, with AIPet.exe and aipet-hook.exe sharing one Python runtime (_internal), instead
 # of a single exe that carried a second, private runtime for the hook. hook_files.txt lists the runtime files the hook
-# needs; on Install the app copies aipet-hook.exe plus those files to ~/.aipet/bin/hook (hooks_installer.deploy_files),
+# needs; on Install the app copies aipet-hook.exe plus those files to ~/.aipet/bin/hook (aipetlib.integrations.deployment.deploy_files),
 # so the installed hooks keep working wherever the folder is moved. macOS bundles the separately built hook;
 # build_mac.sh then shares its identical Python library via tools/share_mac_runtime.py and re-signs the bundle.
 # It does what the old command lines did, minus what AIPet never uses, to keep the download small:
