@@ -68,7 +68,7 @@ def detect_targets(check_stopped=False):
       needs_python WSL distro has Claude Code but no python3
       unknown      WSL distro not running; not probed so it is never started without asking
       missing      Claude Code not found (Windows only)
-    WSL distros without Claude Code are left out and counted in hidden_count.
+    WSL distros with neither Claude Code nor Codex are left out and counted in hidden_count.
     """
     targets, hidden = [], 0
     if IS_MAC:
@@ -92,7 +92,7 @@ def detect_targets(check_stopped=False):
         key, label = "wsl:" + name, f"WSL: {name}"
         if state.lower() != "running" and not check_stopped:
             targets.append({"key": key, "label": label, "kind": "unknown",
-                            "note": "not running - can't check for Claude Code without starting it"})
+                            "note": "not running - can't check for Claude Code or Codex without starting it"})
             continue
         try:
             info = probe_wsl(name)

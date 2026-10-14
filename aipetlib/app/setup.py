@@ -4,12 +4,14 @@ import sys
 import subprocess
 import threading
 import tkinter as tk
+from tkinter import ttk
 import webbrowser
 
 from ..runtime import paths
 from ..ui import theme
 from ..integrations import cowork as hook_cowork
 from ..integrations import discovery as hook_discovery
+from ..integrations import targets as hook_targets
 from .presentation import APP_NAME
 
 IS_MAC = sys.platform == "darwin"
@@ -49,7 +51,7 @@ class SetupFlow:
         try:
             targets, hidden = hook_discovery.detect_targets(check_stopped)
         except Exception as e:
-            app.ui(lambda: app.info(f"Couldn't detect Claude Code installs:\n{e}", error=True))
+            app.ui(lambda: app.info(f"Couldn't detect Claude Code or Codex installs:\n{e}", error=True))
             return
         zip_path = None
         if os.name == "nt" or IS_MAC:
@@ -69,44 +71,63 @@ class SetupFlow:
         win.resizable(False, False)
         grey = "#6b7280"
 
-        tk.Label(win, text="Where should AIPet watch Claude Code?", font=(theme.UI_FONT, 12, "bold")
+        tk.Label(win, text="Where should AIPet watch your AI agents?", font=(theme.UI_FONT, 12, "bold")
                  ).pack(anchor="w", padx=16, pady=(14, 2))
         tk.Label(win, justify="left", wraplength=430, fg=grey,
-                 text="These are the Claude Code installs I found. Tick the ones to hook up.").pack(anchor="w", padx=16)
+                 text="These are the Claude Code and Codex installs I found. Tick the ones to hook up."
+                 ).pack(anchor="w", padx=16)
 
         picks, runtime = {}, {}
         body = tk.Frame(win)
         body.pack(fill="x", padx=16, pady=10)
         stopped = [t for t in targets if t["kind"] == "unknown"]
         targets = [t for t in targets if t["kind"] != "unknown"]
-        for t in targets:
-            usable = t["kind"] in ("ready", "installed", "outdated")
-            var = tk.BooleanVar(value=t["kind"] in ("ready", "outdated"))
-            picks[t["key"]] = var
-            row = tk.Frame(body)
-            row.pack(fill="x", pady=3)
-            tk.Checkbutton(row, text=t["label"], variable=var, state="normal" if usable else "disabled",
-                           font=(theme.UI_FONT, 10)).pack(anchor="w")
-            state_text, color = {
-                "ready": ("not installed yet", grey),
-                "installed": ("hooks installed and up to date", "#15803d"),
-                "outdated": ("hooks installed but out of date - tick to update them", "#b45309"),
-                "blocked": ("settings.json can't be read (invalid JSON?) - fix it first; nothing is changed", "#b91c1c"),
-                "needs_python": (t["note"], "#b91c1c"),
-                "missing": (t["note"], grey),
-            }.get(t["kind"], (t["note"], grey))
-            tk.Label(row, text=state_text, fg=color, font=(theme.UI_FONT, 8, "bold"), wraplength=400, justify="left"
-                     ).pack(anchor="w", padx=(26, 0))
-            if t["kind"] in ("ready", "installed", "outdated"):
-                tk.Label(row, text=t["note"], fg=grey, font=(theme.UI_FONT, 8), wraplength=400, justify="left"
-                         ).pack(anchor="w", padx=(26, 0))
-            if t["key"] == "mac" and usable:
-                self.runtime_controls(row, t, runtime)
+        sections = [("Claude Code", [t for t in targets if not hook_targets.is_codex(t["key"])]),
+                    ("Codex", [t for t in targets if hook_targets.is_codex(t["key"])])]
+        for n, (agent, rows) in enumerate(s for s in sections if s[1]):
+            if n:  # a line between the agents (ttk: the window's theming recolours plain frames to its background)
+                ttk.Separator(body, orient="horizontal").pack(fill="x", pady=(8, 4))
+            tk.Label(body, text=agent.upper(), fg=grey, font=(theme.UI_FONT, 8, "bold")).pack(anchor="w", pady=(2, 0))
+            for t in rows:
+                self.target_row(body, t, picks, runtime, grey)
         if not targets and not stopped:
-            tk.Label(body, text="No Claude Code installs found.", fg=grey).pack(anchor="w")
+            tk.Label(body, text="No Claude Code or Codex installs found.", fg=grey).pack(anchor="w")
+        self.after_targets(win, body, stopped, hidden, grey)
+        self.finish(win, picks, runtime, grey, zip_path)
+
+    def target_row(self, body, t, picks, runtime, grey):
+        """One install: its tick box (the agent's name is the section's), state and where it applies."""
+        usable = t["kind"] in ("ready", "installed", "outdated")
+        var = tk.BooleanVar(value=t["kind"] in ("ready", "outdated"))
+        picks[t["key"]] = var
+        row = tk.Frame(body)
+        row.pack(fill="x", pady=3)
+        label = t["label"][len("Codex - "):] if t["label"].startswith("Codex - ") else t["label"]
+        tk.Checkbutton(row, text=label, variable=var, state="normal" if usable else "disabled",
+                       font=(theme.UI_FONT, 10)).pack(anchor="w")
+        state_text, color = {
+            "ready": ("not installed yet", grey),
+            "installed": ("hooks installed and up to date", "#15803d"),
+            "outdated": ("hooks installed but out of date - tick to update them", "#b45309"),
+            "blocked": ("its settings file can't be read (invalid JSON?) - fix it first; nothing is changed", "#b91c1c"),
+            "needs_python": (t["note"], "#b91c1c"),
+            "missing": (t["note"], grey),
+        }.get(t["kind"], (t["note"], grey))
+        tk.Label(row, text=state_text, fg=color, font=(theme.UI_FONT, 8, "bold"), wraplength=400, justify="left"
+                 ).pack(anchor="w", padx=(26, 0))
+        if t["kind"] in ("ready", "installed", "outdated"):
+            tk.Label(row, text=t["note"], fg=grey, font=(theme.UI_FONT, 8), wraplength=400, justify="left"
+                     ).pack(anchor="w", padx=(26, 0))
+        if t["key"] == "mac" and usable:
+            self.runtime_controls(row, t, runtime)
+
+    def after_targets(self, win, body, stopped, hidden, grey):
+        """Distros left out, and the ones not checked because they aren't running."""
+        app = self.app
         if hidden:
             tk.Label(body, fg=grey, font=(theme.UI_FONT, 8), wraplength=420, justify="left",
-                     text=f"{hidden} WSL distro{'s' if hidden != 1 else ''} hidden: Claude Code isn't installed there."
+                     text=f"{hidden} WSL distro{'s' if hidden != 1 else ''} hidden: neither Claude Code nor Codex is "
+                          "installed there."
                      ).pack(anchor="w", pady=(6, 0))
 
         if stopped:
@@ -120,10 +141,13 @@ class SetupFlow:
             tk.Button(win, text="Check stopped WSL distros (starts them)...", command=check_stopped
                       ).pack(anchor="w", padx=16, pady=(0, 6))
 
+    def finish(self, win, picks, runtime, grey, zip_path):
+        """The note on what installing does, the Cowork box, and the buttons."""
+        app = self.app
         tk.Label(win, justify="left", wraplength=430, fg=grey, font=(theme.UI_FONT, 8),
-                 text="Each settings.json is backed up first, and your other hooks and settings are kept. "
-                      "Only Claude Code sessions started afterwards show up. You can change this any time from "
-                      "the tray menu: Claude Code hooks."
+                 text="Each settings file (Claude Code's settings.json, Codex's hooks.json) is backed up first, and your "
+                      "other hooks and settings are kept. Only sessions started afterwards show up. You can change "
+                      "this any time from the tray menu: Integrations."
                  ).pack(anchor="w", padx=16, pady=(0, 8))
 
         cw = tk.LabelFrame(win, text=" Claude desktop app - Cowork ", font=(theme.UI_FONT, 9, "bold"))
@@ -152,7 +176,7 @@ class SetupFlow:
 
         def skip():
             self.close()
-            app.info("No problem. You can set this up later from the tray icon: Claude Code hooks, "
+            app.info("No problem. You can set this up later from the tray icon: Integrations, "
                       "or Run setup again.")
 
         buttons = tk.Frame(win)
