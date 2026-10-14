@@ -58,15 +58,15 @@ class ClaudeTokenTests(unittest.TestCase):
     def test_reads_in_several_batches_count_a_split_response_once(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "t.jsonl")
-            agent_history._TAILS.clear()
+            agent_history.STORE.clear()
             write_lines(path, [reply(100, "r1", [{"type": "thinking", "thinking": "plan"}], used=(10, 1000, 0, 2))])
-            first = agent_history._cached(path, agent_history.MAIN_TAIL, parse_claude)
+            first = agent_history.STORE.read(path, agent_history.MAIN_TAIL, parse_claude)
             self.assertEqual(token_totals(first)["total"], 1012)
             with open(path, "a", encoding="utf-8") as f:  # the same response goes on, then a new one
                 f.write(json.dumps(reply(101, "r1", say("done"), used=(10, 1000, 0, 40))) + "\n")
                 f.write(json.dumps(reply(120, "r2", say("more"), used=(3, 1050, 0, 7))) + "\n")
             os.utime(path, (time.time() + 5, time.time() + 5))
-            merged = agent_history._cached(path, agent_history.MAIN_TAIL, parse_claude)
+            merged = agent_history.STORE.read(path, agent_history.MAIN_TAIL, parse_claude)
             self.assertEqual(token_totals(merged), {"in": 13, "cached": 2050, "out": 47, "total": 2110})
             self.assertEqual(merged["usage_at"], {_ts(100): (1010, 40), _ts(120): (1053, 7)})
 

@@ -14,7 +14,7 @@ Module ownership:
     tools        tool-call input/output merging and tool child nodes
     claude       Claude Code transcript adapter and subagent discovery
     codex        Codex rollout adapter, rollout metadata cache and descendant discovery
-    history      incremental per-file history cache (the one owner of _TAILS and its lock)
+    history      incremental per-file history: HistoryStore (STORE) owns the cache and its lock
     network      one session's agent hierarchy, states and retention
     log_filters  log row selection and primary results
     stats        the stats node's numbers

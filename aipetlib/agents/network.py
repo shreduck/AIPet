@@ -28,7 +28,7 @@ def without_tools(net):
 
 
 def read_network(item, now=None, include_tools=False, bootstrap=False):
-    with history._CACHE_LOCK:
+    with history.STORE.lock:
         return _read_network(item, now=now, include_tools=include_tools, bootstrap=bootstrap)
 
 
@@ -43,7 +43,7 @@ def _read_network(item, now=None, include_tools=False, bootstrap=False):
     if codex and item.get("session_id") and item.get("env") != "wsl":
         transcript = root_rollout(item["session_id"], transcript)
     parse = parse_codex if codex else parse_claude
-    main_info = (history._cached(transcript, history.MAIN_TAIL, parse, bootstrap=bootstrap) if transcript else None) or _empty()
+    main_info = (history.STORE.read(transcript, history.MAIN_TAIL, parse, bootstrap=bootstrap) if transcript else None) or _empty()
     session_state = item.get("state") or "idle"
     running = dict(item.get("agent_ids") or {})
     wait_agent = str(item.get("wait_agent") or "")
@@ -56,7 +56,7 @@ def _read_network(item, now=None, include_tools=False, bootstrap=False):
     # the task started before the part of a transcript that was read: the stats can miss its older entries
     missing = bool(main_info.get("cut") and not main_info["last_prompt_t"])
     for aid, path, meta in files:
-        info = history._cached(path, history.SUB_TAIL, parse, bootstrap=bootstrap)
+        info = history.STORE.read(path, history.SUB_TAIL, parse, bootstrap=bootstrap)
         if not info:
             continue
         if codex:

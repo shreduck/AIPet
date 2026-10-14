@@ -19,7 +19,7 @@ class AgentTrackerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        agent_history._TAILS.clear()
+        agent_history.STORE.clear()
         agent_codex._CODEX_META.clear()
         self.now = time.time()
 
@@ -80,15 +80,15 @@ class AgentTrackerTests(unittest.TestCase):
     def test_partial_line_is_consumed_when_completed(self):
         path = self.session("codex")["transcript_path"]
         write_lines(path, [codex(self.now, {"model": "model"}, "turn_context")])
-        agent_history._cached(path, 300, agent_codex.parse_codex)
+        agent_history.STORE.read(path, 300, agent_codex.parse_codex)
         encoded = json.dumps(codex(self.now, {"type": "function_call", "name": "Read", "call_id": "read",
                                              "arguments": "café"}), ensure_ascii=False).encode("utf-8")
         with open(path, "ab") as f:
             f.write(encoded[:80])
-        self.assertEqual(agent_history._cached(path, 300, agent_codex.parse_codex)["tool_calls"], [])
+        self.assertEqual(agent_history.STORE.read(path, 300, agent_codex.parse_codex)["tool_calls"], [])
         with open(path, "ab") as f:
             f.write(encoded[80:] + b"\n")
-        self.assertIn("café", agent_history._cached(path, 300, agent_codex.parse_codex)["tool_calls"][0]["input"])
+        self.assertIn("café", agent_history.STORE.read(path, 300, agent_codex.parse_codex)["tool_calls"][0]["input"])
 
     def test_bootstrap_merges_calls_across_record_batches(self):
         for provider in ("claude", "codex"):
@@ -116,9 +116,9 @@ class AgentTrackerTests(unittest.TestCase):
     def test_truncated_file_does_not_keep_old_calls(self):
         path = self.session("codex")["transcript_path"]
         write_lines(path, self.entries("codex"))
-        agent_history._cached(path, 10000, agent_codex.parse_codex)
+        agent_history.STORE.read(path, 10000, agent_codex.parse_codex)
         write_lines(path, [codex(self.now, {"model": "replacement"}, "turn_context")])
-        info = agent_history._cached(path, 10000, agent_codex.parse_codex)
+        info = agent_history.STORE.read(path, 10000, agent_codex.parse_codex)
         self.assertEqual(info["model"], "replacement")
         self.assertEqual(info["tool_calls"], [])
 

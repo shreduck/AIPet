@@ -42,7 +42,7 @@ class ClaudeNetworkTests(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.dir.cleanup)
-        agent_history._TAILS.clear()
+        agent_history.STORE.clear()
         now = time.time()
         self.now = now
         self.transcript = os.path.join(self.dir.name, "sess.jsonl")
@@ -127,10 +127,10 @@ class ClaudeNetworkTests(unittest.TestCase):
             for k in range(40):
                 f.write(json.dumps(claude_assistant(self.now - 40 + k, [{"type": "tool_use", "name": "Read",
                                                                          "input": {"file_path": "x" * 200}}])) + "\n")
-        agent_history._TAILS.clear()
+        agent_history.STORE.clear()
         with patch.object(agent_history, "MAIN_TAIL", 4000):
             self.assertTrue(agent_stats.network_stats(agent_network.read_network(self.item(), now=self.now))["missing"])
-        agent_history._TAILS.clear()
+        agent_history.STORE.clear()
 
     def test_an_agent_started_by_a_subagent_hangs_off_that_subagent(self):
         sub = os.path.join(self.dir.name, "sess", "subagents")
@@ -253,7 +253,7 @@ class CodexNetworkTests(unittest.TestCase):
 
     def test_spawned_rollouts_become_subagents(self):
         with tempfile.TemporaryDirectory() as root:
-            agent_history._TAILS.clear()
+            agent_history.STORE.clear()
             agent_codex._CODEX_META.clear()
             now = time.time()
             day = os.path.join(root, "2026", "10", "07")

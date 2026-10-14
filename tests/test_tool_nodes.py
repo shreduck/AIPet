@@ -86,7 +86,7 @@ class ToolNodeTests(unittest.TestCase):
                 codex(110, {"type": "task_complete"}, "event_msg"),
                 codex(200, {"type": "task_started"}, "event_msg"),
             ])
-            info = agent_history._cached(path, 10000, agent_codex.parse_codex)
+            info = agent_history.STORE.read(path, 10000, agent_codex.parse_codex)
             node = agent_tools.tool_nodes([caller("", info["tool_calls"])], 201, 144)[0]
             self.assertEqual(node["state"], "done")
 
@@ -103,13 +103,13 @@ class ToolNodeTests(unittest.TestCase):
             path = os.path.join(tmp, "rollout.jsonl")
             write_lines(path, [codex(100, {"type": "function_call", "name": "Read", "call_id": "one",
                                           "arguments": '{"path":"file"}'})])
-            agent_history._cached(path, 240, agent_codex.parse_codex)
+            agent_history.STORE.read(path, 240, agent_codex.parse_codex)
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(codex(101, {"type": "message", "role": "assistant",
                                              "content": [{"text": "x" * 1000}]})) + "\n")
                 f.write(json.dumps(codex(102, {"type": "function_call_output", "call_id": "one",
                                              "output": "contents"})) + "\n")
-            info = agent_history._cached(path, 240, agent_codex.parse_codex)
+            info = agent_history.STORE.read(path, 240, agent_codex.parse_codex)
             nodes = agent_tools.tool_nodes([caller("", info["tool_calls"])], now=103, retention=144)
             self.assertEqual(nodes[0]["name"], "Read")
             self.assertEqual(nodes[0]["state"], "done")

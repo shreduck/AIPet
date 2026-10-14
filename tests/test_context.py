@@ -59,7 +59,7 @@ class TrackerPublishTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        agent_history._TAILS.clear()
+        agent_history.STORE.clear()
         self.addCleanup(context.publish, {})
 
     def test_tracker_publishes_each_sessions_main_context(self):
