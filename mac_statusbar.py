@@ -58,9 +58,11 @@ def nsstr(text):
 
 @contextmanager
 def passive_window_mapping():
-    """Suppress Tk's unconditional Cocoa activation while mapping a hover panel.
+    """Keep passive panel mapping/removal from activating or raising app windows.
 
     Tk's macOS XMapWindow activates NSApp even for non-activating NSPanels.
+    Destroying a panel can also make Tk raise an existing ordinary window while
+    selecting its next key window. Protect those windows for this scope too.
     This scope runs synchronously on Tk's main thread and restores the original
     implementation before normal clicks or explicit window-opening actions run.
     """
@@ -69,13 +71,30 @@ def passive_window_mapping():
     _lib.method_setImplementation.restype = c_void_p
     _lib.method_setImplementation.argtypes = [c_void_p, c_void_p]
     app = send(cls("NSApplication"), "sharedApplication")
+    windows = send(app, "windows")
+    protected = set()
+    for i in range(send(windows, "count", restype=c_ulong)):
+        window = send(windows, "objectAtIndex:", i, argtypes=[c_ulong])
+        if not send(window, "isKindOfClass:", cls("NSPanel"), restype=c_bool, argtypes=[c_void_p]):
+            protected.add(window)
     app_class = send(app, "class")
     method = _lib.class_getInstanceMethod(app_class, sel("activateIgnoringOtherApps:"))
     callback = ctypes.CFUNCTYPE(None, c_void_p, c_void_p, c_bool)(lambda obj, cmd, flag: None)
     original = _lib.method_setImplementation(method, ctypes.cast(callback, c_void_p))
+    order_method = _lib.class_getInstanceMethod(cls("NSWindow"), sel("makeKeyAndOrderFront:"))
+    order_signature = ctypes.CFUNCTYPE(None, c_void_p, c_void_p, c_void_p)
+
+    def passive_order(window, command, sender):
+        if window not in protected:
+            original_order(window, command, sender)
+
+    order_callback = order_signature(passive_order)
+    order_imp = _lib.method_setImplementation(order_method, ctypes.cast(order_callback, c_void_p))
+    original_order = order_signature(order_imp)
     try:
         yield
     finally:
+        _lib.method_setImplementation(order_method, order_imp)
         _lib.method_setImplementation(method, original)
 
 

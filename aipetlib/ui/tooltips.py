@@ -163,5 +163,11 @@ def _build_tooltip(app, pet, text, usage_detail):
 
 def hide_tip(app):
     if app.tip:
-        app.tip.destroy()
+        if IS_MAC:
+            import mac_statusbar as mac
+            # Tk's panel teardown can select and raise another app window.
+            with mac.passive_window_mapping():
+                app.tip.destroy()
+        else:
+            app.tip.destroy()
         app.tip = None

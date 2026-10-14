@@ -568,6 +568,9 @@ class MacWindowTests(unittest.TestCase):
                 self.assertEqual(foreground_pid(), finder_pid)
                 self.assertTrue(above <= windows_above(number))
                 app.hide_tip()
+                settle()
+                self.assertEqual(foreground_pid(), finder_pid)
+                self.assertTrue(above <= windows_above(number))
             # Deliberate opening still activates the app after the hover scope.
             agent.raise_()
             settle()
