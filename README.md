@@ -550,10 +550,10 @@ From source, the Windows hook runs via `pythonw` and the script, so no exe is ne
 | `aipetlib/housekeeping.py` | Sweeping leftovers (half-written files, dead hooks' answers, old debug logs) |
 | `aipetlib/geometry.py`, `windows.py`, `mac_panels.py`, `click_through.py` | Monitor geometry and native window behavior |
 | `aipetlib/vscode.py`, `workbench.py`, `hook_events.py` | Editor routing, MCP polling and hook event transitions |
-| `aipetlib/ui/` | Pet rendering (`pet_style`, `pet_view`, `sprites`, `theme`), permission cards, tooltips, size sliders, menu definitions, the chimes (`sounds`), the agent network window (`agent_window`) and its components (`agent_logs`, `agent_graph`, `agent_prompts`, `agent_menu`, `agent_controls`) with their shared values (`agent_common`) |
+| `aipetlib/ui/` | Pet rendering (`pet_style`, `pet_view`, `sprites`, `theme`), permission cards, hover panels (`Tooltips` in `tooltips`), slider windows (`Appearance` in `appearance_controls`), tray and Dock artwork (`tray_icons`), menu definitions, the chimes (`sounds`), the agent network window (`agent_window`) and its components (`agent_logs`, `agent_graph`, `agent_prompts`, `agent_menu`, `agent_controls`) with their shared values (`agent_common`) |
 | `aipetlib/text.py` | Plain-text helpers: phrases, "3m ago", countdowns |
 | `aipetlib/update.py` | Releases: this build's version and the newest one on GitHub |
-| `aipetlib/app/` | The apps' controllers, each owning one part: `updates` (the daily check, its menu entries and dialog), `agent_windows` (the agent network windows the tray opens and their menu switches), `approvals` (auto approve rules per hook target: the rules window and its menu entries), `config_watch` (config.json edited by hand, applied live), `diagnostics` (Save diagnostics...), `placement` (the pets' anchored corner and shared margin), `pointer` (dragging, clicks, click-through), `answers` (answering the hooks: send, let go, timed approve, whitelist, the answering switches) |
+| `aipetlib/app/` | The apps' controllers, each owning one part: `updates` (release checks and dialog), `agent_windows` (network windows and menu switches), `approvals` (rules editor and targets), `config_watch` (config.json applied live), `diagnostics` (Save diagnostics...), `placement` (anchored corner and shared margin), `pointer` (dragging, clicks, click-through), `answers` (hook answers and answering switches), `preferences` (pet settings, theme and card scale), `session_reader` (session polling off the UI thread), `presentation` (tray/menu-bar handles, Dock image, notifications and tray menu adaptation) |
 | `aipetlib/integrations/` | Hook targets (`targets`: the keys of this machine, WSL and Codex targets); the installer follows in stage 9 |
 | `aipet_settings.py` | The AIPet menu window (built from the same menu definition) |
 | `aipet_agents.py` | Temporary facade over `aipetlib/agents/` (to be removed) |
@@ -566,7 +566,8 @@ From source, the Windows hook runs via `pythonw` and the script, so no exe is ne
 | `build.bat`, `build_mac.sh`, `.github/workflows/` | Builds and the macOS self-test |
 | `tools/` | Sprite, icon and demo GIF generators, test helpers |
 
-The entry-point modules retain the existing callable interfaces and re-export what moved. Components receive the
+The entry-point scripts retain their launch commands and temporary shared-value re-exports. UI actions call their
+owning components directly (`pet.appearance`, `pet.tooltips`, `pet.preferences`, `app.presentation`). Components receive the
 owning window or app and import every other value from the module that owns it (`runtime/paths`, `runtime/preferences`,
 `ui/theme`, `ui/pet_style`...); they never import an entry point and take no catch-all services object
 (`tools/check_architecture.py` enforces both). The hook's event logic gets the hook helpers it uses as an explicit

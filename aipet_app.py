@@ -36,24 +36,17 @@ from aipetlib.app.approvals import Approvals
 from aipetlib.app.config_watch import ConfigWatcher
 import aipetlib.app.diagnostics as app_diagnostics
 from aipetlib.app.updates import UpdateFlow
+from aipetlib.app.presentation import APP_NAME, TrayPresenter
+from aipetlib.ui.tray_icons import set_window_icon
 import hooks_installer as hi
 import legacy  # LEGACY: moving over from Claude Pet
 
 IS_MAC = sys.platform == "darwin"
-try:
-    if IS_MAC:  # pystray wants the main thread, which Tk already owns; macOS uses the pet's own menu instead
-        raise ImportError
-    from PIL import Image, ImageDraw
-    import pystray
-except ImportError:  # still runs, just without a tray icon
-    pystray = None
 
-APP_NAME = "AIPet"
 
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 LAUNCH_AGENT = os.path.expanduser("~/Library/LaunchAgents/com.aipet.app.plist")
-RANK = {"needs_input": 0, "error": 1, "working": 2, "done": 3, "idle": 4}
 _mutex = None
 SETUP_MARKER = os.path.join(paths.HOME_DIR, "setup-done")
 from aipetlib.runtime.paths import DEBUG_FLAG  # noqa: E402
@@ -176,117 +169,6 @@ def set_autostart(on):
                 pass
 
 
-def set_window_icon(root):
-    """The robot as the icon of every AIPet window (title bar and taskbar), in place of Tk's feather. Kept on the
-    root so the images aren't garbage-collected. macOS shows the app's Dock icon instead."""
-    if IS_MAC:
-        return
-    try:
-        from PIL import ImageTk
-        spr = core.load_sprites()
-        if not spr:
-            return
-        robot = core.robot_image("happy", ("amber", "green", "off"), spr)
-        photos = []
-        for size in (256, 64, 32, 16):  # Windows picks the closest size for the taskbar, title bar and Alt+Tab
-            k = min(size / robot.width, size / robot.height)
-            im = robot.resize((max(1, int(robot.width * k)), max(1, int(robot.height * k))), Image.NEAREST)
-            square = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-            square.paste(im, ((size - im.width) // 2, size - im.height), im)
-            photos.append(ImageTk.PhotoImage(square, master=root))
-        root.iconphoto(True, *photos)  # True: also every Toplevel created later
-        root._aipet_icons = photos
-    except Exception as e:
-        diagnostics.log_error(f"window icon: {e!r}")
-
-
-def make_icon(state):
-    col, dark = core.COLORS.get(state, core.COLORS["idle"]), core.DARK.get(state, core.DARK["idle"])
-    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    spr = core.load_sprites() if preferences.STYLE["v"] == "robot" else False
-    if spr:  # the robot with the state's face (red while a session needs you), on a dot in the state colour
-        im = robot_icon(state)
-        k = min(60 / im.width, 60 / im.height)
-        im = im.resize((max(1, int(im.width * k)), max(1, int(im.height * k))), Image.NEAREST)
-        img.paste(im, ((64 - im.width) // 2, 62 - im.height), im)
-        d.ellipse((46, 46, 62, 62), fill=col, outline="white", width=2)
-    elif preferences.STYLE["v"] != "cat":  # the mole: head poking out of a hill, ground rim in the state colour
-        d.ellipse((2, 44, 62, 62), fill=core.MOLE_EDGE, outline=col, width=4)
-        d.ellipse((14, 4, 50, 56), fill=core.MOLE_BODY, outline=core.MOLE_EDGE, width=3)
-        if state in ("done", "idle"):
-            d.arc((20, 20, 29, 28), 180, 360, fill=core.INK, width=3)
-            d.arc((35, 20, 44, 28), 180, 360, fill=core.INK, width=3)
-        else:
-            for x in (25, 39):
-                d.ellipse((x - 3, 17, x + 3, 28), fill=core.INK)
-        d.ellipse((22, 29, 42, 44), fill=core.MOLE_NOSE, outline=core.MOLE_NOSE_EDGE, width=2)
-        d.ellipse((8, 46, 56, 62), fill=core.MOLE_HILL, outline=core.MOLE_HILL_EDGE, width=2)
-    else:
-        d.polygon([(13, 24), (17, 4), (29, 15)], fill=col, outline=dark)
-        d.polygon([(51, 24), (47, 4), (35, 15)], fill=col, outline=dark)
-        d.ellipse((6, 12, 58, 60), fill=col, outline=dark, width=3)
-        if state in ("done", "idle"):
-            d.arc((17, 30, 29, 40), 180, 360, fill=core.INK, width=3)
-            d.arc((35, 30, 47, 40), 180, 360, fill=core.INK, width=3)
-        else:
-            for x in (23, 41):
-                d.ellipse((x - 6, 29, x + 6, 41), fill="white", outline=core.INK, width=2)
-                d.ellipse((x - 3, 32, x + 3, 38), fill=core.INK)
-    if state == "needs_input":
-        d.ellipse((42, 0, 63, 21), fill="#dc2626", outline="white", width=2)
-        d.rectangle((51, 4, 54, 12), fill="white")
-        d.rectangle((51, 15, 54, 17), fill="white")
-    return img
-
-
-def robot_icon(state):
-    """The robot for the taskbar / tray / Dock at sprite resolution: white normally, red with a "?" face while a
-    session needs you (or a worried face on an error)."""
-    attention = state in ("needs_input", "error")
-    face = "ask" if state == "needs_input" else ("worried" if state == "error" else core.STATE_FACE.get(state, "happy"))
-    im = core.robot_image(face, ("red",) * 3 if attention else core.light_cycle(state, 0)).copy()
-    if attention:
-        px = im.load()
-        for y in range(im.height):
-            for x in range(im.width):
-                r, g, b, a = px[x, y]
-                if a and min(r, g, b) > 120 and max(r, g, b) - min(r, g, b) < 40:  # the white / grey body -> red
-                    v = (r + g + b) / 3 / 255
-                    px[x, y] = (int(150 + 105 * v), int(25 + 45 * v), int(25 + 45 * v), a)
-    return im
-
-
-def menu_bar_icons():
-    """macOS menu bar: a line-art robot as a template image (macOS paints its opaque pixels in the menu bar's colour:
-    outline, screen and lights solid, white body and cyan face left out) and the red robot for 'needs you'."""
-    from PIL import Image  # this module skips the PIL import on macOS (no pystray tray there)
-    im = core.robot_image("happy", ("off", "off", "off")).copy()
-    px = im.load()
-    for y in range(im.height):
-        for x in range(im.width):
-            r, g, b, a = px[x, y]
-            dark = a and (r * 299 + g * 587 + b * 114) / 1000 < 110
-            px[x, y] = (0, 0, 0, 255) if dark else (0, 0, 0, 0)
-    pad = Image.new("RGBA", (im.width + 4, im.height + 4), (0, 0, 0, 0))
-    pad.paste(im, (2, 2), im)
-    red = robot_icon("needs_input")
-    red_pad = Image.new("RGBA", (red.width + 4, red.height + 4), (0, 0, 0, 0))
-    red_pad.paste(red, (2, 2), red)
-    return {"normal": pad, "attention": red_pad}
-
-
-def dock_image(state, size=256):
-    """macOS Dock icon (see robot_icon), centred on a square canvas."""
-    from PIL import Image  # this module skips the PIL import on macOS (no tray there)
-    im = robot_icon(state)
-    k = max(1, int(size * 0.9 // im.height))
-    big = im.resize((im.width * k, im.height * k), Image.NEAREST)
-    out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    out.paste(big, ((size - big.width) // 2, (size - big.height) // 2), big)
-    return out
-
-
 def setup_is_done():
     return os.path.exists(SETUP_MARKER)
 
@@ -324,26 +206,16 @@ class TrayApp:
         self.approvals = Approvals(self)  # auto approve rules per hook target, and which are on
         self.version = releases.current_version()
         self.updates = UpdateFlow(self)  # new releases: daily check, menu entries, the dialog
-        self._icon_key = None
+        self.presentation = TrayPresenter(self)
 
-        self.pet.on_alert = self.on_alert
+        self.pet.on_alert = self.presentation.on_alert
         self.agent_tracker = NetworkTracker(lambda: list(self.pet._agent_items))
         self.agent_tracker.start()
         self.cowork_win = None
         # One menu definition serves the pet, macOS menu bar and Windows tray.
         self.pet.context_menu_spec = self._context_menu_spec
 
-        self.icon = None
-        if pystray:
-            self.icon = pystray.Icon("aipet", make_icon("idle"), APP_NAME, menu=self.build_menu())
-            self.icon.run_detached()
-        self.status_item = None  # macOS menu bar (pystray can't share the main thread with Tk there)
-        if IS_MAC:
-            try:
-                import mac_statusbar
-                self.status_item = mac_statusbar.StatusItem(self._mac_menu_spec, self.ui, menu_bar_icons())
-            except Exception as e:
-                diagnostics.log_error(f"menu bar icon: {e!r}")
+        self.presentation.start()
 
         threading.Thread(target=self._startup_jobs, daemon=True).start()
         self.config_watch = ConfigWatcher(self)  # config.json edited by hand: applied live
@@ -366,7 +238,7 @@ class TrayApp:
         self.c_muted = self.pet.muted.get()
         self.c_wb = self.pet.wb.status if self.pet.wb else "off"
         self.agent_windows.is_open()  # refresh the cached answer the tray menu reads
-        self.update_tray()
+        self.presentation.update_tray()
         self.root.after(250, self.pump)
 
     def _check_autostart(self):
@@ -834,109 +706,7 @@ class TrayApp:
     def refresh_menu(self):
         if getattr(self, "settings_win", None) is not None:
             self.ui(self.settings_win.refresh)  # may be called from a worker thread: rebuild on the Tk thread
-        if self.icon:
-            try:
-                self.icon.update_menu()
-            except Exception:
-                pass
-
-    # ---- tray
-    def summary(self):
-        counts = {}
-        for it in self.pet._last_items:  # every session, also in compact mode (one pet for all)
-            st = it.get("state", "idle")
-            counts[st] = counts.get(st, 0) + 1
-        top = min(counts, key=lambda s: RANK.get(s, 9)) if counts else "idle"
-        parts = [f"{counts[s]} {core.LABELS.get(s, s).rstrip('…!')}" for s in sorted(counts, key=lambda s: RANK.get(s, 9))]
-        text = f"{APP_NAME} - " + ("AUTO APPROVE ON - " if self.approvals.targets_on else "") + (
-            ", ".join(parts) if parts else "no active sessions")
-        return top, text[:120]
-
-    def update_dock(self):
-        """macOS: the Dock is the taskbar - show the robot there, red while a session needs you, and bounce the icon
-        once when that starts."""
-        top, _ = self.summary()
-        key = "attention" if top in ("needs_input", "error") else "normal"
-        if key == getattr(self, "_dock_key", None):
-            return
-        self._dock_key = key
-        try:
-            import base64
-            import io
-            buf = io.BytesIO()
-            dock_image(top if key == "attention" else "idle").save(buf, "PNG")
-            self._dock_ph = tk.PhotoImage(data=base64.b64encode(buf.getvalue()).decode("ascii"), format="png")
-            self.root.iconphoto(True, self._dock_ph)
-            if key == "attention":
-                self.root.attributes("-notify", True)  # Tk on macOS: bounce the Dock icon
-        except Exception as e:
-            diagnostics.log_error(f"dock icon: {e!r}")
-
-    def update_tray(self):
-        if not self.icon:
-            if IS_MAC:
-                self.update_dock()
-                if self.status_item:
-                    top, text = self.summary()
-                    if (top, text) != self._icon_key:
-                        self._icon_key = (top, text)
-                        try:
-                            self.status_item.set_state("attention" if top in ("needs_input", "error") else "normal", text)
-                        except Exception as e:
-                            diagnostics.log_error(f"menu bar icon: {e!r}")
-            return
-        top, text = self.summary()
-        if (top, text) != self._icon_key:
-            self._icon_key = (top, text)
-            try:
-                self.icon.icon = make_icon(top)
-                self.icon.title = text
-            except Exception:
-                pass
-
-    def notify(self, body, title):
-        if self.icon:
-            self.icon.notify(body, title)
-        elif IS_MAC:
-            subprocess.Popen(["osascript", "-e", "display notification %s with title %s" % (
-                json.dumps(body, ensure_ascii=False), json.dumps(title, ensure_ascii=False))])
-
-    def on_alert(self, state, old, item):
-        if not item or not self.c_notify or not (self.icon or IS_MAC):
-            return
-        title = item.get("title", "session")
-        where = item.get("where", "")
-        try:
-            if state == "needs_input":
-                self.notify(item.get("message") or where or "Claude is waiting for you", f"{title} needs your input")
-            elif state == "error":
-                self.notify(where or "Something went wrong", f"{title} hit an error")
-            elif state == "done" and (self.hidden or IS_MAC) and old in ("working", "needs_input"):
-                self.notify(where or "Finished", f"{title} is done")
-        except Exception:
-            pass
-
-    def build_menu(self):
-        def dispatch(fn):
-            return lambda: self.ui(fn)
-
-        def entries():
-            def convert(spec):
-                result = []
-                for entry in spec:
-                    if entry is None:
-                        result.append(pystray.Menu.SEPARATOR)
-                        continue
-                    action = entry.get("action")
-                    submenu = entry.get("submenu")
-                    handler = pystray.Menu(*convert(submenu)) if submenu is not None else (
-                        dispatch(action) if action else None)
-                    checked = (lambda item, value=entry["checked"]: value) if "checked" in entry else None
-                    result.append(pystray.MenuItem(entry["label"], handler, checked=checked,
-                                                   enabled=entry.get("enabled", True), default=entry.get("default", False)))
-                return result
-            return convert(self._mac_menu_spec())
-        return pystray.Menu(entries)
+        self.presentation.refresh_menu()
 
     def _context_menu_spec(self, pet):
         return app_menus._context_menu_spec(self, pet)
@@ -1202,7 +972,7 @@ class TrayApp:
         preferences.STYLE["v"] = name
         self.pet.cfg["pet_style"] = name
         runtime_settings.save_setting("pet_style", name)
-        self._icon_key = None  # redraw the tray icon in the new style
+        self.presentation.invalidate()  # redraw the tray icon in the new style
         if hasattr(self, "style_var"):
             self.style_var.set(name)
         self.refresh_menu()
@@ -1257,13 +1027,7 @@ class TrayApp:
     def quit(self):
         if getattr(self, "agent_tracker", None):
             self.agent_tracker.stop()
-        if getattr(self, "status_item", None):
-            self.status_item.remove()
-        if self.icon:
-            try:
-                self.icon.stop()
-            except Exception:
-                pass
+        self.presentation.stop()
         self.root.destroy()
 
 

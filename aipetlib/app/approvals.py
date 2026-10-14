@@ -17,7 +17,7 @@ class Approvals:
     tray menu from its own thread).
 
     Needs from the app: root, distros, codex_targets, status (hook status per target), refresh_menu() and
-    _icon_key (cleared so the tray tooltip mentions auto approve).
+    presentation.invalidate() (so the tray tooltip mentions auto approve).
     """
 
     def __init__(self, app):
@@ -233,5 +233,5 @@ class Approvals:
     def changed(self):
         app = self.app
         self.targets_on = permissions.auto_approve_targets()
-        app._icon_key = None  # the tray tooltip says when auto approve is on
+        app.presentation.invalidate()  # the tray tooltip says when auto approve is on
         app.refresh_menu()

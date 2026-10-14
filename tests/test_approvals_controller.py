@@ -17,7 +17,7 @@ class ApprovalsTests(unittest.TestCase):
             stub.start()
             self.addCleanup(stub.stop)
         self.app = SimpleNamespace(distros=[("Ubuntu", "Running")], codex_targets=[("Local Codex", "codex:local")],
-                                   status={}, refresh_menu=MagicMock(), _icon_key="x")
+                                   status={}, refresh_menu=MagicMock(), presentation=SimpleNamespace(invalidate=MagicMock()))
         self.approvals = approvals.Approvals(self.app)
 
     def test_sections_list_every_target_and_any_left_on(self):
@@ -37,7 +37,7 @@ class ApprovalsTests(unittest.TestCase):
         self.approvals.all_off()
         self.module.permissions.save_auto_approve.assert_called_once_with(None, None)
         self.assertEqual(self.approvals.targets_on, ["codex:old"])  # read again from the file
-        self.assertIsNone(self.app._icon_key)
+        self.app.presentation.invalidate.assert_called_once()
         self.app.refresh_menu.assert_called_once()
 
 
