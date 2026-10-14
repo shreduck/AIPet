@@ -281,8 +281,10 @@ When Claude Code or Codex asks for permission, the popup (click the bubble) show
 - **Allow + whitelist** also adds the request to that install's auto-approve whitelist as an exact match: the whole
   command (or file path, URL...), or the tool itself for MCP tools. If the install still had only the default
   ask-everything blacklist and no rules, that blacklist is cleared so the exact match can apply.
-- **Several prompts at once** (parallel tool calls, subagents) queue up: the card shows the oldest, "N prompts waiting",
-  and moves on to the next one after you answer. *Not asking anymore? Clear this prompt* removes one that's gone.
+- **Several prompts at once** (parallel tool calls, subagents) queue up: the card shows the oldest with "N prompts waiting"
+  and moves on after you answer. *Go to window* opens the session and advances the card to the next waiting prompt
+  without clearing either. Side arrows let you browse waiting prompts without opening the session or answering.
+  *Not asking anymore? Clear this prompt* removes one that's gone.
 - **Card size:** a slider under the robot (50% - 150%), or Ctrl + plus / minus / 0 and Ctrl + mouse wheel on the card;
   saved as `card_scale`.
 - Under **Permissions**, **Answer Claude Code prompts from the pet** and **Answer Codex prompts from the pet**

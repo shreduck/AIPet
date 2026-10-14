@@ -513,6 +513,9 @@ class PetApp:
         now = time.time()
         items = [i for i in items
                  if not (hide and i["state"] in ("done", "idle") and i.get("changed") and now - i["changed"] > hide)]
+        navigation = getattr(self, "_prompt_navigation", None)
+        if navigation:
+            items = navigation.project(items)
         self._agent_items = [i for i in items if i.get("source") == "CC"]
         for i in self._agent_items:  # context in use, published by the agent tracker (None until it has read the session)
             reading = agent_context.get(i["key"])
@@ -676,6 +679,24 @@ class PetApp:
         if item and item.get("agent") == "codex" and item.get("state") == "needs_input":
             self.send_answer(key, "release")
         self.focus_key(key)
+        return self.step_prompt(key)
+
+    def step_prompt(self, key, step=1):
+        """Select another waiting prompt without answering it or opening its session."""
+        item = next((i for i in self._last_items if i["key"] == key), None)
+        if item:
+            from aipetlib.prompt_navigation import PromptNavigation
+            if not hasattr(self, "_prompt_navigation"):
+                self._prompt_navigation = PromptNavigation()
+            if self._prompt_navigation.advance(item, step):
+                # Update presentation immediately without starting a second poll loop.
+                self._last_items = self._prompt_navigation.project(self._last_items)
+                by_key = {i["key"]: i for i in self._last_items}
+                if hasattr(self, "_agent_items"):
+                    self._agent_items = [by_key.get(i["key"], i) for i in self._agent_items]
+                self.sync_bubbles(self._last_items)
+                return True
+        return False
 
     def timed_minutes(self):
         try:

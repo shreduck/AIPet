@@ -312,17 +312,24 @@ class PromptPanel:
             nav = tk.Frame(ov, bg=P["node"])
             nav.pack(fill="x", padx=pad, pady=(window.px(4), 0))
             dots = " ".join("●" if k == self.q_index else ("◉" if self.is_answered(k) else "○") for k in range(n))
-            for text, d in (("‹", -1), (f"question {self.q_index + 1}/{n}  {dots}", 0), ("›", 1)):
-                lab = tk.Label(nav, text=text, font=window.f_bold if d else window.f_small, bg=P["node"],
-                               fg=P["blue"] if d else P["mu"], cursor="hand2" if d else "")
-                lab.pack(side="left", padx=(0, window.px(6)))
-                if d:
-                    lab.bind("<Button-1>", lambda e, d=d: self.step_question(d))
+            tk.Label(nav, text=f"question {self.q_index + 1}/{n}  {dots}", font=window.f_small,
+                     bg=P["node"], fg=P["mu"]).pack()
+        text_area = tk.Frame(ov, bg=P["node"])
+        text_area.pack(fill="x", padx=pad, pady=(window.px(4), 0))
+        self.question_arrows = []
+        if n > 1:
+            for text, step, side in (("‹", -1, "left"), ("›", 1, "right")):
+                arrow = tk.Label(text_area, text=text, font=window.f_bold, bg=P["node"],
+                                 fg=P["blue"], cursor="hand2", padx=window.px(6), takefocus=True)
+                arrow.pack(side=side, fill="y")
+                for event in ("<Button-1>", "<Return>", "<space>"):
+                    arrow.bind(event, lambda e, d=step: self.step_question(d))
+                self.question_arrows.append(arrow)
         title = (f"{q['header']}: " if q.get("header") else "") + str(q.get("question", ""))
         title += "  (pick any)" if q.get("multiSelect") else ""
-        lab = tk.Label(ov, text=title, font=window.f_main, bg=P["node"], fg=P["hi"], anchor="w", justify="left",
+        lab = tk.Label(text_area, text=title, font=window.f_main, bg=P["node"], fg=P["hi"], anchor="w", justify="left",
                        wraplength=window.px(560))
-        lab.pack(fill="x", padx=pad, pady=(window.px(4), 0))
+        lab.pack(side="left", fill="x", expand=True)
         self.wraps.append(lab)
         for opt in (q.get("options") or [])[:8]:
             label = str(opt.get("label") if isinstance(opt, dict) else opt)

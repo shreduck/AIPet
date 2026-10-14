@@ -171,6 +171,64 @@ class QuestionOverlayGuiTests(unittest.TestCase):
         self.assertEqual(self.sent, [("isolated-fixture", "allow", {"answers": {"First?": "Two",
                                                                                "Second (any)?": ["B"]}})])
 
+    def test_native_text_edge_arrows_preserve_picks_and_typed_drafts(self):
+        from pathlib import Path
+        self.waiting = True
+        question = {"id": "fixture-edge-carousel", "kind": "question", "questions": [
+            {"question": "Which fruit should this fixture display?", "multiSelect": True,
+             "options": [{"label": "Apple"}, {"label": "Pear"}]},
+            {"question": "Which hat should this fixture display?", "options": [{"label": "Cap"}]}]}
+        self.show(question, agent="claude")
+        prompt = self.window.prompt
+        self.click(prompt.opt_labels[1])
+        entry = prompt.own[1]
+        entry.insert(0, "Banana draft")
+        # Tk's synthetic key events require a key window. Invoke the bound typing
+        # handler after writing the real Entry, without stealing desktop focus.
+        prompt.own_typed(next(i for i, (label, _) in enumerate(prompt.options)
+                              if label == "your own answer:"))
+        self.root.update()
+        for width, scale in ((720, 1), (400, 1), (520, 1.4)):
+            self.root.geometry(f"{width}x640+80+80")
+            self.window.s = scale
+            self.window.px = lambda n, s=scale: int(n * s)
+            self.root.update()
+            prompt.show_question(0)
+            self.root.update()
+            left, right = prompt.question_arrows
+            title = next(widget for widget in left.master.winfo_children()
+                         if widget not in (left, right))
+            self.assertLessEqual(left.winfo_rootx() + left.winfo_width(), title.winfo_rootx())
+            self.assertGreaterEqual(right.winfo_rootx(), title.winfo_rootx() + title.winfo_width())
+            self.assertGreater(title.winfo_width(), 100)
+            self.assertTrue(left.winfo_viewable())
+            self.assertTrue(right.winfo_viewable())
+            directory = os.environ.get("AIPET_PROMPT_SCREENSHOT_DIR")
+            if directory and sys.platform == "darwin":
+                import subprocess
+                import mac_statusbar as mac
+                native = mac.window_titled(self.root.title())
+                number = mac.send(native, "windowNumber", restype=mac.c_long)
+                subprocess.run(["/usr/sbin/screencapture", "-x", "-l", str(number),
+                                str(Path(directory) / f"question-edges-{width}-{scale}.png")], check=True)
+            self.click(right)
+            self.assertEqual(prompt.q_index, 1)
+            self.click(prompt.question_arrows[1])
+            self.assertEqual(prompt.q_index, 0)
+            self.click(prompt.question_arrows[0])
+            self.assertEqual(prompt.q_index, 1)
+            self.click(prompt.question_arrows[0])
+            self.assertEqual(prompt.q_index, 0)
+            self.assertEqual(prompt.own[1].get(), "Banana draft")
+            self.assertEqual(prompt.answer_of(0), ["Pear", "Banana draft"])
+            prompt.draw()
+            self.root.update()
+            self.assertEqual(prompt.own[1].get(), "Banana draft")
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.destinations, [])
+        self.show(dict(question, id="single", questions=question["questions"][:1]), agent="claude")
+        self.assertEqual(prompt.question_arrows, [])
+
     def test_permission_actions_and_prompt_completion_preserve_existing_behavior(self):
         self.waiting = True
         self.show({"id": "fixture-permission", "tool": "TestTool", "detail": "No command is executed"})

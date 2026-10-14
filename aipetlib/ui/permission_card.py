@@ -100,8 +100,20 @@ class PermissionCard:
             widget.bind("<ButtonPress-1>", self._drag_start)
             widget.bind("<B1-Motion>", self._drag_move)
 
-        self.body = tk.Frame(right, bg=bg)
-        self.body.pack(fill="x")
+        text_area = tk.Frame(right, bg=bg)
+        text_area.pack(fill="x")
+        self.prompt_arrows = []
+        for step, text, side in ((-1, "‹", "left"), (1, "›", "right")):
+            arrow = tk.Label(text_area, text=text, bg=bg, fg=self.ACCENT, cursor="hand2",
+                             font=self.f(18, "bold"), padx=6, takefocus=True)
+            arrow.bind("<Button-1>", lambda e, d=step: self.app.step_prompt(self.key, d))
+            arrow.bind("<Return>", lambda e, d=step: self.app.step_prompt(self.key, d))
+            arrow.bind("<space>", lambda e, d=step: self.app.step_prompt(self.key, d))
+            arrow.bind("<Enter>", lambda e, a=arrow: a.configure(bg=theme.T["btn_active"]))
+            arrow.bind("<Leave>", lambda e, a=arrow: a.configure(bg=theme.T["bubble_bg"]))
+            self.prompt_arrows.append((arrow, side))
+        self.body = tk.Frame(text_area, bg=bg)
+        self.body.pack(side="left", fill="both", expand=True)
         self.ask = tk.Label(self.body, bg=bg, fg=fg, anchor="w", justify="left", wraplength=430, font=self.f(11, "bold"))
         self.desc = tk.Label(self.body, bg=bg, fg=msg_fg, anchor="w", justify="left", wraplength=430, font=self.f(10))
         self.code = tk.Text(self.body, height=1, width=60, wrap="word", bg="#0b1220", fg="#d1fae5", relief="flat",
@@ -130,6 +142,7 @@ class PermissionCard:
         # Questions (Claude's AskUserQuestion): one block per question, options as toggles, plus an own-answer field
         self.qframe = tk.Frame(self.body, bg=bg)
         self._qid, self._qvars = None, []
+        self._question_drafts = {}
         self._view, self._timed_grant = None, False  # what the card last laid out (see update)
         self.q_row = tk.Frame(right, bg=bg)
         self.btn_send = tk.Button(self.q_row, text="Send answer", command=self.send_answers,
@@ -280,7 +293,14 @@ class PermissionCard:
         if view == self._view:
             return self._tick_texts(item)
         self._view = view
+        for arrow, side in getattr(self, "prompt_arrows", []):
+            arrow.pack_forget()
+            if state == "needs_input" and len(item.get("requests") or []) > 1:
+                arrow.pack(side=side, fill="y", before=self.body)
         self._render(item)
+        live = {r.get("id") for r in item.get("requests") or [req]}
+        if hasattr(self, "_question_drafts"):
+            self._question_drafts = {rid: draft for rid, draft in self._question_drafts.items() if rid in live}
 
     def _view_of(self, item):
         """Everything the card's layout and texts depend on, except the ticking ones (how long it has waited, a timed
@@ -291,6 +311,7 @@ class PermissionCard:
         grant = permissions.timed_grants().get(str(item.get("session_id"))) if can_answer else None
         return (item.get("state", "needs_input"), self.sent, getattr(self, "_sent_id", None),
                 json.dumps(req, sort_keys=True, default=str), item.get("pending", 0), item.get("title"),
+                tuple(r.get("id") for r in item.get("requests") or []),
                 item.get("where"), item.get("detail"), item.get("agent"), item.get("message"), bool(item.get("changed")),
                 can_answer, bool(self.app.answers_enabled(item)), json.dumps(stop, default=str),
                 self.app.cfg.get("codex_answers", True), preferences.ANSWER_WAIT["v"], grant is not None,
@@ -426,7 +447,12 @@ class PermissionCard:
         readonly = not permissions.hook_waiting({"request": req}) or not self.app.answers_enabled(self._item or {})
         if self._qid == (req.get("id"), readonly):
             return
+        if self._qid and self._qvars:
+            self._question_drafts[self._qid[0]] = {
+                q["question"]: (choice.get(), {label: var.get() for label, var in picks.items()}, own.get(), own_on.get())
+                for q, _, choice, picks, own, own_on in self._qvars}
         self._qid, self._qvars = (req.get("id"), readonly), []
+        drafts = self._question_drafts.get(req.get("id"), {})
         for child in self.qframe.winfo_children():
             child.destroy()
         bg, fg, muted = theme.T["bubble_bg"], theme.T["bubble_fg"], theme.T["bubble_muted"]
@@ -494,6 +520,14 @@ class PermissionCard:
                 own.trace_add("write", lambda *_, c=choice, o=own: c.set(pet_style.OWN_CHOICE) if o.get().strip() else None)
                 pick.configure(command=lambda e=entry: e.focus_set())
             self._qvars.append((q, multi, choice, picks, own, own_on))
+            draft = drafts.get(q["question"])
+            if draft:
+                selected, checked, typed, typed_on = draft
+                own.set(typed)
+                choice.set(selected)
+                own_on.set(typed_on)
+                for label, var in picks.items():
+                    var.set(checked.get(label, False))
         self.win.after(60, self.apply_scale)
 
     def question_answers(self):
@@ -589,9 +623,9 @@ class PermissionCard:
             self.note.config(text=added)
 
     def go(self):
-        """Bring the session's window to the front and dismiss this popup (Codex: its own prompt shows there)."""
-        self.app.go_to_prompt(self.key)
-        self.close()
+        """Open the session and show the next waiting prompt, or close a single-prompt card."""
+        if not self.app.go_to_prompt(self.key):
+            self.close()
 
     def clear_prompt(self):
         self.app.clear_prompt(self.key, getattr(self, "_req_id", None))  # the next poll moves the card on / closes it

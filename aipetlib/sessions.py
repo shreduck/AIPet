@@ -344,6 +344,7 @@ def read_claude_code_sessions(cfg):
                             for a, ts in (rec.get("agents") or {}).items() if time.time() - ts < 900]
             if rec.get("state") in ("working", "needs_input") else [],
             "request": rec.get("request") or {},
+            "requests": rec.get("requests") or ([rec["request"]] if rec.get("request") else []),
             "pending": len(rec.get("requests") or []) or (1 if rec.get("request") else 0),  # prompts queued
             "pid": rec.get("pid"),
             "sid": str(rec.get("id")),
