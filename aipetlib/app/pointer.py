@@ -4,6 +4,7 @@ import sys
 import tkinter as tk
 
 from ..runtime import diagnostics
+from ..runtime import perf
 
 IS_MAC = sys.platform == "darwin"
 
@@ -54,6 +55,7 @@ class Pointer:
         app = self.app
         self.drag = [e.x_root, e.y_root, app.root.winfo_x(), app.root.winfo_y(), False]
 
+    @perf.timed("pet: drag step", slow_ms=15)
     def move(self, e):
         app = self.app
         if not self.drag:

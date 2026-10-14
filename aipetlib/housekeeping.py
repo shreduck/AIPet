@@ -18,6 +18,8 @@ LEFTOVERS = (
     ("", ".tmp", 3600),            # half-written config / auto-approve / update files
     ("", "codex-raw.log", 7 * 86400),   # Codex test log (full payloads): switched off in releases
     ("", "events.log", 7 * 86400),      # debug event log: appended to while "Log hook events" is on
+    ("", "perf.log", 7 * 86400),        # UI timings, also while "Log hook events" is on
+    ("", "perf.log.old", 7 * 86400),
     ("", "diagnostics.txt", 30 * 86400),  # saved by Save diagnostics..., for a bug report
     ("", "workbench-probe.txt", 30 * 86400),
 )

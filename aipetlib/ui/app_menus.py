@@ -265,7 +265,7 @@ def _mac_menu_spec(app, settings=False):
                      help="Saves a report you can attach to a bug report."),
                 item("Open config folder", app.open_config, help="Where AIPet keeps its settings and logs."),
                 item("Log hook events (debug)", app.toggle_debug, checked=os.path.exists(paths.DEBUG_FLAG),
-                     help="Writes what the hooks report to events.log (no prompt text)."),
+                     help="Writes what the hooks report to events.log (no prompt text), and slow UI moments to perf.log."),
             ]),
         ]),
         None,

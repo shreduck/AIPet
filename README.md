@@ -487,6 +487,9 @@ vX.Y.Z...* until you install it. Nothing is downloaded or installed automaticall
   e.g. a permission prompt that the pet shows as "working" because another subagent's tool call arrived in between.
   It also logs how each permission wait ended (`WaitEnded`: answered, released, timed out, answered elsewhere, answers
   off, pet closed, or stopped by the agent, with the seconds waited).
+  While it is on, `~/.aipet/perf.log` also gets every UI-thread step that took 30 ms or more (pet poll and frames, a
+  drag step, each part of an agent window's refresh) and every stall of the UI thread of 80 ms or more: attach it
+  when the pet or a window feels sluggish.
 
 ## First-run setup, notifications
 - On first run a **setup window** lists the Claude Code installs it found (this PC, running WSL distros with Claude Code)

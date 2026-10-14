@@ -9,6 +9,7 @@ import tkinter as tk
 
 from ..agents import context as agent_context
 from ..agents.records import fmt_tokens
+from ..runtime import perf
 from . import agent_common as common
 from . import sprites
 
@@ -806,6 +807,7 @@ class GraphView:
         self.statdrop.place(in_=self.statc, relx=1.0, x=0, y=-window.px(4), anchor="se")
         self.statdrop.lift()
 
+    @perf.timed("agent window: frame")
     def animate(self):
         window = self.window
         if not window.alive():

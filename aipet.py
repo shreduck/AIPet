@@ -81,6 +81,7 @@ from aipetlib.runtime.preferences import (
     SCALE, SCALE_UNIT, STYLE, clamp_card_scale, clamp_done, clamp_health, clamp_scale, clamp_wait,
 )
 from aipetlib.runtime import diagnostics
+from aipetlib.runtime import perf
 from aipetlib.runtime.settings import SAVE_PAUSED, ensure_home, load_config, save_setting
 from aipetlib.text import ago, fmt_left, fmt_wait
 
@@ -409,6 +410,7 @@ class PetApp:
         self.pointer.passing = None
         self.refresh()
         self.animate()
+        perf.watch(root)  # UI stalls to perf.log while debugging
         if IS_MAC:
             import mac_statusbar
             root.update_idletasks()
@@ -454,6 +456,7 @@ class PetApp:
         items.sort(key=lambda i: -self._slots[i["key"]])
         return items
 
+    @perf.timed("pet: poll")
     def refresh(self):
         try:
             real = self.collect()  # one item per session
@@ -755,6 +758,7 @@ class PetApp:
     # ---- window
     # ---- click-through: the window is one rectangle around all pets, but only the robots and the "needs you" bubbles
     # should catch clicks. The pointer is polled, and the window passes clicks through whenever it isn't over those.
+    @perf.timed("pet: frame")
     def animate(self):
         t = time.time() - self.t0
         try:

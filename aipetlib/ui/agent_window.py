@@ -27,6 +27,7 @@ from tkinter import font as tkfont
 
 from aipetlib.ui import theme
 from aipetlib.runtime import diagnostics
+from aipetlib.runtime import perf
 from aipetlib.agents import log_filters, network, stats, tracker
 from aipetlib.agents.tools import is_mcp_tool
 from aipetlib.ui.agent_common import (  # noqa: F401  (the window's values, also read from here)
@@ -285,6 +286,7 @@ class AgentNetworkWindow(agent_controls.WindowControls):
         self.show_session(keys[(i + d) % len(keys)])
         return "break"
 
+    @perf.timed("agent window: refresh")
     def _tick(self):
         if not self.alive():
             return
@@ -336,7 +338,8 @@ class AgentNetworkWindow(agent_controls.WindowControls):
                                else "AIPet · agent network")
             except tk.TclError:
                 pass
-            self.net = self._network(self.item)
+            with perf.timed("agent window: networks", slow_ms=10):
+                self.net = self._network(self.item)
         if len(self.net["agents"]) != n_before:
             self._update_minsize()
         self.blocks = [(self.key, self.item, self.net)] if self.item else []
@@ -351,12 +354,16 @@ class AgentNetworkWindow(agent_controls.WindowControls):
             self.sel = next((i for i, a in enumerate(self.net["agents"]) if a["id"] == selected_id), -1)
         elif self.sel >= len(self.net["agents"]):
             self.sel = -1
-        self.graph.draw()
-        self.logs.draw_tabs()
-        self.logs.update_filters()
+        with perf.timed("agent window: graph"):
+            self.graph.draw()
+        with perf.timed("agent window: tabs and filters"):
+            self.logs.draw_tabs()
+            self.logs.update_filters()
         if not self.prompt.covers_logs():  # hidden under the open prompt: catch up once it folds
-            self.logs.draw()
-        self.prompt.draw()
+            with perf.timed("agent window: log"):
+                self.logs.draw()
+        with perf.timed("agent window: prompt"):
+            self.prompt.draw()
         self.graph.maybe_auto_fit()
 
     # ---- selection
