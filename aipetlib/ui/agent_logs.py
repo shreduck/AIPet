@@ -86,6 +86,9 @@ class LogPanel:
         if not folded:  # folded: only the tabs (with [+ logs]) stay; the graph gets the room
             self.filterbar.pack(fill="x", padx=window.px(6), pady=(0, window.px(3)))
             self.text.pack(fill="both", expand=True)
+        if folded and across:
+            # beside the graph, the tab strip alone would still take a whole column: fold it to a bar over the graph
+            side, across = "top", False
         self.box.pack(side=side, fill="y" if across else "x")
         if not folded:
             self.sep.pack(side=side, fill="y" if across else "x")

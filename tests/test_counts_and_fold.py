@@ -65,6 +65,14 @@ class FoldLogsTests(unittest.TestCase):
         panel.box.pack.assert_called_once()  # the tabs, with [+ logs]
         panel.window.graph.canvas.pack.assert_called_once_with(side="bottom", fill="both", expand=True)
 
+    def test_folded_side_logs_become_a_bar_over_the_graph(self):
+        for side in ("left", "right"):
+            with self.subTest(side=side):
+                panel = self.panel(True, side=side)
+                panel.arrange()
+                panel.box.pack.assert_called_once_with(side="top", fill="x")  # not a column beside the graph
+                panel.window.graph.canvas.pack.assert_called_once_with(side="top", fill="both", expand=True)
+
     def test_unfolded_logs_come_back_in_order(self):
         panel = self.panel(False, side="right")
         order = MagicMock()
