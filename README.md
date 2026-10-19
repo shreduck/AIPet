@@ -442,7 +442,11 @@ default.** Each entry opens a window for that config:
   switches every config off and keeps the lists.
 
 Details:
-- Saved in `~/.aipet/auto-approve.json`; hooks read it on every prompt, so changes apply to running sessions at once.
+- Saved in `~/.aipet/auto-approve.json` by default; hooks read it on every prompt, so changes apply to running sessions at once.
+  If saving fails, the editor shows the error and keeps your edits. **Choose rules folder…** selects a writable
+  folder; press Save to apply it. The app and installed hooks use that same file, including after restarting.
+  Its location is stored beside the normal data folder in `~/.aipet-approval-storage.json`, so that file's parent
+  must also be writable. If the old rules cannot be read during recovery, other approvals stay off.
 - It only works **while AIPet is running** (the hooks check the pet's heartbeat) and with AIPet's hooks installed for
   that config; the menu marks configs without them. The VS Code extension sends no permission events, so it always asks.
 - When the **whitelist** approves something, the robot shows steady green lights, a gentle bob and a small pale-green `✓ auto` bubble

@@ -44,6 +44,33 @@ class ThemeSpritesOwnershipTests(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(self.sprites.SPRITE_DIR, "sprites.json")))
         self.assertEqual(paths.SPRITE_DIR, self.sprites.SPRITE_DIR)
 
+    def test_native_foreground_defaults_follow_the_app_theme(self):
+        from types import SimpleNamespace
+        before = self.theme.T["name"]
+        try:
+            for name in ("light", "dark"):
+                self.theme.set_theme(name)
+                for color in ("systemTextColor", "systemLabelColor", "systemControlTextColor"):
+                    widget = SimpleNamespace(cget=lambda opt, color=color: color)
+                    self.assertEqual(self.theme._fg_role(widget), self.theme.T["win_fg"])
+        finally:
+            self.theme.set_theme(before)
+
+    def test_aqua_button_ink_does_not_depend_on_host_dark_mode(self):
+        from unittest.mock import patch
+        before = self.theme.T["name"]
+        try:
+            with patch.object(self.theme, "IS_MAC", True):
+                for name in ("light", "dark"):
+                    self.theme.set_theme(name)
+                    for kind in ("primary", "danger", "secondary"):
+                        style = self.theme.button_style(kind)
+                        self.assertEqual(style["fg"], "#111827")
+                        self.assertEqual(style["activeforeground"], style["fg"])
+                        self.assertEqual(style["disabledforeground"], "#6b7280")
+        finally:
+            self.theme.set_theme(before)
+
 
 if __name__ == "__main__":
     unittest.main()

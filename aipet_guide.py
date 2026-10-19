@@ -87,7 +87,7 @@ its settings by editing files on the user's computer ({os_name}). Ask before cha
 
 ## Where the files are
 
-All of AIPet's data lives in one folder: `{home_dir}`
+AIPet's default data folder is: `{home_dir}`
 (`~/.aipet` on macOS and Linux, `%USERPROFILE%\\.aipet` on Windows; WSL hooks reach the Windows one through `/mnt/c/...`).
 
 | Path | What it is | Edit it? |
@@ -125,6 +125,10 @@ Example - dark theme, bigger pets, quieter:
 (Merge these keys into the existing file; don't replace the whole file.)
 
 ## auto-approve.json
+
+The default file is in the data folder above. If `{home_dir}-approval-storage.json` exists beside that folder,
+read its `path` first and edit the rules file at that location instead. The app's **Choose rules folder…**
+sets this location; do not change it without the user's request.
 
 Lets AIPet approve permission prompts automatically. Format:
 

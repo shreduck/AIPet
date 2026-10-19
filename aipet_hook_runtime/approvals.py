@@ -8,6 +8,7 @@ from . import config as hook_config
 from . import hosts as hook_hosts
 from . import requests as hook_requests
 from . import waiting as hook_waiting
+from .storage import approval_path
 
 def auto_approve_key(wsl):
     """Which hook config this hook runs under, named like the pet's hook targets: "windows" / "mac" (this machine),
@@ -26,7 +27,7 @@ def auto_approve_rules(base, key):
     a missing or disabled config all mean off. Only honoured while the pet is running, so closing the pet stops it.
     A plain list of keys (the first version of the setting) means "allow all" for those keys."""
     try:
-        with open(os.path.join(base, hook_config.AUTO_APPROVE_FILE), encoding="utf-8") as f:
+        with open(approval_path(base), encoding="utf-8") as f:
             targets = json.load(f).get("targets")
     except Exception:
         return None
@@ -45,7 +46,7 @@ def timed_decision(base, session_id, now=None):
     """'timed' while this session has a running "auto approve for N minutes" grant from the pet (auto-approve.json
     "timed": {session id: {"until": epoch seconds}}), else None. Like the other rules, only while the pet runs."""
     try:
-        with open(os.path.join(base, hook_config.AUTO_APPROVE_FILE), encoding="utf-8") as f:
+        with open(approval_path(base), encoding="utf-8") as f:
             grant = (json.load(f).get("timed") or {}).get(str(session_id))
     except Exception:
         return None

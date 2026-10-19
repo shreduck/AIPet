@@ -72,6 +72,7 @@ class MacWindowTests(unittest.TestCase):
             root.destroy()
 
     def test_collapsed_logs_fit_one_display_line_and_expand_without_losing_text(self):
+        import aipetlib.mac_panels as mac_panels
         from types import SimpleNamespace
         from unittest.mock import patch
         import aipet
@@ -120,6 +121,7 @@ class MacWindowTests(unittest.TestCase):
             root.destroy()
 
     def test_text_slider_is_independent_persists_and_resets_to_100(self):
+        import aipetlib.mac_panels as mac_panels
         import json
         import tempfile
         from pathlib import Path
@@ -172,6 +174,7 @@ class MacWindowTests(unittest.TestCase):
             root.destroy()
 
     def test_log_filter_toolbar_aligns_and_wraps_without_overlapping_logs(self):
+        import aipetlib.mac_panels as mac_panels
         from types import SimpleNamespace
         import aipet
         from aipetlib.ui.agent_window import AgentNetworkWindow
@@ -216,6 +219,7 @@ class MacWindowTests(unittest.TestCase):
             root.destroy()
 
     def test_agent_network_opens_with_and_without_sessions(self):
+        import aipetlib.mac_panels as mac_panels
         from types import SimpleNamespace
         import aipet
         from aipetlib.ui.agent_window import AgentNetworkWindow
@@ -244,6 +248,7 @@ class MacWindowTests(unittest.TestCase):
             root.destroy()
 
     def test_resize_preserves_ui_scale_and_text_size(self):
+        import aipetlib.mac_panels as mac_panels
         from types import SimpleNamespace
         import aipet
         from aipetlib.ui.agent_window import AgentNetworkWindow
@@ -267,6 +272,8 @@ class MacWindowTests(unittest.TestCase):
             root.destroy()
 
     def test_auto_rules_persist_and_reopen_after_confirmation(self):
+        import aipetlib.mac_panels as mac_panels
+        import aipetlib.permissions as permissions
         import json
         import tempfile
         import tkinter as tk
@@ -355,6 +362,8 @@ class MacWindowTests(unittest.TestCase):
             root.destroy()
 
     def test_auto_rules_save_and_cancel_after_warning(self):
+        import aipetlib.mac_panels as mac_panels
+        import aipetlib.permissions as permissions
         import tkinter as tk
         from unittest.mock import MagicMock, patch
         import aipet
@@ -424,6 +433,8 @@ class MacWindowTests(unittest.TestCase):
             root.destroy()
 
     def test_permission_panel_preserves_focus_and_delivers_button_clicks(self):
+        import aipetlib.mac_panels as mac_panels
+        import aipetlib.permissions as permissions
         from types import SimpleNamespace
         from unittest.mock import MagicMock, patch
         import aipet
@@ -468,6 +479,10 @@ class MacWindowTests(unittest.TestCase):
             root.destroy()
 
     def test_hover_tooltips_are_passive_panels_on_the_pets_spaces(self):
+        import aipetlib.mac_panels as mac_panels
+        import aipetlib.app.preferences as app_preferences
+        import aipetlib.ui.appearance_controls as appearance_controls
+        import aipetlib.ui.tooltips as tooltips
         import tkinter as tk
         from types import SimpleNamespace
         import aipet
@@ -523,6 +538,10 @@ class MacWindowTests(unittest.TestCase):
             root.destroy()
 
     def test_hover_does_not_activate_app_or_raise_agent_window(self):
+        import aipetlib.mac_panels as mac_panels
+        import aipetlib.app.preferences as app_preferences
+        import aipetlib.ui.appearance_controls as appearance_controls
+        import aipetlib.ui.tooltips as tooltips
         import tkinter as tk
         from types import SimpleNamespace
         import Quartz
@@ -603,6 +622,7 @@ class MacWindowTests(unittest.TestCase):
             mac.send(finder, "release", restype=None)
 
     def test_question_bubble_only_raises_its_card_preserving_agent_stacking(self):
+        import aipetlib.mac_panels as mac_panels
         import tkinter as tk
         from types import SimpleNamespace
         from unittest.mock import Mock, patch
@@ -695,6 +715,7 @@ class MacWindowTests(unittest.TestCase):
             mac.send(finder, "release", restype=None)
 
     def test_panel_mouse_bridge_delivers_clicks_and_drag_outside_canvas(self):
+        import aipetlib.mac_panels as mac_panels
         import tkinter as tk
         import aipet
         import mac_statusbar as mac
@@ -729,6 +750,8 @@ class MacWindowTests(unittest.TestCase):
             root.destroy()
 
     def test_warning_stays_above_its_settings_window(self):
+        import aipetlib.mac_panels as mac_panels
+        import aipetlib.ui.theme as theme
         import tkinter as tk
         import aipet
         import mac_statusbar as mac
@@ -760,7 +783,7 @@ class MacWindowTests(unittest.TestCase):
                                    (parent_level, -order.index(native_parent)))
                 for kind in ("primary", "danger", "secondary"):
                     b = tk.Button(parent, **theme.button_style(kind))
-                    self.assertEqual(b.winfo_rgb(b.cget("fg")), b.winfo_rgb("systemButtonText"))
+                    self.assertEqual(b.winfo_rgb(b.cget("fg")), b.winfo_rgb("#111827"))
                     b.destroy()
             except Exception as error:
                 failures.append(error)
@@ -781,6 +804,7 @@ class MacWindowTests(unittest.TestCase):
             root.destroy()
 
     def test_panel_survives_resize_remap_and_sharing_toggle(self):
+        import aipetlib.mac_panels as mac_panels
         import aipet
         import mac_statusbar as mac
 

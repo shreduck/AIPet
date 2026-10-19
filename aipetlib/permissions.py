@@ -10,11 +10,21 @@ import sys
 import time
 
 from .runtime import diagnostics, paths
+from aipet_hook_runtime import storage
 
 IS_MAC = sys.platform == "darwin"
 PROMPT_CONFIRM_SECONDS = 12  # Claude Code's permission_prompt Notification comes ~6 s after the prompt appears
 DEFAULT_BLACKLIST = [".*"]  # by default every request still needs you
 TIMED_MIN, TIMED_MAX, TIMED_DEFAULT = 1, 120, 10  # minutes of a timed auto approve
+_APPROVAL_ERROR = ""
+
+
+def approval_path():
+    return storage.approval_path(paths.HOME_DIR, paths.AUTO_APPROVE_PATH)
+
+
+def approval_save_error():
+    return _APPROVAL_ERROR
 
 
 def unconfirmed_prompts(rec, now=None):
@@ -116,7 +126,7 @@ def auto_approve_rules():
     """{hook config key: rules} as saved by the Auto approve windows. A missing or unreadable file means all off.
     The first version stored a plain list of keys: those meant "allow all"."""
     try:
-        with open(paths.AUTO_APPROVE_PATH, encoding="utf-8") as f:
+        with open(approval_path(), encoding="utf-8") as f:
             targets = json.load(f).get("targets")
     except Exception:
         return {}
@@ -138,7 +148,7 @@ def auto_approve_targets():
     return sorted(k for k, r in auto_approve_rules().items() if r.get("enabled"))
 
 
-def save_auto_approve(key, rules):
+def save_auto_approve(key, rules, *, directory=None):
     """Save one hook config's rules (key None = switch every config off, keeping their lists). True if saved."""
     targets = auto_approve_rules()
     if key is None:
@@ -146,27 +156,37 @@ def save_auto_approve(key, rules):
             r["enabled"] = False
     else:
         targets[key] = rules
-    return _write_auto_approve(targets=targets)
+    return _write_auto_approve(targets=targets, directory=directory)
 
 
-def _write_auto_approve(targets=None, timed=None):
+def _write_auto_approve(targets=None, timed=None, directory=None):
     """Write auto-approve.json, keeping whichever section (rules per hook config / timed grants) isn't given."""
+    global _APPROVAL_ERROR
+    _APPROVAL_ERROR = ""
     try:
-        with open(paths.AUTO_APPROVE_PATH, encoding="utf-8") as f:
-            current = json.load(f)
-        current = current if isinstance(current, dict) else {}
-    except Exception:
-        current = {}
-    data = {"targets": targets if targets is not None else current.get("targets", {}),
-            "timed": timed if timed is not None else current.get("timed", {})}
-    try:
-        os.makedirs(paths.HOME_DIR, exist_ok=True)
-        tmp = paths.AUTO_APPROVE_PATH + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        os.replace(tmp, paths.AUTO_APPROVE_PATH)
+        source = None
+        try:
+            source = approval_path()
+            with open(source, encoding="utf-8") as f:
+                current = json.load(f)
+            if not isinstance(current, dict):
+                raise ValueError("Approval settings must contain a JSON object")
+        except FileNotFoundError:
+            current = {}
+        except (OSError, ValueError, KeyError):
+            if directory is None:
+                raise
+            current = {}  # explicit recovery to a new folder; other grants remain off
+        data = {"targets": targets if targets is not None else current.get("targets", {}),
+                "timed": timed if timed is not None else current.get("timed", {})}
+        destination = (os.path.join(os.path.abspath(directory), "auto-approve.json")
+                       if directory is not None else approval_path())
+        storage.write_json(destination, data)
+        if directory is not None and destination != source:
+            storage.write_json(storage.locator_path(paths.HOME_DIR), {"path": destination})
         return True
-    except OSError as e:
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        _APPROVAL_ERROR = str(e)
         diagnostics.log_error(f"auto-approve: {e!r}")
         return False
 
@@ -175,7 +195,7 @@ def timed_grants(now=None):
     """{session id: {"until", "title"}} for the grants still running (the hooks ignore expired ones too)."""
     now = time.time() if now is None else now
     try:
-        with open(paths.AUTO_APPROVE_PATH, encoding="utf-8") as f:
+        with open(approval_path(), encoding="utf-8") as f:
             timed = json.load(f).get("timed") or {}
     except Exception:
         return {}

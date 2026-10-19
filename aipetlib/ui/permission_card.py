@@ -177,6 +177,11 @@ class PermissionCard:
                                 activeforeground="#111827", relief="flat", cursor="hand2", font=self.f(10, "bold"),
                                 command=self.go)
         self.btn_go.pack(side="left", ipady=4, ipadx=14)
+        if IS_MAC:
+            # These two also use Aqua's light native face, regardless of the
+            # custom colours requested above or the host's dark appearance.
+            for button in (self.btn_whitelist, self.btn_go):
+                button.configure(**theme.button_style())
         self.update(item)
         self.apply_scale()
         self._place(first=True)

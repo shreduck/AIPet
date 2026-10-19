@@ -5,6 +5,7 @@ import sys
 import tkinter as tk
 
 from .. import permissions
+from ..runtime import diagnostics
 from ..integrations import targets
 from ..ui import sprites
 from ..ui import theme
@@ -131,6 +132,39 @@ class Approvals:
                  ).pack(anchor="w", pady=(10, 0))
         error = tk.Label(body, fg="#b91c1c", justify="left", wraplength=640, font=(sprites.MONO_FAMILY, 9))
         error.pack(anchor="w", padx=16)
+        destination = {"directory": None}
+        storage_row = tk.Frame(body)
+        storage_row.pack(fill="x", pady=(8, 0))
+        storage_label = tk.Label(storage_row, fg=grey, justify="left", wraplength=470,
+                                 font=(sprites.MONO_FAMILY, 8))
+        storage_label.pack(side="left")
+
+        def show_location():
+            try:
+                path = (os.path.join(destination["directory"], "auto-approve.json")
+                        if destination["directory"] else permissions.approval_path())
+                storage_label.configure(text="Rules file: " + path)
+            except Exception as exc:
+                storage_label.configure(text="Rules location unavailable: " + str(exc))
+
+        def choose_folder():
+            if not win.winfo_exists() or pending["value"]:
+                return
+            try:
+                from tkinter import filedialog
+                folder = filedialog.askdirectory(parent=win, title="Choose a writable folder for approval rules",
+                                                 mustexist=True)
+                if folder:
+                    destination["directory"] = folder
+                    show_location()
+                    error.configure(text="Click Save to store these rules in the selected folder. "
+                                         "If the old rules cannot be read, other approvals will stay off.")
+            except Exception as exc:
+                show_error(exc)
+
+        tk.Button(storage_row, text="Choose rules folder…", command=lambda: win.after_idle(choose_folder)
+                  ).pack(side="right", padx=(8, 0))
+        show_location()
 
         def sync(*_):  # Allow all switches the lists off
             state = "disabled" if allow_all.get() else "normal"
@@ -148,21 +182,40 @@ class Approvals:
 
         pending = {"value": False}
 
+        def show_error(exc):
+            diagnostics.log_error(f"approval editor: {exc!r}")
+            if win.winfo_exists():
+                error.configure(text=f"Couldn't save approval rules: {exc}\n"
+                                     "Your edits are still here. Retry or choose a writable rules folder. "
+                                     "AIPet also needs permission to save its location beside your .aipet folder.")
+
         def finish_save(rules, accepted):
             if not win.winfo_exists():
                 return
             try:
                 if not accepted:
                     return
-                if not permissions.save_auto_approve(key, rules):
-                    error.configure(text="Couldn't save these rules. Check that ~/.aipet is writable, then try again.")
+                options = {"directory": destination["directory"]} if destination["directory"] else {}
+                if not permissions.save_auto_approve(key, rules, **options):
+                    show_error(permissions.approval_save_error() or "The rules file could not be written.")
                     return
                 close()
                 self.changed()
+            except Exception as exc:
+                show_error(exc)
             finally:
                 pending["value"] = False
                 if win.winfo_exists():
                     save_button.configure(state="normal")
+
+        def confirm(rules):
+            try:
+                self.warn(label, rules, parent=win, on_result=lambda accepted: finish_save(rules, accepted))
+            except Exception as exc:
+                pending["value"] = False
+                if win.winfo_exists():
+                    save_button.configure(state="normal")
+                    show_error(exc)
 
         def save():
             if pending["value"]:
@@ -184,8 +237,7 @@ class Approvals:
             if all_on or newly_on:
                 # Return from Aqua's button callback before opening the warning;
                 # continue saving asynchronously after the warning is destroyed.
-                win.after_idle(lambda: self.warn(label, rules, parent=win,
-                               on_result=lambda accepted: finish_save(rules, accepted)))
+                win.after_idle(lambda: confirm(rules))
                 return
             finish_save(rules, True)
 

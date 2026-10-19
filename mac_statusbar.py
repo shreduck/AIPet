@@ -313,6 +313,12 @@ class PanelMouseBridge:
                 return
             options = dict(x=x - target.winfo_rootx(), y=y - target.winfo_rooty(), rootx=x, rooty=y, state=state)
             if kind in (1, 3, 25):
+                if isinstance(target, tk.Button):
+                    # Another bridge (a warning) can change Tk's shared
+                    # Priv(window), then destroy that widget while our cached
+                    # hover still points at Save. Aqua only invokes a button
+                    # whose Enter state matches it: refresh it on every press.
+                    target.event_generate("<Enter>", **options)
                 # Establish Canvas 'current' so badge and bubble tag bindings
                 # receive the same press as the Canvas widget itself.
                 target.event_generate("<Motion>", **options)

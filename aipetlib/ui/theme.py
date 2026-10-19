@@ -51,7 +51,8 @@ T = {}  # the active theme; set_theme() mutates it in place so every module sees
 # built by theme_window(), which also remembers them so a theme switch restyles them live. Colours a window set on
 # purpose (green "installed", amber "out of date"...) are kept, brightened on the dark background.
 THEMED = []
-_DEFAULT_FG = {"", "black", "#000000", "systembuttontext", "systemwindowtext", "systemmenutext", "#111827"}
+_DEFAULT_FG = {"", "black", "#000000", "systembuttontext", "systemwindowtext", "systemmenutext", "#111827",
+               "systemtextcolor", "systemlabelcolor", "systemcontroltextcolor"}
 MUTED_FG = {"#6b7280", "grey", "gray"}
 DIALOG_ACCENTS = {"info": "#5b8def", "question": "#5b8def", "warning": "#f59e0b", "error": "#ef4444"}
 
@@ -89,10 +90,11 @@ def button_style(kind="secondary"):
     """Options for a tk.Button in the pet's style: 'primary' (filled), 'danger' or 'secondary' (outlined)."""
     if IS_MAC:
         # Aqua draws the button face itself and ignores our filled background.
-        # Its matching system text stays readable in both macOS appearances.
-        return dict(fg="systemButtonText", activeforeground="systemButtonText",
+        # Tk 8.6's Aqua face stays light even when systemButtonText resolves to
+        # white in macOS dark appearance. Use dark ink on that native face.
+        return dict(fg="#111827", activeforeground="#111827", disabledforeground="#6b7280",
                     bg=T["win_bg"], highlightbackground=T["win_bg"],
-                    cursor="hand2", padx=14, pady=4,
+                    activebackground=T["win_bg"], cursor="hand2", padx=14, pady=4,
                     font=(UI_FONT, 9, "bold") if kind in ("primary", "danger") else (UI_FONT, 9))
     if kind == "primary":
         return dict(bg=T["primary"], fg=T["primary_fg"], activebackground=T["primary_active"],

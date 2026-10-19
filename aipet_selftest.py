@@ -11,8 +11,6 @@ def check_assets(output):
     import io
     result = {"ok": False}
     try:
-        import aipetlib.runtime.paths as paths
-        import aipetlib.ui.pet_style as pet_style
         import aipetlib.ui.sprites as sprites_owner
         from PIL import Image, PngImagePlugin  # expose plugin import failures instead of Pillow hiding them
         sprites = sprites_owner.load_sprites(sprites_owner.SPRITE_DIR)
@@ -51,6 +49,8 @@ def check_update(token=None):
 
 def start_spaces_probe(app, output):
     import mac_statusbar as mac
+    from aipetlib.runtime import paths
+    from aipetlib.ui import pet_style
 
     os.makedirs(output, exist_ok=True)
     request_path = os.path.join(output, "request.json")
