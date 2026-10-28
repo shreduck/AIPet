@@ -11,6 +11,7 @@ import time
 
 from .runtime import diagnostics, paths
 from aipet_hook_runtime import storage
+from aipet_hook_runtime.rules import lists_block
 
 IS_MAC = sys.platform == "darwin"
 PROMPT_CONFIRM_SECONDS = 12  # Claude Code's permission_prompt Notification comes ~6 s after the prompt appears
@@ -119,7 +120,8 @@ def _search(pattern, text):
 
 
 def default_auto_rules():
-    return {"enabled": False, "allow_all": False, "whitelist": [], "blacklist": list(DEFAULT_BLACKLIST)}
+    return {"enabled": False, "allow_all": False, "whitelist": [], "blacklist": list(DEFAULT_BLACKLIST),
+            "precedence": "blacklist"}
 
 
 def auto_approve_rules():
@@ -138,7 +140,7 @@ def auto_approve_rules():
     for k, r in targets.items():
         if isinstance(r, dict):
             rules = default_auto_rules()
-            rules.update({x: r[x] for x in ("enabled", "allow_all", "whitelist", "blacklist") if x in r})
+            rules.update({x: r[x] for x in ("enabled", "allow_all", "whitelist", "blacklist", "precedence") if x in r})
             out[k] = rules
     return out
 
@@ -203,11 +205,37 @@ def timed_grants(now=None):
             if isinstance(g, dict) and isinstance(g.get("until"), (int, float)) and g["until"] > now}
 
 
-def set_timed_grant(session_id, minutes, title=""):
+def set_timed_grant(session_id, minutes, title="", respect_blacklist=False, reject_blacklist=False):
     grants = timed_grants()
     minutes = max(TIMED_MIN, min(TIMED_MAX, int(minutes)))
-    grants[str(session_id)] = {"until": time.time() + minutes * 60, "title": str(title)[:80]}
+    grants[str(session_id)] = {"until": time.time() + minutes * 60, "title": str(title)[:80],
+                               "respect_blacklist": bool(respect_blacklist or reject_blacklist),
+                               "reject_blacklist": bool(reject_blacklist)}
     return _write_auto_approve(timed=grants)
+
+
+def blacklist_blocked(item):
+    """Whether this displayed permission is paused or rejected by its timed blacklist policy."""
+    req = (item or {}).get("request") or {}
+    grant = timed_grants().get(str((item or {}).get("session_id")))
+    if not grant or not grant.get("respect_blacklist") or not req or req.get("kind") == "question":
+        return False
+    rules = auto_approve_rules().get(auto_approve_key_for(item)) or default_auto_rules()
+    subject, tool = req.get("subject", req.get("detail", "")), req.get("tool", "")
+    subjects = [subject, tool, f"{tool}({subject})"]
+    return lists_block(rules, subjects)
+
+
+def timed_behavior(item):
+    """Decision for the displayed permission under the current grant; None leaves a blocked prompt waiting."""
+    if ((item or {}).get("request") or {}).get("kind") == "question":
+        return None
+    grant = timed_grants().get(str((item or {}).get("session_id")))
+    if not grant:
+        return None
+    if blacklist_blocked(item):
+        return "deny" if grant.get("reject_blacklist") else None
+    return "allow"
 
 
 def stop_timed_grant(session_id):

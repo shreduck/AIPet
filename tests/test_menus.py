@@ -16,6 +16,36 @@ from aipetlib.app.agent_windows import AgentWindows
 
 
 class MenuTests(unittest.TestCase):
+    @patch.object(aipet_app.app_menus.hook_backups, 'list_backups', return_value=[])
+    @patch.object(permissions_owner, 'auto_approve_rules', return_value={})
+    def test_addins_settings_lists_builtin_and_user_toggles(self, *_):
+        app = self.make_app()
+        app.addins = MagicMock()
+        app.addins.entries.return_value = [
+            ('hook-journal', dict(name='Hook journal', description='Local journal', builtin=True,
+                                  settings=[dict(key='directory', type='directory')])),
+            ('example', dict(name='Example', description='User script', builtin=False))]
+        app.pet.cfg['addins'] = {'hook-journal': True, 'example': False}
+        app.toggle_addin = MagicMock()
+        app.save_addin_settings = MagicMock()
+        app.addins.get_settings.return_value = [dict(key='directory', type='directory', value='/logs')]
+        for settings in (False, True):
+            entry = next(e for e in app._mac_menu_spec(settings=settings) if e and e['label'] == 'Add-ins')
+            builtin, user = entry['submenu'][:2]
+            self.assertTrue(builtin['submenu'][0]['checked'])
+            self.assertFalse(user['submenu'][0]['checked'])
+            user['submenu'][0]['action']()
+            app.toggle_addin.assert_called_with('example')
+            self.assertFalse(any(e and e['label'] == 'Add-in settings' for e in entry['submenu']))
+            if settings:
+                editor = builtin['submenu'][0]['addin_editor']
+                self.assertEqual(editor['properties'][0]['value'], '/logs')
+                completed = MagicMock()
+                editor['save']({'directory': '/new'}, completed)
+                app.save_addin_settings.assert_called_with('hook-journal', {'directory': '/new'}, completed)
+            else:
+                self.assertNotIn('addin_editor', builtin['submenu'][0])
+
     def setUp(self):
         # Menus list live timed auto-approvals from ~/.aipet: never let the machine running the tests change them
         grants = patch.object(permissions_owner, 'timed_grants', return_value={})

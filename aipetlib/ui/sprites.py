@@ -21,13 +21,13 @@ _PHOTOS = {}  # (key, w, h) -> ImageTk.PhotoImage, so a frame never re-resizes t
 CYAN_LIGHT = (214, 251, 255)
 LIGHT_COLORS = {"amber": (245, 165, 36), "green": (34, 197, 94), "red": (239, 68, 68), "off": (55, 65, 81)}
 # state -> (face, light colours). "working" cycles its lights in light_cycle().
-STATE_FACE = {"working": "happy", "done": "joy", "error": "worried", "idle": "sleep", "needs_input": "ask"}
+STATE_FACE = {"working": "happy", "done": "joy", "error": "error", "idle": "sleep", "needs_input": "ask"}
 FACE_PARTS = {"ask": (None, None), "happy": ("open", "smile"), "blink": ("line", "smile"), "joy": ("arc", "smile"),
-              "sleep": ("line", "flat"), "worried": ("open", "wavy")}
+              "sleep": ("line", "flat"), "worried": ("open", "wavy"), "error": ("x", "frown")}
 EYE_PIXELS = {"open": [".2.", "111", "111", ".1."], "arc": [".1.", "1.1"], "line": ["111"],
               "x": ["1.1", ".1.", "1.1"]}
 QUESTION_PIXELS = [".111.", "1...1", "....1", "...1.", "..1..", "..1..", ".....", "..1.."]
-MOUTH_PIXELS = {"smile": ["1.....1", ".1...1.", "..111.."], "flat": [".111."], "wavy": [".1.1.1.", "1.1.1.1"]}
+MOUTH_PIXELS = {"frown": ["..111..", ".1...1.", "1.....1"], "smile": ["1.....1", ".1...1.", "..111.."], "flat": [".111."], "wavy": [".1.1.1.", "1.1.1.1"]}
 # Working robots "talk": a sine wave that travels along the mouth, so they stand out from the idle / done ones
 TALK_FRAMES = 4  # one pixel of travel per frame; the wave is 4 pixels long, so 4 frames loop it
 
@@ -99,6 +99,14 @@ def robot_image(face, lights, spr=None):
     m = spr["meta"]["robot"]
     im = spr["img"]["robot"].copy()
     px = im.load()
+    if face == "error":
+        # Repaint the light body panels, keeping their shading and the dark screen / outline.
+        for y in range(im.height):
+            for x in range(im.width):
+                r, g, b, a = px[x, y]
+                if a and min(r, g, b) > 100 and max(r, g, b) - min(r, g, b) < 20:
+                    shade = max(r, g, b) / 253
+                    px[x, y] = (round(239 * shade), round(68 * shade), round(68 * shade), a)
     x0, y0, x1, y1 = m["screen"]
     cyan = _rgb(spr["meta"].get("cyan", "#6ee7f3"))
 
@@ -140,7 +148,8 @@ def light_cycle(state, t):
         return ("amber",) * 3 if int(t * 3) % 2 else ("off", "amber", "off")
     if state == "auto":  # steady green: something was just auto-approved
         return ("green",) * 3
-    return {"done": ("green",) * 3, "error": ("red", "amber", "red"), "idle": ("off",) * 3}.get(state, ("off",) * 3)
+    return {"done": ("green",) * 3, "blacklist": ("red",) * 3,
+            "error": ("red", "amber", "red"), "idle": ("off",) * 3}.get(state, ("off",) * 3)
 
 
 def _to_photo(im):

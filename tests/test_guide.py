@@ -15,6 +15,18 @@ class GuideTests(unittest.TestCase):
         self.assertIn('| `theme` | `"dark"` |', text)
         self.assertIn("| `size` | `1.5` |", text)
         self.assertIn("auto-approve.json", text)
+        self.assertIn('`precedence`: `"blacklist"` (default) or `"whitelist"`', text)
+
+    def test_addin_guide_includes_interface_and_current_properties(self):
+        text = aipet_guide.build_guide({}, '/example', addins=[dict(id='hook-journal',
+            enabled=True, settings=[dict(key='directory', value='/custom/logs')])])
+        for expected in ('### Add-ins:', 'pet.get_settings()', 'pet.set_settings(',
+                         'settings_properties', '"default": false', '/custom/logs',
+                         'events.previous.jsonl', 'rather than editing the saved settings JSON'):
+            self.assertIn(expected, text)
+        for expected in ('#### Add-in UI and AIPet theming', 'theme.theme_window(win)', 'theme.T',
+                         'Consolas on Windows', '<<AIPetThemeChanged>>', 'SDK error severity'):
+            self.assertIn(expected, text)
 
 
 if __name__ == "__main__":

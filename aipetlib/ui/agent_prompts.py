@@ -176,7 +176,9 @@ class PromptPanel:
             self.options.append(("aipet: always (whitelist)", self.always))
             if (item or {}).get("session_id"):  # like the card: every prompt of this session, for a while
                 grant = permission_rules.timed_grants().get(str(item["session_id"]))
-                self.options.append(("aipet: auto approving this session · allow" if grant else
+                self.options.append(("aipet: auto approving · reject blacklist" if grant and grant.get("reject_blacklist") else
+                                     "aipet: auto approving · pause on blacklist" if grant and grant.get("respect_blacklist") else
+                                     "aipet: auto approving this session · allow" if grant else
                                      f"aipet: auto approve this session for {window.pet.answers.timed_minutes()} min…",
                                      self.timed))
             self.options.append(("deny", lambda: self.send("deny")))
@@ -446,10 +448,11 @@ class PromptPanel:
             self.options[n][1]()
         return "break"
 
-    def send(self, behavior, answers=None, permissions=None):
+    def send(self, behavior, answers=None, permissions=None, auto_approved=False):
         window = self.window
         ok = (window.pet.answers.send(window.key, behavior, answers=answers, permissions=permissions) if permissions
-              else window.pet.answers.send(window.key, behavior, answers=answers))
+              else window.pet.answers.send(window.key, behavior, answers=answers,
+                                           **({"auto_approved": True} if auto_approved else {})))
         self.note.configure(text="# sent" if ok else "# couldn't send it: the prompt may have been answered already")
         if ok:
             window.win.after(600, lambda: self.open(False))
@@ -470,8 +473,28 @@ class PromptPanel:
         """Auto approve this session's prompts for a while (after the pet's confirmation), and allow this one."""
         window = self.window
         item = window.item or {}
-        if permission_rules.timed_grants().get(str(item.get("session_id"))) or window.pet.answers.start_timed(item):
-            self.send("allow")
+        key = window.key
+        grant = permission_rules.timed_grants().get(str(item.get("session_id")))
+        def completed(accepted):
+            if not accepted or not window.win.winfo_exists() or window.key != key:
+                return
+            active = permission_rules.timed_grants().get(str(item.get('session_id'))) or {}
+            if active.get('respect_blacklist') and not active.get('reject_blacklist'):
+                self.open(False)
+                return
+            current = window.item or {}
+            if current.get('session_id') != item.get('session_id'):
+                return
+            behavior = permission_rules.timed_behavior(current)
+            if behavior:
+                self.send(behavior, auto_approved=True)
+            else:
+                self.sig = None
+                self.draw()
+        if grant and not grant.get('respect_blacklist'):
+            completed(True)
+        else:
+            window.pet.answers.start_timed(item, parent=window.win, on_result=completed)
 
     def always(self):
         window = self.window

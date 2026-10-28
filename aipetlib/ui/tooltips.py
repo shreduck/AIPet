@@ -64,7 +64,8 @@ class Tooltips:
         if d.get("pid"):
             lines.append(f"PID {d['pid']}" + (" (WSL)" if d.get("env") == "wsl" else ""))
         if d.get("auto_what") and time.time() - (d.get("auto_t") or 0) < 120:
-            lines.append(f"Auto-approved {textfmt.ago(d['auto_t'])}: {d['auto_what'][:90]}")
+            action = "Rejected by blacklist" if d.get("auto_kind") == "blacklist" else "Auto-approved"
+            lines.append(f"{action} {textfmt.ago(d['auto_t'])}: {d['auto_what'][:90]}")
         if d.get("auto_approved"):
             lines.append(f"Auto-approved {d['auto_approved']} permission prompt{'s' if d['auto_approved'] != 1 else ''}")
         self._show_tooltip(pet, "\n".join(lines))

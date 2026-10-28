@@ -76,6 +76,17 @@ class PointerTests(unittest.TestCase):
         self.app.open_detail.assert_called_once_with("s1")
         self.assertTrue(self.app.ack["s1"])
 
+    def test_addin_bubble_opens_only_addin_messages(self):
+        self.pet._on_addin = True
+        rows = [{'id': 'addin-report'}]
+        self.pet.addin_rows = lambda: rows
+        self.app.open_addin_messages = MagicMock()
+        self.pointer.release(SimpleNamespace(state=0), self.pet)
+        self.app.open_addin_messages.assert_called_once_with(rows, parent=self.app.root)
+        self.app._acknowledge.assert_not_called()
+        self.app.open_detail.assert_not_called()
+        self.app.focus_session.assert_not_called()
+
     def test_clicks_pass_through_away_from_the_pets(self):
         self.app.root.winfo_pointerxy.return_value = (5, 5)
         self.pointer.pass_tick()

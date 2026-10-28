@@ -9,6 +9,7 @@ import tkinter as tk
 
 from ..agents import context as agent_context
 from ..agents.records import fmt_tokens
+from ..addin_messages import LEVELS, for_items
 from ..runtime import perf
 from . import agent_common as common
 from . import sprites
@@ -123,15 +124,55 @@ class GraphView:
         window = self.window
         return window.f_main.metrics("linespace") * self.gz if self.gz < 0.4 else window.g_main.metrics("linespace")
 
-    def block_height(self, net, H):
+    def block_height(self, net, H, item=None):
         """Height one session's graph needs (tabbed off: the sessions are stacked)."""
         window = self.window
         cols, beside = window._columns(net)
         rows = max((len(c) for c in cols), default=0)
         lh = self.line_height()
-        main_h = lh * 4 + self.gpx(10)
-        sub_h = lh * 4 + self.gpx(8)
-        return int(max(main_h, rows * (sub_h + self.gpx(12 if common.IS_MAC else 6))) + 2 * self.gpx(10) + lh * 1.6)
+        lines = 5 if getattr(window, 'opts', {}).get('tidy') else 4
+        main_h = lh * lines + self.gpx(10)
+        sub_h = lh * lines + self.gpx(8)
+        return int(max(main_h, rows * (sub_h + self.gpx(12 if common.IS_MAC else 6))) + 2 * self.gpx(10) + lh * 1.6) + self.addin_height(item)
+
+    def addin_rows(self, item):
+        if item is None:
+            return []
+        return for_items(getattr(getattr(self.window, 'pet', None), 'addin_snapshot', []), [item])
+
+    def addin_height(self, item):
+        count = len(self.addin_rows(item))
+        return ((count + 3) // 4) * (2 * self.line_height() + self.gpx(18)) if count else 0
+
+    def draw_addins(self, item, x, y):
+        window, canvas = self.window, self.canvas
+        rows = self.addin_rows(item)
+        width, height, gap = self.gpx(126), 2 * self.line_height() + self.gpx(10), self.gpx(8)
+        for index, row in enumerate(rows):
+            left, top = x + (index % 4) * (width + gap), y + (index // 4) * (height + gap)
+            state = row['level'] if row['state'] == 'needs_attention' else row['state']
+            icon, color, bg = LEVELS[row['level'] if row['state'] == 'needs_attention' else 'info']
+            if row['state'] == 'stopped':
+                color, bg = window.P['mu'], window.P['node']
+            tag = 'addin-' + row['id']
+            canvas.create_rectangle(left, top, left+width, top+height, fill=bg, outline=color, tags=tag)
+            canvas.create_text(left+self.gpx(6), top+self.gpx(4), anchor='nw',
+                text=window._fit(row['name'], width-self.gpx(12), window.g_bold), font=window.g_bold, fill=color, tags=tag)
+            canvas.create_text(left+self.gpx(6), top+self.gpx(4)+self.line_height(), anchor='nw',
+                text=state, font=window.g_small, fill=color, tags=tag)
+            self.node_rects.append((left, top, left+width, top+height))
+            canvas.tag_bind(tag, '<ButtonRelease-1>', lambda event, row_id=row['id']: self.open_addin_id(row_id))
+            canvas.tag_bind(tag, '<Enter>', lambda event: canvas.configure(cursor='hand2'))
+            canvas.tag_bind(tag, '<Leave>', lambda event: canvas.configure(cursor=''))
+
+    def open_addin(self, row):
+        if not self.panned:
+            self.window.pet.open_addin_messages([row], parent=self.window.win)
+
+    def open_addin_id(self, row_id):
+        row = next((row for row in getattr(self.window.pet, 'addin_snapshot', []) if row['id'] == row_id), None)
+        if row is not None:
+            self.open_addin(row)
 
     def layout(self, net, W, H, reserve=None):
         """Node boxes (one per agent, in net["agents"] order): main on the left, its subagents in a column to its
@@ -140,14 +181,15 @@ class GraphView:
         window = self.window
         lh = self.line_height()
         pad = self.gpx(10)
-        main_w, main_h = self.gpx(150), lh * 4 + pad
+        lines = 5 if getattr(window, 'opts', {}).get('tidy') else 4
+        main_w, main_h = self.gpx(150), lh * lines + pad
         boxes = [None] * len(net["agents"])
         boxes[0] = (pad, max(pad, (H - main_h) // 2), main_w, main_h)
         cols, beside = window._columns(net)
         if not cols:
             return boxes, False
         sub_w = self.gpx(140)
-        sub_h = lh * 4 + self.gpx(8)
+        sub_h = lh * lines + self.gpx(8)
         x0 = pad + main_w + self.gpx(40 if common.IS_MAC else 70)
         gap_x = sub_w + self.gpx(40 if common.IS_MAC else 60)
         if reserve and x0 + (len(cols) - 1) * gap_x + sub_w > reserve[0] - pad:
@@ -172,7 +214,11 @@ class GraphView:
         c, P = self.canvas, window.P
         W, H = max(50, c.winfo_width()), max(50, c.winfo_height())
         blocks = window.blocks
-        sig = (W, H, self.gz, window.sel, window.key, window.theme, window.s, window.opts["node_alpha"], window.prompt.in_window,
+        sig = (W, H, self.gz, window.sel, window.key, window.theme, window.s, window.opts["node_alpha"],
+               window.opts.get('tidy'), window.prompt.in_window,
+               tuple((row['id'], row['state'], row['level'], row.get('detail'),
+                      tuple((m['id'], m['unread']) for m in row['messages']))
+                     for row in getattr(window.pet, 'addin_snapshot', [])),
                tuple((k, tuple((a["id"], a.get("parent", ""), a.get("depth", 0),
                                 a["name"], a["state"], a["model_label"], a["effort"], a["ctx"],
                                 (a.get("tokens") or {}).get("total"), a["thought"] if a["main"] else "")
@@ -189,7 +235,8 @@ class GraphView:
         self.edges, self.node_rects, self.title_rects = [], [], []
         fading = self.stacked_mode() and (self.leaving or any(
             b.get("net", {}).get("agents") for b in self.bands.values()))  # the last session still fading out
-        if (not blocks or not any(net["agents"] for _, _, net in blocks)) and not fading:
+        has_addins = any(self.addin_rows(item) for _, item, _ in blocks)
+        if (not blocks or not any(net["agents"] for _, _, net in blocks)) and not fading and not has_addins:
             c.configure(scrollregion=(0, 0, W, H))
             c.xview_moveto(0)
             c.yview_moveto(0)
@@ -221,7 +268,7 @@ class GraphView:
         else:
             self.bands, y1 = {}, 0
             key, item, net = blocks[0]
-            bh = max(H * self.gz, self.block_height(net, H))
+            bh = max(H * self.gz, self.block_height(net, H, item))
             self.bands[key] = {"from": 0, "to": 0, "t": 0, "y": 0, "item": item, "net": net, "h": bh}
             reserve = (VW - sbox[0] - self.gpx(8), bh - sbox[1] - self.gpx(8))
             self.draw_block(0, key, net, 0, 0, VW, bh, reserve)
@@ -267,7 +314,7 @@ class GraphView:
         head = int(self.line_height() * 1.6)
         targets, heights, y = {}, {}, 0
         for key, item, net in blocks:
-            heights[key] = self.block_height(net, H) + (self.gpx(6) if window.opts.get("tidy") else 0)
+            heights[key] = self.block_height(net, H, item) + (self.gpx(6) if window.opts.get("tidy") else 0)
             targets[key] = y
             y += heights[key] + gap
         prev = getattr(self, "bands", {}) or {}
@@ -362,10 +409,16 @@ class GraphView:
         P = {k: (common.mix(v, P0["bg"], fade) if fade and isinstance(v, str) and v.startswith("#") else v)
              for k, v in P0.items()}
         ags = net["agents"]
+        item = next((item for block_key, item, _ in window.blocks if block_key == key), None)
+        extra = self.addin_height(item)
+        if extra and b >= 0:
+            self.draw_addins(item, ox+self.gpx(10), oy+H-extra+self.gpx(4))
         if not ags:
             return
         current = key == window.key
-        boxes, beside = self.layout(net, W, H, reserve)
+        if reserve and extra:
+            reserve = (reserve[0], min(reserve[1], H-extra))
+        boxes, beside = self.layout(net, W, H-extra, reserve)
         boxes = [(x + ox, y + oy, w, h) for x, y, w, h in boxes]
         lh = self.line_height()
         index = {a["id"]: k for k, a in enumerate(ags)}
@@ -429,8 +482,7 @@ class GraphView:
             # a subagent's type (general-purpose, Explore...) when its name is its description, then model and effort
             info = " · ".join(v for v in ((a.get("kind") if not a["main"] else ""), a["model_label"], a["effort"]) if v)
             # the context (of its window, estimated for Claude) and the tokens used so far, on a line of their own
-            ctx_line = agent_context.node_line(a, self.context_windows())
-            rows = [info, ctx_line]
+            rows = self.node_rows(a, info)
             ly = y + self.gpx(5) + lh
             for row in rows:
                 if row:
@@ -452,6 +504,15 @@ class GraphView:
     def context_windows(self):
         """Claude context windows set in config.json ("context_windows"), else estimated."""
         return (getattr(self.window.pet, "cfg", None) or {}).get("context_windows")
+
+    def node_rows(self, agent, info):
+        """Tidy cards give context, total tokens and tool counters separate lines."""
+        context = agent_context.node_line(agent, self.context_windows())
+        if self.window.opts.get('tidy'):
+            if agent.get('tool'):
+                return info.split(' · ')[:3]
+            return [info] + context.split(' · ')
+        return [info, context]
 
     def title_click(self, key):
         """A click (not a drag) on a session's title bar: that session, with its [all] log."""
@@ -573,6 +634,8 @@ class GraphView:
         """Fit on membership changes, including tool nodes and every displayed session."""
         window = self.window
         signature = frozenset((key, a["id"]) for key, _, net in window.blocks for a in net["agents"])
+        signature |= frozenset((key, 'addin:' + row['id']) for key, item, _ in window.blocks
+                               for row in self.addin_rows(item))
         changed = signature != getattr(self, "auto_fit_signature", None)
         self.auto_fit_signature = signature
         if not window.opts.get("auto_fit"):

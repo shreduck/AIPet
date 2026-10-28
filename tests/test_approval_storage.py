@@ -25,7 +25,17 @@ class ApprovalStorageTests(unittest.TestCase):
         self.paths = support.paths(HOME_DIR=str(self.base), AUTO_APPROVE_PATH=str(self.original))
         self.paths.start()
         self.addCleanup(self.paths.stop)
-        self.rules = dict(enabled=True, allow_all=False, whitelist=["git status"], blacklist=["rm"])
+        self.rules = dict(enabled=True, allow_all=False, whitelist=["git status"], blacklist=["rm"], precedence='blacklist')
+
+    def test_legacy_rules_without_precedence_keep_blacklist_first(self):
+        legacy = {key: value for key, value in self.rules.items() if key != 'precedence'}
+        legacy['blacklist'] = ['git']
+        self.original.write_text(json.dumps({'targets': {'mac': legacy}}))
+        loaded = permissions.auto_approve_rules()['mac']
+        self.assertEqual(loaded['precedence'], 'blacklist')
+        data = dict(tool_name='Bash', tool_input=dict(command='git status'))
+        self.assertIsNone(hook_approvals.auto_decision(legacy, data))
+        self.assertIsNone(hook_approvals.auto_decision(loaded, data))
 
     def test_default_and_custom_location_are_shared_by_hooks_and_reopened_app(self):
         until = time.time() + 600

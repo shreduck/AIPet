@@ -25,6 +25,10 @@ the system tray (Windows) or the menu bar (macOS) and installs its own hooks.
 - **Sounds**: soft two-note chimes for done, needs you and error (or your system's sounds)
 - **Answer from the pet**: permission prompts (Allow once, Allow + whitelist, Deny) and Claude's questions
 - **Auto approve** with whitelists and blacklists per install
+- **Timed auto approve** per session: choose **Approve all**, **Pause on blacklist**, or **Reject all in blacklist**.
+  Both blacklist modes use that install's current blacklist even if its normal auto approval is off or set to Allow all.
+  Pause keeps matching prompts waiting with a red **BLOCKED BY BLACKLIST** banner. Reject denies them automatically
+  and shows a brief red blacklist bubble. The selected mode also applies to the current prompt.
 - **Click a pet** to jump to its session; **compact mode** for one pet that stands in for all sessions
 - **Local**: no account, no telemetry; the only automatic connection is a daily update check on GitHub
 
@@ -302,10 +306,24 @@ When Claude Code or Codex asks for permission, the popup (click the bubble) show
 
 ## Live Management and timed auto approve
 **Live Management** (any menu, and its own page in the AIPet menu window) lists your running sessions. For each one:
-- **Auto approve for N min...** approves every permission prompt from that session by itself until the timer ends,
-  after a confirmation (Enter doesn't confirm it). Other sessions keep asking, and questions from the AI still wait for
-  you. The prompt card has the same thing as a link: *Auto approve this session for N min...* (it also allows the
-  prompt on screen). The length is a slider in the AIPet menu window (1 - 120 min, default 10; `timed_approve_minutes`).
+- **Auto approve for N min...** offers **Approve all**, **Pause on blacklist**, and **Reject all in blacklist**
+  (Enter doesn't confirm). Both blacklist modes approve nonmatching requests and use this install's current blacklist
+  even when its normal auto approval is disabled or set to Allow all. Pause shows a red **BLOCKED BY BLACKLIST** banner
+  at the top right of the waiting prompt card. Reject automatically denies matches, closes or advances their prompts,
+  and shows a red `✗ blacklist` bubble for 2 seconds. The default `.*` matches everything.
+  This dialog includes the full editable whitelist and blacklist, with scrollbars and a precedence switch.
+  It opens without a nested window wait, so editing lists does not suspend its caller. Repeated clicks for the
+  same session reuse the pending confirmation rather than opening multiple editors.
+  Invalid regexes keep the editor open and focus/select the offending line. Correct the pattern and choose a mode
+  again; typing clears the previous error without requiring Cancel/reopen.
+  **Blacklist takes precedence** is the default; **Whitelist takes precedence** approves a whitelist match even
+  when the blacklist also matches, in both pause and reject modes. Choosing a mode saves edits for that install
+  (shared across its sessions); Cancel discards edits. Approve all ignores both lists and their precedence.
+  The selected mode applies to current, queued, and future permissions; other sessions and AI questions still wait.
+  **Pause on blacklist** uses a light-orange button and dismisses the confirmation and this session's visible
+  permission card. Matching requests remain paused and can be reopened from the pet; eligible requests continue
+  through the timed hook policy. Invalid regexes keep the editor open for correction.
+  The length is a slider (1 - 120 min, default 10; `timed_approve_minutes`).
 - While one runs, its countdown shows in Live Management and at the top of the pet's right-click menu
   (*Stop auto approve: name · 7:32 left*), one click to stop it early. It also stops when AIPet quits (the hooks only
   honour it while the pet runs). Grants are kept in `~/.aipet/auto-approve.json` under `timed`.
@@ -314,8 +332,184 @@ When Claude Code or Codex asks for permission, the popup (click the bubble) show
   session's entry also has *Agent network...* to open it on that session) opens or closes the window below, and
   **Agent network compact mode** chooses one window for every session or one per session.
 
+## Add-ins
+
+**AIPet menu > Add-ins** lists built-in and user add-ins with individual on/off switches. All start off;
+changes apply immediately and are saved in `config.json` as `"addins": {"hook-journal": true}`.
+The built-in **Hook journal** records raw events locally in `~/.aipet/addin-data/hook-journal/events.jsonl`.
+It rotates at about 1 MB and keeps one previous file. Events can contain prompts, commands, paths and tool inputs;
+enable it only when you want that data recorded.
+
+### Add-in settings
+
+In **Add-ins**, use **Settings** beside an add-in's enable/disable switch to expand its property inputs below
+the row, even while it is disabled. **Save** applies edits; collapse the section to hide it without losing drafts.
+For **Hook journal**, change **Log directory** to move `events.jsonl` and `events.previous.jsonl` to a new
+directory and continue recording there. Existing destination logs are never overwritten. Failed changes keep
+the previous settings and restore moved files. Use this editor rather than editing the journal's saved path.
+
+Custom manifests can declare a `settings` list:
+
+```json
+"settings": [
+  {"key": "report_counts", "label": "Report counts", "type": "boolean", "default": false}
+]
+```
+
+Each property has a unique lowercase `key` (start with a letter, then letters, numbers or underscores),
+an optional `label` and `description`, a `type`, and a matching `default`. Supported types are `string`,
+`boolean`, `integer`, `number` (finite), and `directory` (absolute path); at most 32 properties are allowed.
+`integer-slider` and `number-slider` show a slider with its current value. Both require `min` and `max`;
+optional `step` defaults to `1` for integers and `0.1` for numbers. Bounds must be finite and `min < max`;
+step must be positive. Integer sliders require integer bounds, step, default, and values. Defaults and saved
+values must fall within the bounds; step controls slider increments, rather than restricting SDK values.
+For example: `{"key": "opacity", "type": "number-slider", "min": 0, "max": 1, "step": 0.05, "default": 0.8}`.
+Custom scripts implement any migration needed when their own directory properties change.
+
+The SDK's `pet.get_settings()` returns a list of descriptors with current `value` fields.
+`pet.set_settings({"report_counts": True})` queues a partial update for that add-in.
+Its boolean return means queued; validation and persistence happen in AIPet, with errors reported as interjections.
+The current delivery keeps its original snapshot; later deliveries receive saved values in `context['settings']`
+and the definitions in `context['settings_properties']`. Values persist in `~/.aipet/addin-settings/<id>.json`.
+The host exposes `AddinManager.get_settings(id)` and `set_settings(id, values)`; UI code uses the asynchronous
+`request_set_settings(id, values, callback)` to keep file operations off Tk.
+**Copy settings guide for AI** includes this interface and the installed add-ins' current properties and values.
+
+### Add-in messages and scripts
+
+The built-in **Token guard** detects likely credentials in raw hook data (known token prefixes, Bearer tokens,
+JWTs, private-key headers, credential fields and assignments). Enable it under **Add-ins > Built-in add-ins**.
+Its full report includes named rules, explanations, warning levels, fingerprints, conversation title, AI harness,
+session ID, project/directory and available hook/tool/agent context. Detected and decoded values are censored by
+default. The full matching hook text field (prompt, command, or credential field) is shown with detected values
+emphasized in place and an eye immediately after each value. Each eye reveals only its own span; surrounding text
+does not move into a separate input box. Empty session records are omitted; a rotating amber/red
+beacon reflects severity. Values are carried in structured local reports (including the temporary outbox), retained
+in bounded in-memory history, and excluded from ordinary message text and automatic copying.
+Repeated findings are deduplicated per session. Detection is heuristic, can have false positives or misses,
+and does not block requests. Normal model token counters such as `input_tokens` do not trigger it.
+Stable rule IDs live in `aipet_token_guard.RULES`: `token.known_prefix`, `token.bearer`, `token.jwt`,
+`token.private_key`, `credential.assignment`, `credential.field`, `hash.hex`, `base64.credentials`, and
+`base64.token`. Each registry entry supplies the display name, warning level and explanation used in the report.
+Additional named rules cover labeled plain credential pairs, connection URL credentials, curl authentication,
+password/token CLI flags (including MySQL `-p`), explicit short passwords, authentication cookies, and contextual
+high-entropy secrets. Provider formats include Stripe secret/restricted keys, Google API keys and AWS temporary
+access key IDs. Randomness detection requires a sensitive variable name and excludes identifier/counter contexts.
+URL encoding and nested Base64 are decoded locally to a maximum of three layers, with bounded candidate work;
+only recognized credential/token structures raise a high warning after decoding.
+Standalone hexadecimal hashes (32, 40, 64, 96 or 128 characters) produce low warnings in amber.
+Base64 and URL-safe Base64 are decoded locally with bounded work; likely credential pairs, credential JSON,
+known token formats or hash-like token structures produce high warnings in red. Both encoded and decoded values
+stay masked until explicitly revealed. Matching hook text and secret spans are preserved in full; decoded and legacy
+value previews are limited to 4 KiB and marked when truncated. Fingerprints cover the complete value.
+Ordinary encoded text, binary data and URLs do not trigger this rule.
+The AIPet alert window follows the selected light/dark theme, including readable severity colours and Windows
+titlebar styling. The copied settings guide includes add-in UI/theming instructions.
+Each Token guard warning opens its own timestamped, nonmodal report window automatically, centered on the pet's
+screen. Later warnings never replace an existing report. Other message windows default to the main screen's center.
+Alert windows initially occupy about 60% of that screen's usable area, and remain resizable.
+**Markdown preview** toggles local formatting of hook text and ordinary message content (headings, emphasis,
+lists, quotes, links and fenced code). Inline secret eye controls work in either mode; changing mode remasks values.
+Token guard sends a Markdown report with headings for conversation context, the finding, hook text and decoded
+content when present. These reports open with preview enabled; the shared AIPet window header stays unchanged.
+Preview never runs HTML or fetches links/images.
+Closing it marks only the displayed messages as read; other add-ins still use their clickable pet bubbles.
+Scripts can read delivery-time position/screen snapshots with `pet.get_pet_position()` and `pet.get_pet_screen()`.
+Messages accept `window='pet'` or `window='main'` to request a centered, themed host window; omit it for a bubble.
+Missing pet geometry falls back to the main screen. Each explicit window request has its own report and acknowledgment.
+
+Unread interjections appear in a small bubble to the **left of the pet**: blue **i** for info, amber **!** for warning,
+and red **×** for error, with an unread count. The strongest unread severity wins. Click to open the full scrollable
+message content and mark the messages you saw as read; new arrivals remain unread. Compact pets include all their
+sessions. Add-in messages never answer or acknowledge an agent's permission prompt.
+The agent window also shows clickable mini nodes with only the add-in name and status: **working**, **stopped**,
+or its attention severity (**info**, **warning**, **error**). Nodes are scoped to their agent/session and included
+in graph fitting. Reading a message clears its bubble but leaves its reported status visible.
+
+Custom scripts belong in the existing AIPet data folder, under **`~/.aipet/addins/<id>/`**
+(Windows: `%USERPROFILE%\.aipet\addins\<id>\`). Each add-in has an `addin.json` manifest and its own scripts.
+Folder IDs use lowercase letters, numbers, hyphens or underscores and cannot replace built-in IDs.
+Use **Open add-ins folder**, copy your add-in folder there, choose **Reload add-ins**, then enable it.
+Installing a manifest alone does not execute its scripts. Reload also applies edits to already enabled add-ins.
+
+Example manifest (`examples/addins/event-counter/` contains a complete working example):
+
+```json
+{
+  "api_version": 1,
+  "name": "Event counter",
+  "description": "Count hook events locally",
+  "command": ["{python}", "{addin_dir}/main.py"],
+  "events": ["SessionStart", "Stop", "SessionEnd"],
+  "timeout_seconds": 5
+}
+```
+
+`command` is an argument array, executed without a shell; quote paths through JSON strings, not shell quoting.
+`{addin_dir}` expands to the add-in folder. `{python}` uses the source app's interpreter; for a packaged AIPet
+build, replace it with an explicit path to your installed Python (and install any script dependencies there).
+An explicit command also supports other languages. `events: ["*"]` subscribes to every normal hook lifecycle event.
+The separate `--usage` collector is not an event source. Hooks must be updated to this version to deliver events.
+
+Each delivery starts a fresh process with a UTF-8 JSON message on standard input:
+
+```python
+import json
+import sys
+
+def on_event(event, context):
+    # event: api_version, id, timestamp, agent, event, session_id, data (raw hook payload)
+    # context: addin_id, data_dir, sdk_dir, outbox, run_id, agent, session_id
+    pass
+
+if __name__ == "__main__":
+    message = json.loads(sys.stdin.buffer.read().decode("utf-8"))
+    on_event(message["event"], message["context"])
+```
+
+To call AIPet from a user script, import the bundled SDK from `context['sdk_dir']`:
+
+```python
+sys.path.insert(0, context['sdk_dir'])
+from aipet_addin import AIPet
+
+pet = AIPet(context)
+pet.status('working', 'Checking hook data')
+pet.info('Check complete', 'Optional details')
+pet.warning('Review needed', 'Explain what needs attention', key='optional-dedup-key')
+pet.error('Check failed', 'Explain the failure')
+pet.status('needs_attention')  # or 'stopped'
+```
+
+Calls atomically enqueue messages and return a boolean indicating whether they were queued; they do not wait for
+the UI or user. They can be used from threads or asynchronous script code. AIPet reports working/completion
+automatically, preserving outstanding attention; explicit `status('stopped')` clears the reported attention state
+without marking messages read. The SDK binds reports to the invoking worker and session, and AIPet rejects results
+from disabled or replaced workers. The `token-guard` example demonstrates this interface; copy it using a different
+folder ID such as `token-guard-custom`, since built-in IDs are reserved.
+The outbox is bounded to about 256 reports, with an 8,000-byte UTF-8 content limit per message and a 16 KiB report
+limit (up to 1 MB for structured reports carrying full hook text, itself limited to 256 KiB).
+Message history stays in memory (up to 20 messages per add-in/session and 128 session records) and clears
+on restart. Overflows are best effort. Add-ins never call Tk; UI code reads a small in-memory snapshot, while
+discovery, script work, process timeouts and report ingestion run on background threads.
+
+Deliveries run in order within each add-in, independently of other add-ins, with a 16-event worker queue and
+a configurable timeout (0.1–30 seconds). Standard output/error are discarded; failures and timeouts appear in
+`~/.aipet/error.log` and as error interjections. Use the callable SDK for user-facing communication.
+Disabling an add-in or quitting AIPet stops its worker and kills its current script process. Scripts must manage
+any child processes they start. This is process isolation, not a security sandbox: enabled scripts run with your
+account permissions and can access files or the network. They are observers; their return values never approve,
+deny or modify requests through the add-in interface.
+
+Delivery is best effort, not an audit guarantee: hooks drop oversized events (over 256 KiB) or events when the
+shared spool is full (about 256 events); individual worker queues drop events when full. Events older than 60 seconds
+are discarded, with no retries or replay after consumption. WSL and Cowork hooks use their existing shared AIPet
+folder. An add-in only sees events delivered by installed hooks, not activity sourced solely from transcripts or Workbench.
+
 ## Agent network window
 A live map of one session: the main agent and every subagent it started, Claude Code and Codex alike.
+In **tidy** mode, nodes and session groups are taller: context usage, total tokens, and tool call counters have
+separate lines so totals are not cut off beside the context percentage.
 - A one-time invitation offers **Try it** or **Not now**. Either choice, or closing it, prevents another invitation;
   the view remains available from the AIPet menu.
 - **Nodes** carry a small copy of the pet's robot (red when that agent needs you), the agent's name (a Claude Code
@@ -435,8 +629,15 @@ default.** Each entry opens a window for that config:
   - Whitelist patterns must match the **whole** text (`re.fullmatch`), so `git status` doesn't also approve
     `git status; rm -rf ~`. Blacklist patterns match **anywhere** (`re.search`). Tip: `[;&|`$<>]` makes chained and
     redirected commands ask.
-  - The **blacklist always wins**; anything on neither list asks you as usual. An invalid blacklist pattern counts as a
-    match, so a typo can only make the pet ask more. Save refuses patterns that don't compile.
+  - The switch selects **Blacklist takes precedence** (default) or **Whitelist takes precedence** when both lists
+    match. Anything on neither list asks you as usual in normal approval mode. Invalid blacklist patterns count as
+    matches; invalid whitelist patterns never approve. Save refuses patterns that don't compile.
+- The same list editor and precedence switch appear in the timed approval mode dialog, including when normal
+  approval is disabled or Allow all. Precedence is saved per install as `"precedence": "blacklist"` or `"whitelist"`.
+  The precedence control is a sliding switch with a movable thumb and keyboard support (Space/Enter).
+  Approval editors and app dialogs are resizable; custom frameless dialogs have a themed bottom-right resize grip.
+  Confirmations keep their input local: an open approval dialog never grabs input from other AIPet windows.
+  Alerts, reports and other dialogs remain movable, clickable and closable while a confirmation is pending.
 - **Allow all** approves every request and greys out both lists.
 - Switching a config on, or turning on Allow all, first shows a warning (Enter and Escape both cancel). *Turn all off*
   switches every config off and keeps the lists.
@@ -449,9 +650,12 @@ Details:
   must also be writable. If the old rules cannot be read during recovery, other approvals stay off.
 - It only works **while AIPet is running** (the hooks check the pet's heartbeat) and with AIPet's hooks installed for
   that config; the menu marks configs without them. The VS Code extension sends no permission events, so it always asks.
-- When the **whitelist** approves something, the robot shows steady green lights, a gentle bob and a small pale-green `✓ auto` bubble
-  for 10 seconds, or until any session needs you. Its tooltip shows what was approved. *Allow all* approvals don't
-  animate (they would never stop). The tray tooltip starts with `AUTO APPROVE ON` while any config is on.
+- When a **whitelist**, **Allow all**, or **timed grant** approves something, the robot shows steady green lights,
+  a gentle bob and a small pale-green `✓ auto` bubble for 2 seconds, or until any session needs you. Its tooltip shows
+  what was approved. Enabling a timed grant also settles eligible permission hooks already waiting, so their cards
+  close or advance automatically. Blacklisted requests pause or are rejected according to the chosen mode;
+  AI questions still wait for your answer.
+  The tray tooltip starts with `AUTO APPROVE ON` while any config is on.
 
 ## Stuck sessions
 Every 15 seconds (pet or tray menu > *Behavior > Session timing > Health check every...*: 0 = off, up to 5 minutes; saved as

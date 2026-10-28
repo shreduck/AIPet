@@ -7,6 +7,7 @@ are placed on their monitor with aipetlib.geometry.
 import os
 import sys
 import tkinter as tk
+import weakref
 
 from .. import geometry
 
@@ -51,6 +52,7 @@ T = {}  # the active theme; set_theme() mutates it in place so every module sees
 # built by theme_window(), which also remembers them so a theme switch restyles them live. Colours a window set on
 # purpose (green "installed", amber "out of date"...) are kept, brightened on the dark background.
 THEMED = []
+OPEN_DIALOGS = weakref.WeakSet()  # defer optional startup offers without grabbing application input
 _DEFAULT_FG = {"", "black", "#000000", "systembuttontext", "systemwindowtext", "systemmenutext", "#111827",
                "systemtextcolor", "systemlabelcolor", "systemcontroltextcolor"}
 MUTED_FG = {"#6b7280", "grey", "gray"}
@@ -87,7 +89,7 @@ def themed_color(c):
 
 
 def button_style(kind="secondary"):
-    """Options for a tk.Button in the pet's style: 'primary' (filled), 'danger' or 'secondary' (outlined)."""
+    """Options for primary, danger, soft orange warning, or secondary buttons."""
     if IS_MAC:
         # Aqua draws the button face itself and ignores our filled background.
         # Tk 8.6's Aqua face stays light even when systemButtonText resolves to
@@ -104,6 +106,10 @@ def button_style(kind="secondary"):
         return dict(bg=T["danger"], fg="#ffffff", activebackground=T["danger_active"], activeforeground="#ffffff",
                     relief="flat", bd=0, highlightthickness=0, cursor="hand2", padx=14, pady=4,
                     font=(UI_FONT, 9, "bold"))
+    if kind == 'warning':
+        return dict(bg='#ffedd5', fg='#9a3412', activebackground='#fed7aa', activeforeground='#7c2d12',
+                    relief='flat', bd=0, highlightthickness=0, cursor='hand2', padx=14, pady=4,
+                    font=(UI_FONT, 9, 'bold'))
     return dict(bg=T["btn_bg"], fg=T["btn_fg"], activebackground=T["btn_active"], activeforeground=T["btn_fg"],
                 relief="flat", bd=0, highlightthickness=1, highlightbackground=T["border"], highlightcolor=T["border"],
                 cursor="hand2", padx=12, pady=3, disabledforeground=T["menu_disabled"], font=(UI_FONT, 9))
@@ -173,6 +179,9 @@ def theme_widget(w):
             style_menu(child)
         else:
             theme_widget(child)
+    retheme = getattr(w, '_pet_retheme', None)
+    if retheme is not None:
+        retheme()
 
 
 def titlebar_theme(win):
@@ -241,23 +250,23 @@ def retheme_all():
             if w.winfo_exists():
                 theme_widget(w)
                 titlebar_theme(w)
+                w.event_generate('<<AIPetThemeChanged>>', when='tail')
         except tk.TclError:
             pass
 
 
 def themed_dialog(root, title, text, buttons=(("OK", True, "primary"),), kind="info", heading=None, cancel=None,
-                  enter_confirms=True, on_result=None):
-    """A modal message card in the pet's style (accent border, bold heading, flat buttons), in place of the native
+                  enter_confirms=True, on_result=None, content_builder=None, validate=None):
+    """An independently interactive card in the pet's style, in place of native
     message boxes. buttons: (label, value, 'primary' | 'danger' | 'secondary'), left to right; the first primary or
     danger one is the default (Enter, unless enter_confirms is False: then Enter cancels, for risky choices).
     Escape or closing returns `cancel`. With on_result, deliver the result after
-    closing without nesting a wait loop inside a native button callback."""
-    previous_focus, previous_grab = root.focus_get(), root.grab_current()
-    previous_grab_status = previous_grab.grab_status() if previous_grab is not None else None
+    closing without nesting a wait loop inside a native button callback.
+    content_builder(body) adds custom controls; validate(value) may return False to keep the dialog open."""
     accent = DIALOG_ACCENTS.get(kind, DIALOG_ACCENTS["info"])
     bg, fg = T["win_bg"], T["win_fg"]
     w = tk.Toplevel(root)
-    # A modal card belongs to the window that opened it. Topmost alone does
+    # A confirmation belongs to the window that opened it. Topmost alone does
     # not keep it above another topmost window on macOS.
     if root.winfo_viewable():
         w.transient(root.winfo_toplevel())
@@ -265,12 +274,13 @@ def themed_dialog(root, title, text, buttons=(("OK", True, "primary"),), kind="i
     w.attributes("-topmost", True)
     w.configure(bg=accent)
     w.title(title)
-    result = {"v": cancel, "closing": False, "restored": False}
+    result = {"v": cancel, "closing": False, "validating": False}
+    OPEN_DIALOGS.add(w)
     card = tk.Frame(w, bg=bg)
-    card.pack(padx=2, pady=2)
+    card.pack(fill='both', expand=True, padx=2, pady=2)
     tk.Frame(card, bg=accent, height=5).pack(fill="x")
     body = tk.Frame(card, bg=bg)
-    body.pack(fill="both", padx=18, pady=(12, 14))
+    body.pack(fill="both", expand=True, padx=18, pady=(12, 14))
     top = tk.Frame(body, bg=bg)
     top.pack(fill="x")
     head = tk.Label(top, text=heading or title, bg=bg, fg=fg, anchor="w", font=(UI_FONT, 12, "bold"))
@@ -281,44 +291,49 @@ def themed_dialog(root, title, text, buttons=(("OK", True, "primary"),), kind="i
         tk.Label(body, text="warning" if kind == "warning" else "something went wrong", bg=bg, fg=accent, anchor="w",
                  font=(UI_FONT, 9, "bold")).pack(fill="x")
     tk.Frame(body, bg=T["border"], height=1).pack(fill="x", pady=8)
-    tk.Label(body, text=text, bg=bg, fg=T["bubble_msg"], justify="left", anchor="w", wraplength=440,
+    tk.Label(body, text=text, bg=bg, fg=T["bubble_msg"], justify="left", anchor="w", wraplength=640 if content_builder else 440,
              font=(UI_FONT, 10)).pack(fill="x")
+    if content_builder:
+        content_builder(body)
+    from .window_resize import corner_grip
+    corner_grip(w)
     row = tk.Frame(body, bg=bg)
     row.pack(fill="x", pady=(14, 0))
 
-    def restore_input():
-        if result["restored"]:
-            return
-        result["restored"] = True
-        try:
-            w.grab_release()
-        except tk.TclError:
-            pass
-        try:
-            if previous_grab is not None and previous_grab.winfo_exists():
-                previous_grab.grab_set_global() if previous_grab_status == "global" else previous_grab.grab_set()
-            if previous_focus is not None and previous_focus.winfo_exists():
-                previous_focus.focus_set()
-        except tk.TclError:
-            pass
-
     def finish():
-        restore_input()
         w.destroy()
         if on_result is not None and root.winfo_exists():
             root.after_idle(lambda: on_result(result["v"]))
 
-    def done(value):
+    def commit(value):
         if result["closing"]:
             return
         result.update(v=value, closing=True)
         # Let Aqua finish tracking the clicked button before destroying it.
         w.after_idle(finish)
 
+    def validate_choice(value):
+        try:
+            if not result['closing'] and w.winfo_exists() and validate(value):
+                commit(value)
+        finally:
+            result['validating'] = False
+
+    def done(value):
+        if result['closing']:
+            return
+        if value == cancel or validate is None:
+            commit(value)
+        elif not result['validating']:
+            result['validating'] = True
+            # Let native button tracking/focus finish before validation changes layout or focus.
+            w.after_idle(lambda: validate_choice(value))
+
     def destroyed(event):
+        if event.widget is w:
+            OPEN_DIALOGS.discard(w)
         if event.widget is w and not result["closing"]:
             result["closing"] = True
-            restore_input()
             if on_result is not None and root.winfo_exists():
                 root.after_idle(lambda: on_result(cancel))
 
@@ -357,16 +372,10 @@ def themed_dialog(root, title, text, buttons=(("OK", True, "primary"),), kind="i
         mac_statusbar.raise_modal(w.title(), root.winfo_toplevel().title())
         w._mouse_bridge = mac_statusbar.PanelMouseBridge(w)
         w.bind("<Destroy>", lambda event: w._mouse_bridge.close() if event.widget is w else None, add="+")
-    try:
-        w.grab_set()
-    except tk.TclError:
-        pass
     if on_result is not None:
         return w
-    try:
-        root.wait_window(w)
-    finally:
-        restore_input()
+    # wait_window pumps Tk events; unlike a grab, it leaves other windows usable.
+    root.wait_window(w)
     return result["v"]
 
 

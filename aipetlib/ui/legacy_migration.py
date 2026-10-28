@@ -12,7 +12,7 @@ def migration_window(APP_NAME, set_autostart):
     root = tk.Tk()
     root.title(f"Claude Pet is now {APP_NAME}")
     root.attributes("-topmost", True)
-    root.resizable(False, False)
+    root.resizable(True, True)
     grey, red = "#6b7280", "#b91c1c"
     p = legacy.plan()
     result = {"go": False}

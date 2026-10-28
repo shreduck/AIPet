@@ -152,7 +152,7 @@ def _interpret_event(ctx, transition):
     if ctx.event == "PermissionRequest" and ctx.auto:  # answered "allow" right away: never shows as "needs you"
         if not [r for r in transition.requests if r.get("source") != "transcript"]:
             transition.state, transition.message = ("working", "") if ctx.prev.get("state") != "needs_input" or transition.wait_agent == ctx.aid else (transition.state, transition.message)
-        transition.auto_t, transition.auto_n, transition.auto_kind = ctx.t_now, transition.auto_n + 1, ctx.auto
+        transition.auto_t, transition.auto_n, transition.auto_kind = ctx.t_now, transition.auto_n + (ctx.auto != "blacklist"), ctx.auto
         req = ctx.hook.build_request(ctx.data)
         transition.auto_what = (req["tool"] + (": " + req["detail"].splitlines()[0] if req["detail"] else ""))[:120]
     elif ctx.event == "PostToolUse" and ctx.data.get("tool_name") in ctx.hook.CODEX_QUESTION_TOOLS and ctx.hook.codex_questions(ctx.data):

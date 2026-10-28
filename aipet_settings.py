@@ -3,8 +3,8 @@
 Built from the same menu spec as the pet's right-click menu, the Windows tray menu and the macOS menu bar, so every
 switch and button here runs exactly the action the menu item runs. Spec entries may carry extra keys that only this
 window reads: "help" (an explanation under the label), "icon" (a pixel icon name) and "choice" (a submenu whose items
-are a pick-one list). The window rebuilds itself whenever the spec's state changes (a toggle flipped here, in a menu, or
-by the app itself) and when the theme switches.
+are a pick-one list). Each page rebuilds when its visible state changes; updates on hidden pages leave it intact.
+Theme and scale changes rebuild the whole window.
 """
 import sys
 import tkinter as tk
@@ -12,6 +12,7 @@ import tkinter as tk
 import aipetlib.ui.native_menu as native_menu
 import aipetlib.geometry as geometry
 import aipetlib.ui.theme as theme
+from aipetlib.ui import addin_settings
 
 IS_MAC = sys.platform == "darwin"
 UI_FONT = theme.UI_FONT  # the console font all of AIPet's windows use
@@ -73,7 +74,12 @@ def signature(spec, zoom=1.0):
             if e is None:
                 out.append(None)
                 continue
-            out.append((e.get("label"), e.get("checked"), e.get("enabled", True), (e.get("slider") or {}).get("value"),
+            slider = e.get("slider") or {}
+            editor = e.get('addin_editor') or {}
+            out.append((e.get("label"), e.get("help"), e.get("icon"), e.get("choice"), e.get("settings"),
+                         bool(e.get("action")), e.get("checked"), e.get("enabled", True),
+                         tuple(slider.get(k) for k in ("value", "min", "max", "step")),
+                         (editor.get('id'), tuple(tuple(sorted(p.items())) for p in editor.get('properties', []))),
                          walk(e.get("submenu")) if e.get("submenu") is not None else None))
         return tuple(out)
     return (theme.T.get("name"), zoom, walk(spec))
@@ -158,6 +164,8 @@ class SettingsWindow:
         self.zoom = clamp_zoom(self.zoom_fn())
         self.page, self.query = "General", tk.StringVar(master=root)
         self._sig, self._after, self._wrap = None, None, []
+        self._nav_sig, self._content_sig = None, None
+        self._expanded_addins = set()
         w = self.win = tk.Toplevel(root)
         w.withdraw()
         w.title("AIPet menu")
@@ -261,6 +269,8 @@ class SettingsWindow:
         theme_changed = self._sig is None or sig[:2] != self._sig[:2]  # theme or size: rebuild everything
         self.zoom = zoom
         self._sig, self.spec = sig, spec
+        if force:
+            self._nav_sig, self._content_sig = None, None
         if theme_changed:
             self._build_frame()
         self._render(keep_scroll=True)
@@ -277,6 +287,7 @@ class SettingsWindow:
 
     # ---- frame: sidebar + scrolling content
     def _build_frame(self):
+        self._nav_sig, self._content_sig = None, None
         T, w = theme.T, self.win
         for child in w.winfo_children():
             child.destroy()
@@ -383,14 +394,34 @@ class SettingsWindow:
         names = [p[0] for p in pages]
         if self.page not in names:
             self.page = "General"
+        query = self.query.get().strip().lower()
+        nav_sig = (tuple((name, icon, label) for name, icon, _help, _entries, label in pages),
+                   self.page if not query else None)
+        if nav_sig != self._nav_sig:
+            for child in self.nav.winfo_children():
+                child.destroy()
+            for name, icon, _help, _entries, label in pages:
+                self._nav_item(name, icon, label, selected=(name == self.page and not query))
+            self._tag_wheel(self.nav)
+            self._nav_sig = nav_sig
+        if query:
+            # Only matching rows are visible; activity elsewhere must not disturb search either.
+            visible = [(name, [(path, e) for path, e in flatten(entries)
+                               if query in " ".join([clean(e["label"]), e.get("help", ""), *path]).lower()])
+                       for name, _icon, _help, entries, _label in pages]
+            content_sig = ("search", self.query.get().strip(), tuple(
+                (name, tuple((path, signature([e], self.zoom)) for path, e in hits))
+                for name, hits in visible if hits))
+        else:
+            name, icon, help_text, entries, label = next(p for p in pages if p[0] == self.page)
+            content_sig = (name, icon, help_text, label, signature(entries, self.zoom))
+        if content_sig == self._content_sig:
+            return
         top = self.canvas.yview()[0] if keep_scroll else 0.0
-        for frame in (self.nav, self.header, self.body):
+        for frame in (self.header, self.body):
             for child in frame.winfo_children():
                 child.destroy()
         self._wrap = []
-        query = self.query.get().strip().lower()
-        for name, icon, _help, _entries, label in pages:
-            self._nav_item(name, icon, label, selected=(name == self.page and not query))
         if query:
             self.strip.configure(bg=theme.T["primary"])
             self._render_search(pages, query)
@@ -401,11 +432,11 @@ class SettingsWindow:
             self._entries(self.body, entries, 0)
         tk.Frame(self.body, bg=self.bg, height=24).pack(fill="x")
         self._tag_wheel(self.body)
-        self._tag_wheel(self.nav)
         self.body.update_idletasks()
         self._sync_scrollregion()
         self.canvas.yview_moveto(top)
         self._on_resize(type("E", (), {"width": self.canvas.winfo_width()})())
+        self._content_sig = content_sig
 
     def _nav_item(self, name, icon, label, selected):
         T = theme.T
@@ -566,8 +597,15 @@ class SettingsWindow:
             self._wrap.append((lab, 190))
 
         if kind == "toggle":
-            self._switch(ctl, bool(e.get("checked")), enabled).pack()
-            if enabled:
+            switch = self._switch(ctl, bool(e.get("checked")), enabled)
+            switch.pack(side='left')
+            editor = e.get('addin_editor')
+            if editor:
+                self._inline_addin(card, row, ctl, editor)
+                if enabled:
+                    for target in (text, switch):
+                        self._clickable(target, lambda _e=None: self.run(e.get('action')), hover=T['btn_active'])
+            elif enabled:
                 self._clickable(row, lambda _e=None: self.run(e.get("action")), hover=T["btn_active"])
         elif kind == "slider":
             self._slider(text, e["slider"])
@@ -593,6 +631,35 @@ class SettingsWindow:
         elif kind == "action":
             tk.Label(ctl, text="›", bg=self.bg, fg=T["muted"], font=self.font(14)).pack()
             self._clickable(row, lambda _e=None: self.run(e.get("action")), hover=T["btn_active"])
+
+    def _inline_addin(self, card, row, controls, editor):
+        """Disclosure is independent of enablement; keep fields mounted while collapsed."""
+        key = editor['id']
+        panel = None
+        button = tk.Button(controls, **dict(theme.button_style('secondary'), font=self.font(9)))
+        button.pack(side='left', padx=(8, 0))
+
+        def display():
+            nonlocal panel
+            expanded = key in self._expanded_addins
+            button.configure(text='▴ Settings' if expanded else '▾ Settings')
+            if expanded:
+                if panel is None:
+                    panel = addin_settings.build(card, editor['properties'], editor['save'], font=self.font)
+                    self._tag_wheel(panel)
+                panel.pack(after=row, fill='x', padx=14, pady=(0, 10))
+            elif panel is not None:
+                panel.pack_forget()
+
+        def toggle():
+            if key in self._expanded_addins:
+                self._expanded_addins.remove(key)
+            else:
+                self._expanded_addins.add(key)
+            display()
+
+        button.configure(command=toggle)
+        display()
 
     def _switch(self, parent, on, enabled):
         T = theme.T

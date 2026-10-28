@@ -11,6 +11,7 @@ import tkinter as tk
 import aipet_usage as usage
 
 from ..agents import context as agent_context
+from ..addin_messages import LEVELS, for_items, unread_summary
 from ..runtime import preferences
 from . import font_metrics
 from . import pet_style
@@ -48,16 +49,25 @@ class PetView:
         c.tag_bind("ans", "<Enter>", lambda e: c.config(cursor="hand2"))
         c.tag_bind("ans", "<Leave>", lambda e: c.config(cursor=""))
         c.tag_bind("ans", "<ButtonPress-1>", lambda e: setattr(self, "_on_bubble", True))
-        self._on_badge = None  # a badge's session key, when a badge was pressed (it opens that session's prompt)
+        self._on_badge = None  # the session key of a pressed badge or robot
+        self._on_addin = False
+        c.tag_bind('addin', '<ButtonPress-1>', lambda e: setattr(self, '_on_addin', True))
+        c.tag_bind('addin', '<Enter>', lambda e: c.config(cursor='hand2'))
+        c.tag_bind('addin', '<Leave>', lambda e: c.config(cursor=''))
         c.tag_bind("badge", "<Enter>", lambda e: c.config(cursor="hand2"))
         c.tag_bind("badge", "<Leave>", lambda e: c.config(cursor=""))
         c.tag_bind("badge", "<ButtonPress-1>", lambda e: setattr(self, "_on_badge", self._badge_under_pointer()))
+        # Each robot routes clicks to its own session, including the small compact-mode robots.
+        c.tag_bind("bot", "<Enter>", lambda e: c.config(cursor="hand2"))
+        c.tag_bind("bot", "<Leave>", lambda e: c.config(cursor=""))
+        c.tag_bind("bot", "<ButtonPress-1>",
+                   lambda e: setattr(self, "_on_badge", self._badge_under_pointer("bot:")))
 
-    def _badge_under_pointer(self):
+    def _badge_under_pointer(self, prefix="badge:"):
         c = self.canvas
         for tag in c.gettags("current"):
-            if tag.startswith("badge:"):
-                return tag[6:] or None
+            if tag.startswith(prefix):
+                return tag[len(prefix):] or None
         return None
 
     def destroy(self):
@@ -74,6 +84,9 @@ class PetView:
             self._draw_robot(t)
         c.move("all", pet_style.BADGE_GUTTER, -pet_style.TOP_TRIM)  # drop the empty top strip
         min_x = self._draw_badges()
+        addin_x = self._draw_addin_bubble(min_x)
+        if addin_x is not None:
+            min_x = min(min_x if min_x is not None else 0, addin_x)
         extra = self._draw_usage()
         # compact mode, expanded: the badges stand in a column snapped to the pet's left; widen the canvas to the left
         # for it (the overlay is anchored bottom-right, so the pet itself doesn't move)
@@ -89,6 +102,27 @@ class PetView:
             self.app.placement.shift_for_width(delta)  # update the canvas and shared margin in the same redraw
         self._finish()
         self._update_usage_hover()
+
+    def addin_rows(self):
+        rows = getattr(self.app, 'addin_snapshot', [])
+        items = self.data.get('everyone') or [self.data]
+        return for_items(rows, items)
+
+    def _draw_addin_bubble(self, badge_left=None):
+        summary = unread_summary(self.addin_rows())
+        if summary is None:
+            return None
+        level, count = summary
+        icon, color, bg = LEVELS[level]
+        right = min(-3, (badge_left if badge_left is not None else 0)-4)
+        left, top, bottom = right-28, 38, 55
+        tags = ('addin',)
+        self.canvas.create_rectangle(left, top, right, bottom, fill=bg, outline=color, tags=tags)
+        self.canvas.create_polygon(right, top+7, right+4, top+11, right, top+13,
+                                   fill=bg, outline=color, tags=tags)
+        self.canvas.create_text((left+right)//2, (top+bottom)//2,
+                                text=f'{icon} {min(count, 99)}', font=sprites.mono(5), fill=color, tags=tags)
+        return left
 
     def _draw_usage(self):
         group = self.data.get("everyone") or [self.data]
@@ -535,9 +569,11 @@ class PetView:
         members = self.data.get("members")
         if members:  # compact mode: a robot per session, each in its own state; the front one is the focus
             heads = pet_style.HEAD_LAYOUTS[len(members)]
+            sessions = members[1:] + members[:1]
             states = [(m["state"], self.app.ack.get(m["key"], False)) for m in members[1:]] + [(st, self.acked)]
         else:  # one session: the main robot in front, its subagents smaller beside it, all in the session's state
             heads = pet_style.HEAD_LAYOUTS[min(3, int(self.data.get("subagents", 0) or 0)) + 1]
+            sessions = [self.data] * len(heads)
             states = [(st, self.acked)] * len(heads)
         top_main = ground
         flash = bool(self.data.get("auto_flash")) and st not in ("needs_input", "error")
@@ -550,7 +586,7 @@ class PetView:
             cx, dy, squash = cx0 + dx, 0.0, 1.0
             face = sprites.STATE_FACE.get(hst, "sleep")
             if main and flash:  # just auto-approved something: a calm, content robot with green lights
-                hst, face = "auto", "joy"
+                hst, face = ("blacklist", "worried") if self.data.get("auto_kind") == "blacklist" else ("auto", "joy")
                 dy = -abs(math.sin(ph * 2.5)) * 1.5
             elif hst == "working":
                 dy = -abs(math.sin(ph * (5 if main else 4.2))) * 3 * k
@@ -572,21 +608,26 @@ class PetView:
             sw = int(round(rw0 * k * 1.1 * s))
             self._put("shadow", shadow, sw, max(2, int(sw * 0.25)), cx, ground + 2, "center")
             im = sprites.robot_image(face, sprites.light_cycle(hst, ph))
-            self._put(("robot", face, sprites.light_cycle(hst, ph)), im, w, h, cx, ground + dy + rise, "s", tags=("hit",))
+            session_key = sessions[i].get("key", self.data.get("focus", self.key))
+            self._put(("robot", face, sprites.light_cycle(hst, ph)), im, w, h, cx, ground + dy + rise, "s",
+                      tags=("hit", "bot", f"bot:{session_key}"))
             if main:
                 top_main = ground + dy - rh0 * k * squash
 
-        if not emerging:
+        if not emerging and st != "error":
             bx1, bx2 = cx0 - 34, cx0 + 36
             by1 = 15.0  # the top of the drawing (the strip above is trimmed off: badges live in a left column)
             by2 = 36.0 if st == "needs_input" else min(top_main + 2, 40.0)  # the hop must not squash the bubble
             tail = cx0 - 6  # off the antenna
             if flash:  # a small pale-green "✓ auto" bubble: approved by the whitelist, nothing to do
+                rejected = self.data.get("auto_kind") == "blacklist"
                 top = by2 - 19
-                self._bubble(cx0 - 26, top, cx0 + 16, by2, tail, "#f0fdf4", "#4b8f63")
+                self._bubble(cx0 - 34 if rejected else cx0 - 26, top, cx0 + 32 if rejected else cx0 + 16,
+                             by2, tail, "#fef2f2" if rejected else "#f0fdf4", "#b91c1c" if rejected else "#4b8f63")
                 y = (top + by2) / 2
-                self._mark("ok", cx0 - 15, y)
-                c.create_text(cx0 + 3, y, text="auto", fill="#4b8f63", font=pet_style.fnt(5))
+                self._mark("no" if rejected else "ok", cx0 - 24 if rejected else cx0 - 15, y)
+                c.create_text(cx0 + 7 if rejected else cx0 + 3, y, text="blacklist" if rejected else "auto",
+                              fill="#b91c1c" if rejected else "#4b8f63", font=pet_style.fnt(5))
             elif done_flash:
                 self._completion_seal(cx0 - 27, top_main + 8)
             elif st == "working":  # hacker-screen bubble
@@ -602,11 +643,6 @@ class PetView:
                 # A completion seal, away from the interactive speech bubble.
                 x, y = cx0 - 27, top_main + 8
                 self._completion_seal(x, y)
-            elif st == "error":
-                top = by2 - 19  # a small bubble, centred on its tail
-                self._bubble(cx0 - 22, top, cx0 + 10, by2, tail, "#fafafa", "#111827")
-                bob = 1 if int(t * 3) % 2 else 0  # a one-pixel bob
-                self._mark("ok" if st == "done" else "no", cx0 - 6, (top + by2) / 2 - bob)
             elif st == "needs_input":  # the answer bubble: check / cross / question mark (click it for the popup)
                 self._bubble(bx1 + 4, by1, bx2 - 6, by2, tail, "#fafafa", "#111827", tags=("ans",))
                 y, pulse = (by1 + by2) / 2, int(t * 2) % 3

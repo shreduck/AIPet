@@ -17,7 +17,7 @@ except ImportError:
     pystray = None
 
 APP_NAME = "AIPet"
-RANK = {"needs_input": 0, "error": 1, "working": 2, "done": 3, "idle": 4}
+RANK = {"needs_input": 0, "working": 1, "done": 2, "idle": 3, "error": 4}
 
 
 class TrayPresenter:

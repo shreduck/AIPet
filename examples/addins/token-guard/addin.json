@@ -1,0 +1,8 @@
+{
+  "api_version": 1,
+  "name": "Token guard (custom example)",
+  "description": "Detect possible credentials in hook data and report masked alerts through AIPet.",
+  "command": ["{python}", "{addin_dir}/main.py"],
+  "events": ["*"],
+  "timeout_seconds": 5
+}

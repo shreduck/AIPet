@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 from . import approvals as hook_approvals
+from . import addins as hook_addins
 from . import capture as hook_capture
 from . import config as hook_config
 from . import diagnostics as hook_diagnostics
@@ -64,6 +65,7 @@ def main():
     except Exception:
         pass  # usage write/read failures cannot skip session updates or approvals
     hook_diagnostics.codex_raw_log(raw, os.path.dirname(target))  # TEMP (Codex testing)
+    hook_addins.publish(os.path.dirname(target), hook_config.AGENT, event, data)
 
     if event == "SessionEnd" and (hook_hosts.is_cowork() or hook_io.read_json(path).get("app") == "cowork"):
         # Cowork ends its Claude Code session after every turn (and when the app closes), so removing the pet here
@@ -91,12 +93,13 @@ def main():
 
     auto = None
     if event == "PermissionRequest" and data.get("tool_name") != hook_config.QUESTION_TOOL:  # never auto-"approve" a question
-        auto = hook_approvals.timed_decision(os.path.dirname(target), session_id) or \
+        auto = hook_approvals.timed_decision(os.path.dirname(target), session_id, data=data,
+                                           key=hook_approvals.auto_approve_key(wsl)) or \
             hook_approvals.auto_decision(hook_approvals.auto_approve_rules(os.path.dirname(target), hook_approvals.auto_approve_key(wsl)), data)
-    if auto:
+    if auto and auto != "blocked":
         with hook_io.SessionLock(path):
             hook_sessions._update_session(path, target, event, data, wsl, auto=auto)
-        hook_io.write_stdout(hook_requests.decision_output("allow"))
+        hook_io.write_stdout(hook_requests.decision_output("deny" if auto == "blacklist" else "allow"))
         return
 
     if event == "PermissionRequest":

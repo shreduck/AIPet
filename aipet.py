@@ -64,7 +64,7 @@ IS_MAC = sys.platform == "darwin"
 from aipetlib.ui.pet_style import TRANSPARENT, COLORS, EMERGE_STAGGER, DONE_FLASH_SECONDS
 
 
-AUTO_FLASH_SECONDS = 10  # how long a pet celebrates a whitelist auto-approval
+AUTO_FLASH_SECONDS = 2  # brief feedback after an automatic approval
 
 
 # ---- timed auto approve: one session approves every permission prompt by itself for N minutes
@@ -308,7 +308,7 @@ class PetApp:
             self._slots[it["key"]] = self._slot_n
         self._slots = {i["key"]: self._slots[i["key"]] for i in items}  # forget sessions that are gone
         if len(items) > self.cfg["max_pets"]:  # too many to show: drop the least urgent, not the oldest slot
-            rank = {"needs_input": 0, "error": 1, "working": 2, "done": 3, "idle": 4}
+            rank = {"needs_input": 0, "working": 1, "done": 2, "idle": 3, "error": 4}
             items = sorted(items, key=lambda i: (rank.get(i["state"], 5), -(i.get("changed") or 0)))[: self.cfg["max_pets"]]
         items.sort(key=lambda i: -self._slots[i["key"]])
         return items
@@ -394,14 +394,14 @@ class PetApp:
             self.root.after(self.cfg["poll_ms"], self.refresh)
 
     def _mark_auto_flash(self, real):
-        """A session whose last permission prompt the whitelist approved celebrates for AUTO_FLASH_SECONDS, unless
+        """A session whose last permission prompt was auto-approved celebrates for AUTO_FLASH_SECONDS, unless
         (or until) any session needs the user: then that celebration is over for good."""
         now = time.time()
         cut = self.__dict__.setdefault("_flash_cut", {})
-        attention = any(i.get("state") in ("needs_input", "error") for i in real)
+        attention = any(i.get("state") == "needs_input" for i in real)
         for it in real:
             t = it.get("auto_t") or 0
-            fresh = it.get("auto_kind") == "whitelist" and 0 <= now - t < AUTO_FLASH_SECONDS
+            fresh = it.get("auto_kind") in ("whitelist", "all", "timed", "blacklist") and 0 <= now - t < AUTO_FLASH_SECONDS
             if fresh and attention:
                 cut[(it["key"], t)] = now
             it["auto_flash"] = fresh and not attention and (it["key"], t) not in cut
@@ -574,7 +574,7 @@ class PetApp:
         """One pet item standing for all sessions. In front: the first session that asked for you (a queue - answer it
         and the next one steps forward), else the most urgent / most recently changed one. Its name, badges, bubble and
         click target are the pet's; the other sessions are the smaller robots around it."""
-        rank = {"needs_input": 0, "error": 1, "working": 2, "done": 3, "idle": 4}
+        rank = {"needs_input": 0, "working": 1, "done": 2, "idle": 3, "error": 4}
         queue = sorted((i for i in real if i["state"] == "needs_input"), key=lambda i: i.get("changed") or 0)
         by_urgency = sorted(real, key=lambda i: (rank.get(i["state"], 5), -(i.get("changed") or 0)))
         focus = queue[0] if queue else by_urgency[0]
@@ -592,6 +592,9 @@ class PetApp:
                  badge_attention=attention, badge_keys=keys, subagents=0,
                  badge_titles=[m.get("conv") or "" for m in shown],
                  auto_flash=any(m.get("auto_flash") for m in members))
+        flashed = next((m for m in members if m.get("auto_flash")), None)
+        if flashed:
+            g["auto_kind"] = flashed.get("auto_kind")
         return [g]
 
     def on_menu(self, e, pet=None):
@@ -601,6 +604,7 @@ class PetApp:
         self.pointer.drag = None
         if pet:
             pet._on_bubble, pet._on_badge = False, None
+            pet._on_addin = False
         self.menu_pet = pet
         self._menu_xy = (e.x_root, e.y_root)
         if self.context_menu_spec:

@@ -44,10 +44,10 @@ class PermissionCard:
         w.configure(bg=self.ACCENT)
         w.bind("<Escape>", lambda e: self.close())
         card = tk.Frame(w, bg=bg)
-        card.pack(padx=2, pady=2)
+        card.pack(fill='both', expand=True, padx=2, pady=2)
         tk.Frame(card, bg=self.ACCENT, height=5).pack(fill="x")
         cols = tk.Frame(card, bg=bg)
-        cols.pack(fill="both", padx=16, pady=(12, 14))
+        cols.pack(fill="both", expand=True, padx=16, pady=(12, 14))
 
         spr = sprites.load_sprites()
         self.robot = None
@@ -83,7 +83,9 @@ class PermissionCard:
         right = tk.Frame(cols, bg=bg, width=430)
         right.pack(side="left", fill="both", expand=True, anchor="n")
 
-        top = tk.Frame(right, bg=bg)
+        self.blocked_banner = tk.Label(right, text="BLOCKED BY BLACKLIST", bg="#b91c1c", fg="white",
+                                       font=self.f(12, "bold"), padx=14, pady=8, anchor="e")
+        top = self.header = tk.Frame(right, bg=bg)
         top.pack(fill="x")
         self.head = tk.Label(top, bg=bg, fg=fg, anchor="w", font=self.f(15, "bold"))
         self.head.pack(side="left", fill="x", expand=True)
@@ -101,7 +103,7 @@ class PermissionCard:
             widget.bind("<B1-Motion>", self._drag_move)
 
         text_area = tk.Frame(right, bg=bg)
-        text_area.pack(fill="x")
+        text_area.pack(fill="both", expand=True)
         self.prompt_arrows = []
         for step, text, side in ((-1, "‹", "left"), (1, "›", "right")):
             arrow = tk.Label(text_area, text=text, bg=bg, fg=self.ACCENT, cursor="hand2",
@@ -136,9 +138,22 @@ class PermissionCard:
                                   anchor="w", font=self.f(8, "underline"))
         self.clearlink.bind("<Button-1>", lambda e: self.clear_prompt())
         # Timed auto approve for this session (asks to confirm first)
-        self.timedlink = tk.Label(right, bg=bg, fg=theme.themed_color("#b45309"), cursor="hand2", anchor="w",
+        self.timed_row = tk.Frame(right, bg=bg)
+        self.timedlink = tk.Label(self.timed_row, bg=bg, fg=theme.themed_color("#b45309"), cursor="hand2", anchor="w",
                                   font=self.f(8, "underline"))
+        self.timedlink.pack(anchor="w")
         self.timedlink.bind("<Button-1>", lambda e: self.auto_approve_for_a_while())
+        self.timed_var = tk.IntVar(master=w, value=self.app.answers.timed_minutes())
+        self.timed_scale = tk.Scale(
+            self.timed_row, from_=permissions.TIMED_MIN, to=permissions.TIMED_MAX, resolution=1,
+            orient="horizontal", variable=self.timed_var, showvalue=False, sliderlength=14, width=8,
+            bg=theme.T["primary"], troughcolor=theme.T["entry_bg"],
+            activebackground=theme.T["primary_active"], sliderrelief="flat", highlightthickness=0,
+            bd=0, relief="flat", command=self._preview_timed_minutes, takefocus=True)
+        self.timed_scale.pack(anchor="w", pady=(2, 0))
+        self.timedlink.bind("<Configure>", lambda e: self.timed_scale.configure(length=e.width))
+        self.timed_scale.bind("<ButtonRelease-1>", self._save_timed_minutes)
+        self.timed_scale.bind("<KeyRelease>", self._save_timed_minutes)
         # Questions (Claude's AskUserQuestion): one block per question, options as toggles, plus an own-answer field
         self.qframe = tk.Frame(self.body, bg=bg)
         self._qid, self._qvars = None, []
@@ -185,6 +200,8 @@ class PermissionCard:
         self.update(item)
         self.apply_scale()
         self._place(first=True)
+        from .window_resize import corner_grip
+        self.resize_grip = corner_grip(w, minimum=(420, 300), on_resize=lambda: setattr(self, '_moved', True))
         w.deiconify()
         if IS_MAC:
             import mac_statusbar as mac
@@ -319,7 +336,8 @@ class PermissionCard:
                 tuple(r.get("id") for r in item.get("requests") or []),
                 item.get("where"), item.get("detail"), item.get("agent"), item.get("message"), bool(item.get("changed")),
                 can_answer, bool(self.app.answers.enabled(item)), json.dumps(stop, default=str),
-                self.app.cfg.get("codex_answers", True), preferences.ANSWER_WAIT["v"], grant is not None,
+                self.app.cfg.get("codex_answers", True), preferences.ANSWER_WAIT["v"],
+                json.dumps(grant, sort_keys=True), permissions.blacklist_blocked(item),
                 self.app.answers.timed_minutes() if can_answer else None)
 
     def _tick_texts(self, item):
@@ -331,11 +349,25 @@ class PermissionCard:
             if grant:
                 self.timedlink.config(text=self._timed_text(grant))
 
-    def _timed_text(self, grant):
-        return (f"Auto approving this session \u00b7 {textfmt.fmt_left(grant['until'] - time.time())} left" if grant
-                else f"Auto approve this session for {self.app.answers.timed_minutes()} min\u2026")
+    def _preview_timed_minutes(self, value):
+        if not self._timed_grant:
+            self.timedlink.config(text=self._timed_text(None, int(float(value))))
+
+    def _save_timed_minutes(self, event=None):
+        minutes = self.timed_var.get()
+        if minutes != self.app.answers.timed_minutes():
+            self.app.answers.set_timed_minutes(minutes)
+
+    def _timed_text(self, grant, minutes=None):
+        mode = (" (reject blacklist)" if grant and grant.get("reject_blacklist") else
+                " (pause on blacklist)" if grant and grant.get("respect_blacklist") else "")
+        return (f"Auto approving this session{mode} \u00b7 {textfmt.fmt_left(grant['until'] - time.time())} left" if grant
+                else f"Auto approve this session for {self.app.answers.timed_minutes() if minutes is None else minutes} min\u2026")
 
     def _render(self, item):
+        self.blocked_banner.pack_forget()
+        if not self.sent and item.get("state") == "needs_input" and permissions.blacklist_blocked(item):
+            self.blocked_banner.pack(anchor="e", before=self.header, pady=(0, 8))
         req = item.get("request") or {}
         if self._state != "needs_input" and not self.sent:
             return self._update_status(item)
@@ -366,7 +398,7 @@ class PermissionCard:
                     self.code.config(height=max(1, min(16, lines)), state="disabled")
                     self.win.after(80, self._fit_code)  # then measure the real wrapped height once it is on screen
                     self._shown = detail
-                self.code.pack(fill="x", pady=(8, 0))
+                self.code.pack(fill="both", expand=True, pady=(8, 0))
         else:
             self.ask.config(text=item.get("message") or "Waiting for your input")
             self.ask.pack(fill="x")
@@ -435,9 +467,14 @@ class PermissionCard:
             grant = permissions.timed_grants().get(str(item.get("session_id")))
             self.timedlink.config(text=self._timed_text(grant))
             self._timed_grant = bool(grant)
-            self.timedlink.pack(fill="x", pady=(0, 4), after=self.note)
+            self.timed_var.set(self.app.answers.timed_minutes())
+            if grant:
+                self.timed_scale.pack_forget()
+            else:
+                self.timed_scale.pack(anchor="w", pady=(2, 0))
+            self.timed_row.pack(fill="x", pady=(0, 4), after=self.note)
         else:
-            self.timedlink.pack_forget()
+            self.timed_row.pack_forget()
         if can_answer or self.sent:  # small link while the answer buttons (or the "sent" note) are showing
             self.golink.pack(side="right")
             self.go_row.pack_forget()
@@ -580,7 +617,7 @@ class PermissionCard:
         self.answer_row.pack_forget()
         self.q_row.pack_forget()
         self.qframe.pack_forget()
-        self.timedlink.pack_forget()
+        self.timed_row.pack_forget()
         self.golink.pack_forget()
         self.go_row.pack(fill="x", after=self.note)
         self._place()
@@ -638,15 +675,31 @@ class PermissionCard:
     def auto_approve_for_a_while(self):
         """Start the timed auto approve for this session (after its confirmation), and allow the prompt on screen."""
         item = next((i for i in self.app._last_items if i["key"] == self.key), {})
-        if permissions.timed_grants().get(str(item.get("session_id"))):
-            self.answer("allow")
-            return
-        if self.app.answers.start_timed(item):
-            self.answer("allow")
+        grant = permissions.timed_grants().get(str(item.get("session_id")))
+        self._save_timed_minutes()
+        def completed(accepted):
+            if not accepted or not self.win.winfo_exists():
+                return
+            active = permissions.timed_grants().get(str(item.get('session_id'))) or {}
+            if active.get('respect_blacklist') and not active.get('reject_blacklist'):
+                self.close()
+                return
+            current = next((i for i in self.app._last_items if i['key'] == self.key), {})
+            if current.get('session_id') != item.get('session_id'):
+                return
+            behavior = permissions.timed_behavior(current)
+            if behavior:
+                self.answer(behavior, auto_approved=True)
+            else:
+                self.update(current)
+        if grant and not grant.get('respect_blacklist'):
+            completed(True)
+        else:
+            self.app.answers.start_timed(item, parent=self.win, on_result=completed)
 
-    def answer(self, behavior):
+    def answer(self, behavior, auto_approved=False):
         item = next((i for i in self.app._last_items if i["key"] == self.key), {})
-        if self.app.answers.send(self.key, behavior):
+        if self.app.answers.send(self.key, behavior, **({"auto_approved": True} if auto_approved else {})):
             self.sent = "Allow once" if behavior == "allow" else "Deny"
             self._sent_id = (item.get("request") or {}).get("id")
             self.update(next((i for i in self.app._last_items if i["key"] == self.key), {"request": {}}))

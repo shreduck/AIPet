@@ -15,7 +15,7 @@ def pet_alive(base):
         return False
 
 
-def await_answer(base, key, seconds, session_path=None, request_id=None):
+def await_answer(base, key, seconds, session_path=None, request_id=None, auto_check=None):
     """Wait for the pet to drop <pet dir>/answers/<key>.json ({"behavior": "allow"|"deny"|"release"}). None = no
     answer ("release": the user went to the session's window to answer there).
     seconds <= 0 waits with no limit. Also gives up once the session has moved past this prompt (answered in
@@ -27,6 +27,7 @@ def await_answer(base, key, seconds, session_path=None, request_id=None):
     except OSError:
         pass
     WAIT_END.clear()
+    LAST_ANSWER.clear()
     start = time.time()
     previous = {}
 
@@ -41,7 +42,7 @@ def await_answer(base, key, seconds, session_path=None, request_id=None):
             except (ValueError, OSError):
                 pass
     try:
-        return _await(path, waiting, base, seconds, session_path, request_id)
+        return _await(path, waiting, base, seconds, session_path, request_id, auto_check)
     except _Stopped as e:
         WAIT_END.update(reason="stopped", signal=getattr(signal.Signals(e.signum), "name", str(e.signum)))
         return None
@@ -70,7 +71,7 @@ class _Stopped(Exception):
 LAST_ANSWER = {}  # the whole answer file of the last click (behavior, and "answers" for a question)
 
 
-def _await(path, waiting, base, seconds, session_path, request_id):
+def _await(path, waiting, base, seconds, session_path, request_id, auto_check=None):
     deadline = time.time() + seconds if seconds > 0 else None
     checked, touched = time.time(), 0.0
     while deadline is None or time.time() < deadline:
@@ -105,6 +106,12 @@ def _await(path, waiting, base, seconds, session_path, request_id):
                 LAST_ANSWER.clear()
                 LAST_ANSWER.update(data)  # answers to a question travel with the click
                 return data["behavior"]
+        if auto_check:
+            auto = auto_check()
+            if auto in ("timed", "blacklist"):
+                WAIT_END["reason"] = "auto_rejected" if auto == "blacklist" else "auto_approved"
+                LAST_ANSWER.clear()
+                return "deny" if auto == "blacklist" else "allow"
         if not pet_alive(base):
             WAIT_END["reason"] = "pet_closed"
             return None  # the pet was closed: fall back to the normal prompt
@@ -164,7 +171,15 @@ def answer_flow(base, path, aid, request_id=None, tool_input=None):
         req["answerable"] = True
         record["requests"], record["request"] = requests, requests[0]
         hook_io.write_atomic(path, record)
-    decision = await_answer(base, key, seconds, path, req.get("id"))  # no lock held while waiting
+    # A grant can be enabled after this hook has already started waiting.
+    # Re-evaluate it with the original input, so queued prompts advance too.
+    from . import approvals as hook_approvals
+    auto_check = None
+    if req.get("kind") != "question" and req.get("tool") != hook_config.QUESTION_TOOL:
+        data = {"tool_name": req.get("tool"), "tool_input": tool_input}
+        target_key = hook_approvals.auto_approve_key(record.get("env") == "wsl")
+        auto_check = lambda: hook_approvals.timed_decision(base, record.get("id"), data=data, key=target_key)
+    decision = await_answer(base, key, seconds, path, req.get("id"), auto_check)  # no lock held while waiting
     with hook_io.SessionLock(path):
         cur = hook_io.read_json(path)
         requests = hook_requests.pending_requests(cur)
@@ -175,6 +190,10 @@ def answer_flow(base, path, aid, request_id=None, tool_input=None):
                 if decision == "allow":  # its PostToolUse must not retire another queued prompt for the same command
                     cur["answered"] = (cur.get("answered") or [])[-9:] + [
                         {"tool_use_id": mine[0].get("tool_use_id", ""), "sig": mine[0].get("sig", "")}]
+                if WAIT_END.get("reason") in ("auto_approved", "auto_rejected") or LAST_ANSWER.get("auto_approved"):
+                    cur.update(auto_t=time.time(), auto_kind="blacklist" if decision == "deny" else "timed",
+                               auto_approved=(cur.get("auto_approved") or 0) + (decision == "allow"),
+                               auto_what=(req.get("tool", "") + ": " + req.get("detail", "").split("\n")[0])[:150])
             else:
                 mine[0]["answerable"] = False
                 if WAIT_END.get("reason") == "stopped":  # the card says so instead of guessing

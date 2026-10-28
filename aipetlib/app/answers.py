@@ -4,6 +4,7 @@ import json
 import os
 import re
 import time
+import tkinter as tk
 
 from .. import permissions as permission_rules
 from ..prompt_navigation import PromptNavigation
@@ -24,6 +25,7 @@ class Answers:
     def __init__(self, app):
         self.app = app
         self.navigation = PromptNavigation()
+        self._timed_dialogs = {}
 
     def read_again(self):
         """The hook (or the session file) is about to change: have the background reader look now."""
@@ -31,7 +33,7 @@ class Answers:
         if reader:
             reader.wake()
 
-    def send(self, key, behavior, answers=None, permissions=None):
+    def send(self, key, behavior, answers=None, permissions=None, auto_approved=False):
         """Hand the user's click to the waiting PermissionRequest hook. Returns True if it was written.
         answers: for a question, {question text: label, or [labels] for multi-select}.
         permissions: Claude Code's own suggestions to apply with the allow (its "don't ask again" choices)."""
@@ -46,6 +48,7 @@ class Answers:
             path = os.path.join(permission_rules.answers_dir(), name + ".json")
             with open(path + ".tmp", "w", encoding="utf-8") as f:
                 json.dump(dict({"behavior": behavior, "t": time.time()}, **({"answers": answers} if answers else {}),
+                               **({"auto_approved": True} if auto_approved else {}),
                                **({"permissions": permissions} if permissions else {})), f)
             os.replace(path + ".tmp", path)
             self.read_again()
@@ -90,27 +93,99 @@ class Answers:
         app.cfg["timed_approve_minutes"] = max(permission_rules.TIMED_MIN, min(permission_rules.TIMED_MAX, int(round(float(minutes)))))
         runtime_settings.save_setting("timed_approve_minutes", app.cfg["timed_approve_minutes"])
 
-    def start_timed(self, item, minutes=None):
+    def start_timed(self, item, minutes=None, parent=None, on_result=None):
         """Auto approve every permission prompt from this session for N minutes, after a safety confirmation.
-        Returns True once the grant is running."""
+        With on_result, return the window immediately and callback(True/False) after the choice.
+        UI callers use that path; the synchronous form is retained for noninteractive callers."""
         app = self.app
         if not item or not item.get("session_id"):
+            if on_result is not None:
+                on_result(False)
             return False
+        session_id = str(item['session_id'])
+        if on_result is not None:
+            existing = self._timed_dialogs.get(session_id)
+            try:
+                if existing is not None and existing.winfo_exists():
+                    existing.lift()
+                    return existing
+            except tk.TclError:
+                pass
         minutes = minutes or self.timed_minutes()
         name = item.get("title") or "this session"
         if item.get("conv"):
             name += f" \u00b7 {item['conv']}"
-        ok = theme.themed_dialog(
-            app.root, "AIPet", kind="warning", heading=f"Auto approve {name} for {minutes} min?",
-            text=(f"Every permission prompt from this session (commands, file edits, tool calls) will be approved "
-                  f"without asking for the next {minutes} minutes. Other sessions keep asking, and questions from the "
-                  "AI still wait for you.\n\nLive Management in the right-click menu shows the countdown and can "
-                  "stop it early. It also stops when AIPet quits."),
-            buttons=(("Cancel", False, "secondary"), (f"Auto approve {minutes} min", True, "danger")),
-            cancel=False, enter_confirms=False)
-        if not ok:
-            return False
-        return permission_rules.set_timed_grant(item["session_id"], minutes, name)
+        from ..ui.approval_rules import RuleLists
+        key = permission_rules.auto_approve_key_for(item)
+        old_rules = permission_rules.auto_approve_rules().get(key) or permission_rules.default_auto_rules()
+        controls = {}
+
+        def build_lists(body):
+            controls['editor'] = RuleLists(body, old_rules, compact=True)
+            controls['error'] = tk.Label(body, fg=theme.themed_color('#b91c1c'), wraplength=640, height=3, justify='left',
+                                         font=(theme.UI_FONT, 9))
+            controls['error'].pack(fill='x', pady=(6, 0))
+            controls['editor'].on_change = lambda: controls['error'].configure(text='')
+            theme.theme_widget(controls['editor'].frame)
+
+        def save_lists(_mode):
+            try:
+                edited = dict(old_rules, **controls['editor'].read())
+                if edited != old_rules and not permission_rules.save_auto_approve(key, edited):
+                    raise ValueError(permission_rules.approval_save_error() or "Couldn't save approval rules")
+                return True
+            except (ValueError, OSError) as exc:
+                controls['error'].configure(text=str(exc))
+                controls['editor'].focus_error()
+                return False
+
+        completed = {'value': False}
+        def resolve(mode):
+            completed['value'] = True
+            self._timed_dialogs.pop(session_id, None)
+            accepted = bool(mode) and permission_rules.set_timed_grant(item['session_id'], minutes, name,
+                respect_blacklist=mode in ('blacklist', 'reject_blacklist'), reject_blacklist=mode == 'reject_blacklist')
+            if accepted:
+                self.read_again()
+                if mode == 'blacklist':
+                    self.dismiss_timed_prompts(session_id)
+            if on_result is not None:
+                on_result(accepted)
+            return accepted
+
+        result = theme.themed_dialog(
+            parent if parent is not None else app.root, "AIPet", kind="warning", heading=f"Auto approve {name} for {minutes} min?",
+            text=(f"Choose a mode for the next {minutes} minutes. Approve all ignores both lists.\n"
+                  "Pause on blacklist waits for you; Reject all in blacklist denies matching requests. "
+                  "Both use the precedence switch below, even if normal auto approval is off or Allow all.\n"
+                  f"Edit the complete lists for this install ({key}). Changes are saved when you choose a mode "
+                  "and shared with its other sessions. The default blacklist .* matches everything.\n"
+                  "The selected mode also applies to the prompt on screen. AI questions still wait; stop the timer in Live Management. "
+                  "Quitting AIPet stops the grant."),
+            buttons=(("Cancel", False, "secondary"), ("Pause on blacklist", "blacklist", "warning"),
+                     ("Reject all in blacklist", "reject_blacklist", "danger"),
+                     ("Approve all", True, "primary")),
+            cancel=False, enter_confirms=False, content_builder=build_lists, validate=save_lists,
+            **({'on_result': resolve} if on_result is not None else {}))
+        if on_result is not None:
+            if not completed['value']:
+                self._timed_dialogs[session_id] = result
+                if hasattr(result, 'bind'):
+                    def forget(event):
+                        if event.widget is result and self._timed_dialogs.get(session_id) is result:
+                            self._timed_dialogs.pop(session_id, None)
+                    result.bind('<Destroy>', forget, add='+')
+            return result
+        return resolve(result)
+
+    def dismiss_timed_prompts(self, session_id):
+        """Dismiss this session's visible cards; the hook still applies the timed pause policy."""
+        details = getattr(self.app, 'details', {})
+        for item in getattr(self.app, '_last_items', []):
+            if str(item.get('session_id')) == str(session_id):
+                card = details.get(item.get('key'))
+                if card is not None:
+                    card.close()
 
     def stop_timed(self, session_id):
         permission_rules.stop_timed_grant(session_id)
@@ -167,7 +242,7 @@ class Answers:
         rules = dict(rules, enabled=True, whitelist=white, blacklist=black)
         if not permission_rules.save_auto_approve(key, rules):
             return None
-        blocked = any(permission_rules._search(p, subject or tool) for p in (black or []))
+        blocked = permission_rules.lists_block(rules, [subject or tool, tool, f'{tool}({subject})'])
         what = "this exact command" if subject else f"every {tool} request"
         return (f"Allowed, and {what} is now on the auto-approve whitelist ({key})."
                 + (" Your blacklist still asks for it, though." if blocked else ""))

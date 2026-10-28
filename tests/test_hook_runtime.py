@@ -84,6 +84,34 @@ class HookRuntimeTests(unittest.TestCase):
         optional.schedule.assert_called_once_with(str(self.data / 'sessions'),'isolated',
                                                    [sys.executable,str(Path(__file__).resolve().parents[1] / 'aipet_hook.py')])
 
+    def test_addins_receive_raw_events_without_changing_hook_output(self):
+        (self.data / 'config.json').write_text(json.dumps({'addins': {'hook-journal': True}}))
+        for agent in ('claude', 'codex'):
+            out, _ = self.event('SessionStart', agent)
+            self.assertEqual(out, '')
+            out, _ = self.event('SessionEnd', agent)
+            self.assertEqual(out, '')
+        events = [json.loads(path.read_text(encoding='utf-8')) for path in (self.data / 'addin-events').glob('*.json')]
+        self.assertEqual({(event['agent'], event['event']) for event in events},
+                         {('claude', 'SessionStart'), ('claude', 'SessionEnd'),
+                          ('codex', 'SessionStart'), ('codex', 'SessionEnd')})
+        self.assertTrue(all(event['data']['session_id'] == 'isolated' for event in events))
+
+    def test_timed_blacklist_cannot_fall_through_to_global_allow_all(self):
+        (self.data / 'alive').touch()
+        (self.data / 'no-answers').touch()
+        base_key = 'windows' if os.name == 'nt' else ('mac' if sys.platform == 'darwin' else sys.platform)
+        for agent in ('claude', 'codex'):
+            key = ('codex:' if agent == 'codex' else '') + base_key
+            (self.data / 'auto-approve.json').write_text(json.dumps({
+                'timed': {'isolated': {'until': time.time()+60, 'respect_blacklist': True}},
+                'targets': {key: {'enabled': True, 'allow_all': True, 'blacklist': ['danger']}}}))
+            out, record = self.event('PermissionRequest', agent, tool_name='Bash', tool_input={'command': 'danger'})
+            self.assertEqual(out, '')
+            self.assertEqual(record['state'], 'needs_input')
+            out, record = self.event('PermissionRequest', agent, tool_name='Bash', tool_input={'command': 'echo safe'})
+            self.assertEqual(json.loads(out)['hookSpecificOutput']['decision']['behavior'], 'allow')
+
     def test_timed_approval_is_an_explicit_decision_and_never_answers_questions(self):
         (self.data / 'alive').touch()
         (self.data / 'auto-approve.json').write_text(json.dumps({'timed': {'isolated': {'until': time.time()+60}}}))
@@ -95,6 +123,65 @@ class HookRuntimeTests(unittest.TestCase):
             'questions': [{'question': 'Which?', 'options': [{'label': 'A'}]}]})
         self.assertEqual(out, '')
         self.assertEqual(record['state'], 'needs_input')
+
+    def test_enabling_timed_approval_settles_hooks_already_waiting(self):
+        for agent, mode in ((a, m) for a in ('claude', 'codex') for m in ('all', 'pause', 'reject')):
+            with self.subTest(agent=agent, mode=mode):
+                (self.data / 'alive').touch()
+                (self.data / 'codex-answers').touch()
+                grant_path = self.data / 'auto-approve.json'
+                grant_path.write_text('{}')
+                procs = []
+                try:
+                    for index in range(2):
+                        payload = dict(session_id='isolated', hook_event_name='PermissionRequest',
+                                       cwd=str(self.root), tool_name='Bash', tool_use_id=f'{agent}-{index}',
+                                       tool_input={'command': f'echo fixture {index}'})
+                        proc = subprocess.Popen(self.command(agent), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                                stderr=subprocess.PIPE, text=True, cwd=self.root, env=self.env)
+                        procs.append(proc)
+                        proc.stdin.write(json.dumps(payload))
+                        proc.stdin.close()
+                        proc.stdin = None
+                    deadline = time.time() + 8
+                    while len(list((self.data / 'answers').glob('*.waiting'))) < 2 and time.time() < deadline:
+                        time.sleep(.05)
+                    self.assertEqual(len(list((self.data / 'answers').glob('*.waiting'))), 2)
+                    key = ('codex:' if agent == 'codex' else '') + (
+                        'windows' if os.name == 'nt' else ('mac' if sys.platform == 'darwin' else sys.platform))
+                    grant_path.write_text(json.dumps({
+                        'timed': {'isolated': {'until': time.time()+60, 'respect_blacklist': mode != 'all',
+                                               'reject_blacklist': mode == 'reject'}},
+                        'targets': {key: {'blacklist': ['fixture' if mode == 'reject' else 'danger']}}}))
+                    for proc in procs:
+                        out, err = proc.communicate(timeout=5)
+                        self.assertEqual(proc.returncode, 0, err)
+                        self.assertEqual(json.loads(out)['hookSpecificOutput']['decision']['behavior'],
+                                         'deny' if mode == 'reject' else 'allow')
+                    record = json.loads((self.data / 'sessions/isolated.json').read_bytes())
+                    self.assertEqual(record['state'], 'working')
+                    self.assertEqual(record['requests'], [])
+                    self.assertEqual(record['auto_kind'], 'blacklist' if mode == 'reject' else 'timed')
+                finally:
+                    for proc in procs:
+                        if proc.poll() is None:
+                            proc.kill()
+                            proc.communicate()
+
+    def test_reject_blacklist_answers_immediately_without_permission_prompt(self):
+        (self.data / 'alive').touch()
+        (self.data / 'no-answers').touch()
+        key = 'windows' if os.name == 'nt' else ('mac' if sys.platform == 'darwin' else sys.platform)
+        for agent in ('claude', 'codex'):
+            with self.subTest(agent=agent):
+                (self.data / 'auto-approve.json').write_text(json.dumps({
+                    'timed': {'isolated': {'until': time.time()+60, 'respect_blacklist': True, 'reject_blacklist': True}},
+                    'targets': {('codex:' if agent == 'codex' else '') + key: {'blacklist': ['danger']}}}))
+                out, record = self.event('PermissionRequest', agent, tool_name='Bash', tool_input={'command': 'danger'})
+                self.assertEqual(json.loads(out)['hookSpecificOutput']['decision']['behavior'], 'deny')
+                self.assertEqual(record['state'], 'working')
+                self.assertEqual(record['requests'], [])
+                self.assertEqual(record['auto_kind'], 'blacklist')
 
     def test_manual_question_answer_reaches_stdout_and_cleans_wait_marker(self):
         (self.data / 'alive').touch()

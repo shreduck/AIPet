@@ -1,0 +1,12 @@
+{
+  "api_version": 1,
+  "name": "Event counter (example)",
+  "description": "Count hook events locally. No network access is used by this example.",
+  "command": ["{python}", "{addin_dir}/main.py"],
+  "events": ["*"],
+  "timeout_seconds": 5,
+  "settings": [
+    {"key": "report_counts", "label": "Report counts", "type": "boolean", "default": false,
+     "description": "Show an informational message after each counted event."}
+  ]
+}

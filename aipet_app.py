@@ -23,12 +23,15 @@ from tkinter import messagebox
 
 import aipet as core
 import aipetlib.ui.theme as theme
+from aipetlib.ui import addin_messages as addin_message_ui
 from aipetlib.runtime import diagnostics, paths, preferences
 from aipetlib.runtime import settings as runtime_settings
 from aipetlib.agents.tracker import NetworkTracker
 import aipet_guide
 import aipet_settings
 from aipetlib import permissions
+from aipetlib import geometry
+from aipetlib.addins import AddinManager
 from aipetlib import text as textfmt
 from aipetlib import update as releases
 from aipetlib.app.agent_windows import AgentWindows
@@ -199,6 +202,11 @@ class TrayApp:
         self.legacy = LegacyFlow(self)
         self.hooks = HookJobs(self, open_path)
         self.presentation = TrayPresenter(self)
+        self.addins = AddinManager(paths.HOME_DIR, self.pet.cfg.get("addins", {}))
+        self.addins.start()
+        self.pet.addin_snapshot = []
+        self.pet.open_addin_messages = self.open_addin_messages
+        self._addin_catalog_seen = self.addins.entries()
 
         self.pet.on_alert = self.presentation.on_alert
         self.agent_tracker = NetworkTracker(lambda: list(self.pet._agent_items))
@@ -219,7 +227,17 @@ class TrayApp:
         self.q.put(fn)
 
     def pump(self):
+        # Schedule first: a queued confirmation may enter wait_window's nested event loop.
+        # Other alerts and UI work must keep arriving while that confirmation waits.
+        self.root.after(250, self.pump)
+        self.pet.addin_snapshot = self.addins.messages.snapshot()
+        catalog = self.addins.entries()
+        if catalog != self._addin_catalog_seen:
+            self._addin_catalog_seen = catalog
+            self.refresh_menu()
         try:
+            self.publish_addin_pet_locations()
+            self.show_addin_alerts()
             while True:
                 self.q.get_nowait()()
         except queue.Empty:
@@ -230,7 +248,6 @@ class TrayApp:
         self.c_wb = self.pet.wb.status if self.pet.wb else "off"
         self.agent_windows.is_open()  # refresh the cached answer the tray menu reads
         self.presentation.update_tray()
-        self.root.after(250, self.pump)
 
     def _check_autostart(self):
         """At startup: show what Windows really sees, not an overlay (see windows_sees_autostart)."""
@@ -251,6 +268,7 @@ class TrayApp:
         """config.json key -> the setter that applies it now (the config watcher calls them with saving paused)."""
         pet = self.pet
         return {
+            "addins": self.configure_addins,
             "theme": lambda v: (pet.preferences.apply_theme(v), hasattr(self, "theme_var") and self.theme_var.set(v == "dark")),
             "size": lambda v: pet.appearance.set_size(float(v)),
             "tooltip_text_scale": pet.tooltips.set_tooltip_text_scale,
@@ -302,8 +320,7 @@ class TrayApp:
         return app_menus._live_spec(self, item, settings)
 
     def _start_timed(self, d):
-        if self.pet.answers.start_timed(d):
-            self.refresh_menu()
+        self.pet.answers.start_timed(d, on_result=lambda accepted: self.refresh_menu() if accepted else None)
 
     def _stop_timed(self, session_id):
         self.pet.answers.stop_timed(session_id)
@@ -322,8 +339,9 @@ class TrayApp:
 
     # ---- agent network windows: one for all sessions, or one per session ("each")
     def startup_dialogs_open(self):
-        """Setup not done yet, its window or a hook job still open, or a dialog holding the grab: wait with offers."""
-        return not setup_is_done() or self.setup.win is not None or self.hooks.busy or self.root.grab_current() is not None
+        """Wait with optional offers while setup, hook jobs, or confirmations are still open."""
+        return (not setup_is_done() or self.setup.win is not None or self.hooks.busy
+                or bool(theme.OPEN_DIALOGS) or self.root.grab_current() is not None)
 
     def show_settings(self):
         if getattr(self, "settings_win", None) is not None and self.settings_win.alive():
@@ -336,7 +354,10 @@ class TrayApp:
     def copy_ai_guide(self):
         """Settings > General: the settings guide for an AI assistant, on the clipboard (Tk's clipboard is the
         system one on Windows and macOS)."""
-        text = aipet_guide.build_guide(self.pet.cfg, paths.HOME_DIR, self.version)
+        addins = [dict(id=key, name=spec['name'],
+                       enabled=self.pet.cfg.get('addins', {}).get(key) is True,
+                       settings=self.addins.get_settings(key)) for key, spec in self.addins.entries()]
+        text = aipet_guide.build_guide(self.pet.cfg, paths.HOME_DIR, self.version, addins=addins)
         try:
             self.root.clipboard_clear()
             self.root.clipboard_append(text)
@@ -344,9 +365,8 @@ class TrayApp:
         except tk.TclError as e:
             self.info(f"Couldn't copy to the clipboard:\n{e}", error=True)
             return
-        self.info("The AIPet settings guide is on your clipboard.\n\nPaste it into Claude, Codex or another assistant, "
-                  "then ask it to change what you want (for example: \"switch AIPet to the dark theme and make the "
-                  "pets bigger\").")
+        self.info("The AIPet settings guide is on your clipboard, including add-in settings and the script interface."
+                  "\n\nPaste it into Claude, Codex or another assistant, then ask it to change settings or build an add-in.")
 
     def settings_zoom(self):
         return preferences.clamp_zoom(self.pet.cfg.get("settings_zoom", 1.0))
@@ -366,7 +386,7 @@ class TrayApp:
         win = self.about_win = tk.Toplevel(self.root)
         win.title("About AIPet")
         win.attributes("-topmost", True)
-        win.resizable(False, False)
+        win.resizable(True, True)
         bg, fg = theme.T["tag_bg"], theme.T["tag_fg"]
         win.configure(bg=bg)
         tk.Label(win, text=f"AIPet {self.version}", font=(theme.UI_FONT, 18, "bold"), bg=bg, fg=fg).pack(padx=28, pady=(24, 8))
@@ -517,10 +537,107 @@ class TrayApp:
             self.autostart_var.set(self.c_autostart)
         self.refresh_menu()
 
+    def configure_addins(self, enabled):
+        self.addins.request_configure(enabled)
+        self.pet.cfg["addins"] = enabled
+
+    def open_addin_messages(self, rows, parent=None):
+        if not rows:
+            return
+        addin_message_ui.show(parent if parent is not None else self.root, rows)
+        self.acknowledge_addin_messages(rows)
+
+    def acknowledge_addin_messages(self, rows):
+        ids = {m['id'] for row in rows for m in row['messages']}
+        self.addins.messages.acknowledge(ids)
+        self.pet.addin_snapshot = self.addins.messages.snapshot()
+
+    def publish_addin_pet_locations(self):
+        session_context = {}
+        for item in getattr(self.pet, '_last_items', []):
+            if not item.get('session_id'):
+                continue
+            agent = 'codex' if item.get('agent') == 'codex' else 'claude'
+            harness = 'Codex' if agent == 'codex' else 'Claude Code'
+            if 'cowork' in str(item.get('env', '')).lower() or 'cowork' in str(item.get('entry', '')).lower():
+                harness = 'Claude Cowork'
+            session_context[(agent, str(item['session_id']))] = dict(
+                conversation_title=item.get('conv') or item.get('title') or '',
+                project=item.get('title') or '', harness=harness, cwd=item.get('cwd') or '',
+                environment=item.get('where') or item.get('env') or '',
+                source=item.get('source') or '', entry=item.get('entry') or '', model=item.get('model') or '')
+        self.addins.set_session_context(session_context)
+        default = geometry.widget_location(self.pet.root)
+        sessions = {}
+        for view in self.pet.pets.values():
+            if not view.canvas.winfo_ismapped():
+                continue
+            location = geometry.widget_location(view.canvas)
+            data = view.data
+            for item in data.get('everyone') or data.get('members') or [data]:
+                if item.get('session_id'):
+                    identity = ('codex' if item.get('agent') == 'codex' else 'claude', str(item['session_id']))
+                    sessions[identity] = location
+        self.addins.set_pet_locations(default, sessions)
+
+    def show_addin_alerts(self):
+        """Each new explicit SDK warning gets an independent window and acknowledgment."""
+        # Native file choosers can still own input. Never cover one with an unclickable alert.
+        if self.root.grab_current() is not None:
+            return
+        current = {m['id'] for row in self.pet.addin_snapshot for m in row['messages']}
+        seen = getattr(self, '_addin_alert_seen', set())
+        windows = getattr(self, '_addin_alert_windows', {})
+        self._addin_alert_windows = windows
+        for row in self.pet.addin_snapshot:
+            for message in row['messages']:
+                target = message.get('window')
+                if target not in ('main', 'pet') or not message['unread'] or message['id'] in seen:
+                    continue
+                position = self.addins.pet_location(row) if target == 'pet' else None
+                screen = position.get('screen') if position else None
+                screen = screen or geometry.screen_info(0, 0, self.root)
+                rows = [dict(row, messages=[message])]
+                windows[message['id']] = addin_message_ui.show(self.root, rows,
+                    on_close=self.acknowledge_addin_messages, screen=screen)
+        self._addin_alert_seen = current
+        for key, win in list(windows.items()):
+            try:
+                if not win.winfo_exists():
+                    del windows[key]
+            except tk.TclError:
+                del windows[key]
+
+    def toggle_addin(self, key):
+        old = self.pet.cfg.get("addins")
+        enabled = dict(old) if isinstance(old, dict) else {}
+        enabled[key] = not bool(enabled.get(key))
+        if not runtime_settings.save_setting("addins", enabled):
+            self.info("Couldn't save add-in settings. Check that the AIPet data folder is writable.")
+            return
+        self.configure_addins(enabled)
+        self.refresh_menu()
+
+    def reload_addins(self):
+        self.configure_addins(self.pet.cfg.get("addins", {}))
+        self.root.after(500, self.refresh_menu)
+        self.refresh_menu()
+
+    def save_addin_settings(self, key, values, completed):
+        self.addins.request_set_settings(key, values,
+            lambda error: self.ui(lambda: completed(error)))
+
+    def open_addins(self):
+        folder = os.path.join(paths.HOME_DIR, "addins")
+        os.makedirs(folder, exist_ok=True)
+        open_path(folder)
+
     def open_config(self):
         open_path(paths.HOME_DIR)
 
     def quit(self):
+        if getattr(self, "addins", None):
+            self.addins.stop()
         if getattr(self, "agent_tracker", None):
             self.agent_tracker.stop()
         self.presentation.stop()

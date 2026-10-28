@@ -12,6 +12,44 @@ IS_MAC = sys.platform == "darwin"
 _MAC_SCREENS = {"t": 0.0, "v": []}  # macOS screen rectangles, re-read at most every 3 s
 
 
+def screen_info(x, y, widget):
+    """JSON-safe monitor identity and usable bounds; (0, 0) selects the main Windows screen."""
+    if os.name == 'nt':
+        try:
+            import ctypes
+            from ctypes import wintypes
+            class MONITORINFOEX(ctypes.Structure):
+                _fields_ = [('cbSize', wintypes.DWORD), ('rcMonitor', wintypes.RECT),
+                            ('rcWork', wintypes.RECT), ('dwFlags', wintypes.DWORD),
+                            ('szDevice', wintypes.WCHAR * 32)]
+            user = ctypes.windll.user32
+            user.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+            user.MonitorFromPoint.restype = wintypes.HMONITOR
+            # Other geometry callers pass MONITORINFO to the same API; accept either structure.
+            user.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.c_void_p]
+            monitor = user.MonitorFromPoint(wintypes.POINT(int(x), int(y)), 2)
+            info = MONITORINFOEX()
+            info.cbSize = ctypes.sizeof(info)
+            if monitor and user.GetMonitorInfoW(monitor, ctypes.byref(info)):
+                def rect(value):
+                    return [value.left, value.top, value.right, value.bottom]
+                return dict(id=info.szDevice, bounds=rect(info.rcMonitor), work_area=rect(info.rcWork),
+                            primary=bool(info.dwFlags & 1))
+        except Exception:
+            pass
+    bounds = list(work_area(x, y, widget) or (0, 0, widget.winfo_screenwidth(), widget.winfo_screenheight()))
+    return dict(id='screen:' + ','.join(map(str, bounds)), bounds=bounds, work_area=bounds,
+                primary=bounds[0] <= 0 < bounds[2] and bounds[1] <= 0 < bounds[3])
+
+
+def widget_location(widget):
+    """Snapshot on the UI thread; workers consume the plain data without calling Tk."""
+    x, y = widget.winfo_rootx(), widget.winfo_rooty()
+    width, height = widget.winfo_width(), widget.winfo_height()
+    screen = screen_info(x + width // 2, y + height // 2, widget)
+    return dict(x=x, y=y, width=width, height=height, screen_id=screen['id'], screen=screen)
+
+
 def work_area(x, y, widget):
     """(left, top, right, bottom) of the monitor nearest to screen point (x, y) (the whole monitor, taskbar included,
     so a pet parked over the taskbar stays there).

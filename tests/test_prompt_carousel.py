@@ -29,10 +29,14 @@ class CarouselTests(unittest.TestCase):
             self.addCleanup(stub.stop)
         self.sent = []
         self.grants, self.confirm = {}, True
+        self.confirmed_grant = {'until': 9e9}
 
-        def start_timed_approve(item):  # the pet's confirmation dialog: True once the grant runs
+        def start_timed_approve(item, parent=None, on_result=None):  # the confirmation belongs to the agent window
+            self.confirm_parent = parent
             if self.confirm:
-                self.grants[item["session_id"]] = {"until": 9e9}
+                self.grants[item["session_id"]] = dict(self.confirmed_grant)
+            if on_result is not None:
+                on_result(self.confirm)
             return self.confirm
         pet = SimpleNamespace(open_detail=lambda key: None, answers=SimpleNamespace(
             enabled=lambda _: True, go_to_prompt=lambda key: None, timed_minutes=lambda: 15,
@@ -140,7 +144,8 @@ class CarouselTests(unittest.TestCase):
                                          "go to window"])
         self.choose("aipet: auto approve this session for 15 min…")
         self.assertIn("s1", self.grants)
-        self.assertEqual(self.sent, [("allow", {"answers": None})])
+        self.assertIs(self.confirm_parent, self.window.win)
+        self.assertEqual(self.sent, [("allow", {"answers": None, "auto_approved": True})])
 
     def test_cancelled_confirmation_answers_nothing(self):
         self.confirm = False
@@ -148,11 +153,26 @@ class CarouselTests(unittest.TestCase):
         self.choose("aipet: auto approve this session for 15 min…")
         self.assertEqual(self.sent, [])
 
+    def test_blacklist_timer_allows_current_prompt_once(self):
+        self.grants["s1"] = {"until": 9e9, "respect_blacklist": True}
+        self.permission()
+        self.choose("aipet: auto approving · pause on blacklist")
+        self.assertEqual(self.sent, [("allow", {"answers": None, "auto_approved": True})])
+        self.window.win.after.assert_called()
+
+    def test_pause_confirmation_dismisses_overlay_without_answering_blocked_prompt(self):
+        self.confirmed_grant = {'until': 9e9, 'respect_blacklist': True}
+        self.permission()
+        self.prompt.open = MagicMock()
+        self.choose('aipet: auto approve this session for 15 min…')
+        self.prompt.open.assert_called_once_with(False)
+        self.assertEqual(self.sent, [])
+
     def test_while_auto_approving_it_just_allows(self):
         self.grants["s1"] = {"until": 9e9}
         self.permission()
         self.choose("aipet: auto approving this session · allow")
-        self.assertEqual(self.sent, [("allow", {"answers": None})])
+        self.assertEqual(self.sent, [("allow", {"answers": None, "auto_approved": True})])
 
     def test_no_session_no_timed_choice(self):
         self.permission(session_id=None)

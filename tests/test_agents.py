@@ -4,6 +4,7 @@ import tempfile
 import time
 import unittest
 from contextlib import ExitStack
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import aipetlib.agents.claude as agent_claude
@@ -332,6 +333,27 @@ class CodexNetworkTests(unittest.TestCase):
 
 
 class WindowLogicTests(unittest.TestCase):
+    def test_tidy_nodes_have_room_for_separate_context_and_token_counters(self):
+        from aipetlib.ui.agent_graph import GraphView
+        view = SimpleNamespace(s=1.5, opts={'tidy': False}, pet=SimpleNamespace(cfg={}),
+                               _columns=lambda net: ([[1, 2]], False))
+        graph = GraphView(view)
+        graph.line_height = lambda: 18
+        net = {'agents': [{'id': ''}, {'id': 'a'}, {'id': 'b'}]}
+        original, _ = graph.layout(net, 1000, 300)
+        original_height = graph.block_height(net, 300)
+        agent = {'ctx': 930000, 'tokens': {'total': 201000000}}
+        view.opts['tidy'] = True
+        taller, _ = graph.layout(net, 1000, 300)
+        self.assertTrue(all(new[3] == old[3] + 18 for old, new in zip(original, taller)))
+        self.assertGreater(graph.block_height(net, 300), original_height)
+        rows = graph.node_rows(agent, 'opus-5.5 · medium')
+        self.assertEqual(len(rows), 3)
+        self.assertTrue(rows[1].startswith('ctx 930k/'))
+        self.assertTrue(rows[2].startswith('Σ 201M'))
+        self.assertEqual(graph.node_rows({'tool': True}, '38 calls · 38 this task · main'),
+                         ['38 calls', '38 this task', 'main'])
+
     def test_node_clicks_restore_full_logs_but_tools_keep_their_scope(self):
         import aipetlib.ui.agent_window as win
         view = object.__new__(win.AgentNetworkWindow)

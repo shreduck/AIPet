@@ -54,7 +54,7 @@ class LegacyFlow:
         win = tk.Toplevel(app.root)
         win.title(f"{APP_NAME}: update old hooks")
         win.attributes("-topmost", True)
-        win.resizable(False, False)
+        win.resizable(True, True)
         tk.Label(win, text="Some hooks still use the old Claude Pet name", font=(theme.UI_FONT, 12, "bold")
                  ).pack(anchor="w", padx=16, pady=(14, 2))
         tk.Label(win, fg="#6b7280", justify="left", wraplength=480,

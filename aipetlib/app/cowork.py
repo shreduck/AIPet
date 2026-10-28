@@ -47,7 +47,7 @@ class CoworkFlow:
         win = self.win = tk.Toplevel(app.root)
         win.title(f"{APP_NAME} - Cowork and CLI plugin")
         win.attributes("-topmost", True)
-        win.resizable(False, False)
+        win.resizable(True, True)
         grey, wrap = "#6b7280", 470
 
         def close():

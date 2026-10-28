@@ -68,7 +68,7 @@ class SetupFlow:
         win = self.win = tk.Toplevel(app.root)
         win.title(f"{APP_NAME} setup")
         win.attributes("-topmost", True)
-        win.resizable(False, False)
+        win.resizable(True, True)
         grey = "#6b7280"
 
         tk.Label(win, text="Where should AIPet watch your AI agents?", font=(theme.UI_FONT, 12, "bold")

@@ -90,6 +90,7 @@ from pathlib import Path
 runtime_sources = [(str(path), str(path.parent)) for path in sorted(Path("aipet_hook_runtime").rglob("*.py"))
                    if "__pycache__" not in path.parts]
 datas = ([(HOOK, "hook")] if IS_MAC else []) + runtime_sources + [("aipet_hook.py", "."), ("aipet_usage.py", "."), ("aipet_claude_usage.py", "."),
+         ("aipet_addin.py", "."), ("aipet_token_guard.py", "."),
          (os.path.join("assets", "sprites"), os.path.join("assets", "sprites"))]
 hiddenimports = HASH_IMPORTS + ([] if IS_MAC else ["pystray._win32"] + collect_submodules("pyvda"))
 

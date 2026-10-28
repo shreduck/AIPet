@@ -42,6 +42,113 @@ def spec():
 
 
 class SettingsSpecTests(unittest.TestCase):
+    def test_addin_disclosure_keeps_editor_and_drafts_when_collapsed(self):
+        window = self.menu_window()
+        window._expanded_addins = set()
+        card, row, controls = MagicMock(), MagicMock(), MagicMock()
+        editor = dict(id='journal', properties=[dict(key='directory', value='/logs')], save=MagicMock())
+        with patch.object(settings.tk, 'Button') as button, patch.object(settings.addin_settings, 'build') as build:
+            window._inline_addin(card, row, controls, editor)
+            build.assert_not_called()
+            toggle = next(call.kwargs['command'] for call in button.return_value.configure.call_args_list
+                          if 'command' in call.kwargs)
+            toggle()
+            build.assert_called_once_with(card, editor['properties'], editor['save'], font=window.font)
+            build.return_value.pack.assert_called_with(after=row, fill='x', padx=14, pady=(0, 10))
+            toggle()
+            build.return_value.pack_forget.assert_called_once()
+            toggle()
+            build.assert_called_once()
+            self.assertIn('journal', window._expanded_addins)
+
+    def test_inline_addin_settings_affect_visible_signature_but_callbacks_do_not(self):
+        a = dict(label='Journal', checked=False, addin_editor=dict(id='journal',
+            properties=[dict(key='directory', value='/logs')], save=MagicMock()))
+        b = dict(a, addin_editor=dict(a['addin_editor'], save=MagicMock()))
+        self.assertEqual(settings.signature([a]), settings.signature([b]))
+        b['addin_editor']['properties'] = [dict(key='directory', value='/new')]
+        self.assertNotEqual(settings.signature([a]), settings.signature([b]))
+
+    def menu_window(self):
+        window = object.__new__(settings.SettingsWindow)
+        window.spec = spec() + [dict(label='Live Management', icon='clock', submenu=[
+            dict(label='Session · working', help='Latest message', action=MagicMock())])]
+        window.page, window.zoom, window.bg = 'General', 1.0, '#ffffff'
+        window.query = MagicMock()
+        window.query.get.return_value = ''
+        window._sig, window._nav_sig, window._content_sig = None, None, None
+        window.zoom_fn = lambda: 1.0
+        window.spec_fn = lambda: window.spec
+        for name in ('canvas', 'nav', 'header', 'body', 'strip', '_nav_item', '_page_header',
+                     '_entries', '_tag_wheel', '_sync_scrollregion', '_on_resize', '_render_search'):
+            setattr(window, name, MagicMock())
+        window.alive = lambda: True
+        def reset_frame():
+            window._nav_sig, window._content_sig = None, None
+        window._build_frame = MagicMock(side_effect=reset_frame)
+        patcher = patch.object(settings.tk, 'Frame')
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return window
+
+    def test_hidden_session_updates_leave_current_page_and_sidebar_intact(self):
+        window = self.menu_window()
+        window.refresh()
+        nav_count = window._nav_item.call_count
+        window._entries.reset_mock()
+        window.body.winfo_children.reset_mock()
+        for state in ('needs input', 'idle', 'working'):
+            window.spec[-1]['submenu'][0]['label'] = 'Session · ' + state
+            window.refresh()
+        window._entries.assert_not_called()
+        window.body.winfo_children.assert_not_called()
+        self.assertEqual(window._nav_item.call_count, nav_count)
+        window.page = 'Live Management'
+        window._render(keep_scroll=False)
+        window._entries.assert_called_once()
+        self.assertEqual(window._entries.call_args.args[1][0]['label'], 'Session · working')
+
+    def test_visible_updates_refresh_content_without_rebuilding_sidebar(self):
+        window = self.menu_window()
+        window.page = 'Live Management'
+        window.refresh()
+        nav_count = window._nav_item.call_count
+        window._entries.reset_mock()
+        window.spec[-1]['submenu'][0]['label'] = 'Session · needs input'
+        window.refresh()
+        window._entries.assert_called_once()
+        self.assertEqual(window._nav_item.call_count, nav_count)
+        window.refresh()
+        window._entries.assert_called_once()
+
+    def test_search_only_redraws_for_changes_to_matching_results(self):
+        window = self.menu_window()
+        window.query.get.return_value = 'Dark theme'
+        window.refresh()
+        window._render_search.reset_mock()
+        window.spec[-1]['submenu'][0]['label'] = 'Session · idle'
+        window.refresh()
+        window._render_search.assert_not_called()
+        window.spec[4]['submenu'][1]['checked'] = True
+        window.refresh()
+        window._render_search.assert_called_once()
+
+    def test_help_theme_and_zoom_changes_still_update_the_page(self):
+        window = self.menu_window()
+        window.refresh()
+        window._entries.reset_mock()
+        window.spec[2]['help'] = 'Updated explanation'
+        window.refresh()
+        window._entries.assert_called_once()
+        window._entries.reset_mock()
+        with patch.dict(theme.T, name='changed-theme'):
+            window.refresh()
+        window._entries.assert_called_once()
+        window._entries.reset_mock()
+        window.zoom_fn = lambda: 1.2
+        window.refresh()
+        window._entries.assert_called_once()
+
     def test_tooltip_text_scale_is_independent_and_saved(self):
         pet = object.__new__(aipet.PetApp)
         pet.appearance = appearance_controls.Appearance(pet)

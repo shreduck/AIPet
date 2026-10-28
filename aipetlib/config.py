@@ -11,6 +11,7 @@ DEFAULT_CONFIG = {
     "sound_on_done": True,
     "sound_style": "chimes",  # AIPet's own sounds by default; "system" uses the host OS sounds
     "notifications": False,  # Windows toast notifications; off by default (toggle in the tray menu)
+    "addins": {"hook-journal": False, "token-guard": False},  # built-in and user add-in IDs -> enabled; all opt-in
     "theme": "light",  # "light" (default) or "dark"; toggle in the tray / right-click menu
     "answer_wait_seconds": 180,
     "timed_approve_minutes": 10,  # length of "Auto approve for N min" (Live Management / prompt card): 1 - 120  # how long a permission prompt can be answered from the pet: 0 (no limit) - 1800

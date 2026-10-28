@@ -74,7 +74,7 @@ class ApprovalEditorGuiTests(unittest.TestCase):
         save = self.button(self.win, 'Save')
         self.click(save)
         first_warning = self.warning()
-        self.assertIs(self.root.grab_current(), first_warning)
+        self.assertIsNone(self.root.grab_current())  # independent alerts/editors must remain interactive
         self.click(self.button(first_warning, 'Cancel'))
         self.assertIsNone(self.root.grab_current())
         self.assertEqual(save.cget('state'), 'normal')

@@ -64,6 +64,14 @@ def _mac_menu_spec(app, settings=False):
             entry["slider"] = slider  # the settings window shows a slider; the menus show the choice list
         return entry
 
+    def addin(key, spec):
+        entry = item(spec['name'], lambda: app.toggle_addin(key),
+                     checked=addin_enabled.get(key) is True, help=spec['description'])
+        if settings and spec.get('settings'):
+            entry['addin_editor'] = dict(id=key, properties=app.addins.get_settings(key),
+                save=lambda values, completed: app.save_addin_settings(key, values, completed))
+        return entry
+
     def target(name, key):
         st = app.status.get(key, "checking…")
         backups = hook_backups.list_backups(key)[:15]
@@ -94,6 +102,7 @@ def _mac_menu_spec(app, settings=False):
                     help="Finds hooks left behind by Claude Pet, this app's old name, and offers to remove them.")]
     codex = [target(lab, key) for lab, key in app.codex_targets] or [item("Codex not found", enabled=False)]
     cfg = app.pet.cfg
+    addin_enabled = cfg.get('addins') if isinstance(cfg.get('addins'), dict) else {}
     auto = []
     for title, entries in app.approvals.sections():
         auto.append(item(title, submenu=[
@@ -112,12 +121,25 @@ def _mac_menu_spec(app, settings=False):
         item("Open config and data folder", app.open_config, icon="home",
              help=f"{paths.HOME_DIR}: settings (config.json, auto-approve.json), sessions, logs and backups."),
         *([item("Copy settings guide for AI", app.copy_ai_guide,
-                help="Copies a Markdown guide to AIPet's settings files (where they are, every option and its "
-                     "values) to the clipboard. Paste it into Claude, Codex or another assistant and ask it to "
-                     "change AIPet's settings for you.")] if settings else []),
+                help="Copies a Markdown guide to AIPet's settings, current values, and the add-in interface "
+                     "(including get/set settings) to the clipboard. Paste it into Claude, Codex or another "
+                     "assistant to change settings or build an add-in.")] if settings else []),
         None,
         item("Live Management", icon="clock", submenu=app._live_spec(item, settings),
              help="Your running sessions right now: give one a timed auto approve, and see its subagents."),
+        *([item("Add-ins", icon="link", help="Optional built-in features and user scripts that receive hook events. "
+                "User scripts run with your account permissions. All add-ins start off.", submenu=[
+            item("Built-in add-ins", submenu=[
+                addin(key, spec)
+                for key, spec in app.addins.entries() if spec['builtin']]),
+            item("User add-ins", submenu=[
+                addin(key, spec)
+                for key, spec in app.addins.entries() if not spec['builtin']]
+                 or [item("No user add-ins installed", enabled=False)]),
+            None, item("Open add-ins folder", app.open_addins),
+            item("Reload add-ins", app.reload_addins,
+                 help="Find new manifests and apply changed commands. Already enabled scripts may run immediately.")
+        ])] if getattr(app, 'addins', None) is not None else []),
         item("Appearance", icon="palette", help="How the pet and its windows look.", submenu=[
             item("Pet style", choice=True, help="Which creature sits on your screen.",
                  submenu=[item(label, lambda k=key: app.set_style(k), checked=preferences.STYLE["v"] == key)
@@ -302,7 +324,9 @@ def _live_spec(app, item, settings=False):
             name += f" · {d['conv']}"
         state = pet_style.LABELS.get(d.get("state"), d.get("state") or "")
         agents = d.get("agent_types") or []
-        entries = ([item(f"Auto approving · {left(grant)}", enabled=False),
+        mode = (" · reject blacklist" if grant and grant.get("reject_blacklist") else
+                " · pause on blacklist" if grant and grant.get("respect_blacklist") else "")
+        entries = ([item(f"Auto approving{mode} · {left(grant)}", enabled=False),
                     item("Stop auto approving", lambda sid=d["session_id"]: app._stop_timed(sid))]
                    if grant else
                    [item(f"Auto approve for {default} min…", lambda d=d: app._start_timed(d),

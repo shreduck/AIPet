@@ -9,6 +9,7 @@ from ..runtime import diagnostics
 from ..integrations import targets
 from ..ui import sprites
 from ..ui import theme
+from ..ui.approval_rules import RuleLists
 
 IS_MAC = sys.platform == "darwin"
 
@@ -70,22 +71,23 @@ class Approvals:
         agent_label = "Codex" if targets.is_codex(key) else "Claude Code"
         win.title(f"AIPet - auto approve - {agent_label} - {label}")
         win.attributes("-topmost", True)
-        win.resizable(False, False)
+        win.resizable(True, True)
+        win.minsize(520, 420)
         accent = "#5b8def" if targets.is_codex(key) else "#d98960"
         frame = tk.Canvas(win, highlightthickness=0, bd=0)
-        frame.pack()
+        frame.pack(fill='both', expand=True)
         body = tk.Frame(frame)
-        frame.create_window(14, 14, window=body, anchor="nw")
+        body_id = frame.create_window(14, 14, window=body, anchor="nw")
 
-        def fit_card(_event=None):
-            w, h = body.winfo_reqwidth() + 28, body.winfo_reqheight() + 28
-            frame.configure(width=w, height=h)
+        def fit_card(event):
+            w, h = event.width, event.height
+            frame.itemconfigure(body_id, width=max(1, w-28), height=max(1, h-28))
             frame.delete("outline")
             frame.create_polygon(8, 2, w - 8, 2, w - 8, 5, w - 3, 5, w - 3, 8, w - 2, 8,
                                  w - 2, h - 8, w - 5, h - 8, w - 5, h - 3, w - 8, h - 3, w - 8, h - 2,
                                  8, h - 2, 8, h - 5, 3, h - 5, 3, h - 8, 2, h - 8, 2, 8, 5, 8, 5, 3, 8, 3,
                                  fill="", outline=accent, width=2, tags="outline")
-        body.bind("<Configure>", fit_card)
+        frame.bind("<Configure>", fit_card)
         grey = "#6b7280"
         enabled = tk.BooleanVar(value=bool(old.get("enabled")))
         allow_all = tk.BooleanVar(value=bool(old.get("allow_all")))
@@ -105,33 +107,14 @@ class Approvals:
         mode_hint = tk.Label(mode, fg=grey, justify="left", wraplength=620, font=(sprites.MONO_FAMILY, 8))
         mode_hint.pack(anchor="w", padx=4, pady=(6, 0))
 
-        cols = tk.Frame(body)
-        cols.pack(fill="x", pady=(16, 0))
-        boxes = {}
-        for col, (name, title, hint, lines) in enumerate((
-                ("whitelist", "Whitelist - approve automatically",
-                 "One regex per line. Must match the WHOLE command (or file path / URL), the tool name, or "
-                 "Tool(command). Examples: git (status|diff)   npm test   Read", old.get("whitelist") or []),
-                ("blacklist", "Blacklist - always ask me",
-                 "One regex per line, matched ANYWHERE in the same texts. Wins over the whitelist. The default .* "
-                 "asks for everything: replace it to let the whitelist work. Tip: [;&|`$<>] asks for chained or "
-                 "redirected commands, so a whitelisted one can't smuggle in another.", old.get("blacklist")
-                 if old.get("blacklist") is not None else permissions.DEFAULT_BLACKLIST))):
-            box = tk.Frame(cols)
-            box.grid(row=0, column=col, sticky="nw", padx=(0 if col == 0 else 12, 0))
-            tk.Label(box, text=title, font=(sprites.MONO_FAMILY, 9, "bold")).pack(anchor="w", pady=(0, 5))
-            tk.Label(box, text=hint, fg=grey, justify="left", anchor="nw", height=6,
-                     wraplength=300, font=(sprites.MONO_FAMILY, 8)).pack(anchor="w")
-            text = tk.Text(box, width=40, height=9, wrap="none", font=(sprites.MONO_FAMILY, 9), undo=True, padx=8, pady=8)
-            text.insert("1.0", "\n".join(lines))
-            text.pack(anchor="w", fill="x", pady=(4, 0))
-            boxes[name] = text
+        list_editor = RuleLists(body, old)
         tk.Label(body, fg=grey, justify="left", wraplength=640, font=(sprites.MONO_FAMILY, 8),
                  text="Empty lines and lines starting with # are ignored. Only works while AIPet is running and its "
                       "hooks are installed for this config; the VS Code extension sends no permission events."
                  ).pack(anchor="w", pady=(10, 0))
         error = tk.Label(body, fg="#b91c1c", justify="left", wraplength=640, font=(sprites.MONO_FAMILY, 9))
         error.pack(anchor="w", padx=16)
+        list_editor.on_change = lambda: error.configure(text='')
         destination = {"directory": None}
         storage_row = tk.Frame(body)
         storage_row.pack(fill="x", pady=(8, 0))
@@ -167,12 +150,10 @@ class Approvals:
         show_location()
 
         def sync(*_):  # Allow all switches the lists off
-            state = "disabled" if allow_all.get() else "normal"
-            for t in boxes.values():
-                t.configure(state=state, fg=theme.T["muted"] if allow_all.get() else theme.T["entry_fg"])
+            list_editor.set_disabled(allow_all.get())
             mode_hint.configure(text="Auto approval is off. Requests still need your approval." if not enabled.get()
                                 else "All requests will be approved. The lists below are ignored." if allow_all.get()
-                                else "Whitelist matches may proceed. Blacklist matches always ask you.")
+                                else "Whitelist matches may proceed; the precedence switch resolves overlapping matches.")
         allow_all.trace_add("write", sync)
         enabled.trace_add("write", sync)
 
@@ -221,13 +202,11 @@ class Approvals:
             if pending["value"]:
                 return
             error.configure(text="")
-            lists = {}
-            for name, t in boxes.items():
-                lists[name] = [ln.rstrip() for ln in t.get("1.0", "end-1c").splitlines() if ln.strip()]
-            bad = [(name, n, pat, err) for name in lists for n, pat, err in permissions.bad_patterns(lists[name])]
-            if bad:
-                error.configure(text="Fix these patterns first:\n" + "\n".join(
-                    f"{name} line {n}: {pat}  ({err})" for name, n, pat, err in bad[:6]))
+            try:
+                lists = list_editor.read()
+            except ValueError as exc:
+                error.configure(text=str(exc))
+                win.after_idle(list_editor.focus_error)
                 return
             rules = {"enabled": enabled.get(), "allow_all": allow_all.get(), **lists}
             newly_on = rules["enabled"] and not old.get("enabled")
@@ -250,6 +229,7 @@ class Approvals:
         win.bind("<Escape>", lambda e: close())
         theme.theme_window(win)
         sync()
+        frame.configure(width=body.winfo_reqwidth()+28, height=body.winfo_reqheight()+28)
         win.update_idletasks()
         win.geometry(f"+{max(0, (win.winfo_screenwidth() - win.winfo_reqwidth()) // 2)}"
                      f"+{max(0, (win.winfo_screenheight() - win.winfo_reqheight()) // 3)}")
@@ -268,8 +248,10 @@ class Approvals:
         else:
             n = len([x for x in rules.get("whitelist") or [] if not x.strip().startswith("#")])
             heading = f"Turn on auto approve for {label}?"
-            what = (f"Requests from {label} that match your {n} whitelist pattern{'s' if n != 1 else ''} and none of "
-                    "your blacklist patterns will be approved without asking you, in every session there, including "
+            priority = ('Whitelist matches override blacklist matches.' if rules.get('precedence') == 'whitelist' else
+                        'Blacklist matches override whitelist matches.')
+            what = (f"Requests from {label} that match your {n} whitelist pattern{'s' if n != 1 else ''} will be "
+                    f"approved according to your list precedence. {priority} This applies in every session there, including "
                     "subagents. A loose pattern can approve more than you meant: check them carefully.")
         return theme.themed_dialog(
             parent if parent is not None else app.root, "AIPet - auto approve", kind="warning", heading=heading,

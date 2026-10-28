@@ -33,7 +33,7 @@ class Pointer:
                 if not c.winfo_ismapped():
                     continue
                 ox, oy = c.winfo_rootx(), c.winfo_rooty()
-                boxes = [c.bbox(t) for t in ("hit", "ans", "badge", "usage") if c.find_withtag(t)] or [c.bbox("all")]  # mole/cat: all
+                boxes = [c.bbox(t) for t in ("hit", "ans", "badge", "usage", "addin") if c.find_withtag(t)] or [c.bbox("all")]  # mole/cat: all
             except tk.TclError:
                 continue
             for bb in boxes:
@@ -77,13 +77,18 @@ class Pointer:
         if IS_MAC and (e.state & 0x4):  # Control-click is a context menu, never a session click.
             self.drag = None
             pet._on_bubble, pet._on_badge = False, None
+            pet._on_addin = False
             return "break"
         on_bubble, pet._on_bubble = pet._on_bubble, False
         on_badge, pet._on_badge = pet._on_badge, None
+        on_addin, pet._on_addin = getattr(pet, '_on_addin', False), False
         if self.drag and self.drag[4]:
             app.root.update_idletasks()
             app.placement.anchor = [app.root.winfo_x() + app.root.winfo_width(),
                                     app.root.winfo_y() + app.root.winfo_height()]
+        elif on_addin:
+            app.tooltips.hide_tip()
+            app.open_addin_messages(pet.addin_rows(), parent=app.root)
         elif on_badge in ("__expand", "__collapse"):  # compact mode: show every session's badge, or the merged one
             app.badges_expanded = on_badge == "__expand"
         elif on_badge and on_badge != "_none":  # a badge: that session's prompt window, or its window if it isn't waiting

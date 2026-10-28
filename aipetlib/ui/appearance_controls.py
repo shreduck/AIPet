@@ -68,7 +68,8 @@ class Appearance:
         w = self.size_win = tk.Toplevel(app.root)
         w.title("Pet size")
         w.attributes("-topmost", True)
-        w.resizable(False, False)
+        w.resizable(True, True)
+        w.columnconfigure(0, weight=1)
         var = tk.DoubleVar(value=preferences.SCALE["v"] / preferences.SCALE_UNIT)
         pct = tk.Label(w, width=6, font=(theme.UI_FONT, 12, "bold"))
 
@@ -94,7 +95,7 @@ class Appearance:
 
         tk.Label(w, text="Pet size", font=(theme.UI_FONT, 10, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
         scale = ttk.Scale(w, from_=0.3, to=3.0, orient="horizontal", length=260, variable=var, command=apply)
-        scale.grid(row=1, column=0, padx=(14, 6), pady=8)
+        scale.grid(row=1, column=0, sticky="ew", padx=(14, 6), pady=8)
         scale.bind("<ButtonRelease-1>", commit)
         pct.grid(row=1, column=1, padx=(0, 14))
         row = tk.Frame(w)
@@ -121,7 +122,8 @@ class Appearance:
         w = self.tooltip_text_win = tk.Toplevel(app.root)
         w.title("Tooltip text size")
         w.attributes("-topmost", True)
-        w.resizable(False, False)
+        w.resizable(True, True)
+        w.columnconfigure(0, weight=1)
         var = tk.DoubleVar(w, value=app.tooltips.tooltip_text_scale())
         pct = tk.Label(w, width=6, font=(theme.UI_FONT, 12, "bold"))
 
@@ -145,7 +147,7 @@ class Appearance:
             row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
         slider = ttk.Scale(w, from_=0.5, to=2.5, orient="horizontal", length=260,
                            variable=var, command=preview)
-        slider.grid(row=1, column=0, padx=(14, 6), pady=8)
+        slider.grid(row=1, column=0, sticky="ew", padx=(14, 6), pady=8)
         slider.bind("<ButtonRelease-1>", commit)
         slider.bind("<KeyRelease>", commit)
         pct.grid(row=1, column=1, padx=(0, 14))
@@ -172,7 +174,8 @@ class Appearance:
         w = self.answer_win = tk.Toplevel(app.root)
         w.title("Answer timeout")
         w.attributes("-topmost", True)
-        w.resizable(False, False)
+        w.resizable(True, True)
+        w.columnconfigure(0, weight=1)
         var = tk.DoubleVar(value=preferences.ANSWER_WAIT["v"])
         val = tk.Label(w, width=10, font=(theme.UI_FONT, 12, "bold"))
 
@@ -196,7 +199,7 @@ class Appearance:
         tk.Label(w, text="Answer permission prompts from the pet for up to:", font=(theme.UI_FONT, 10, "bold")
                  ).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
         scale = ttk.Scale(w, from_=0, to=preferences.MAX_WAIT, orient="horizontal", length=260, variable=var, command=apply)
-        scale.grid(row=1, column=0, padx=(14, 6), pady=8)
+        scale.grid(row=1, column=0, sticky="ew", padx=(14, 6), pady=8)
         scale.bind("<ButtonRelease-1>", commit)
         val.grid(row=1, column=1, padx=(0, 14))
         tk.Label(w, justify="left", wraplength=360, fg="#6b7280", font=(theme.UI_FONT, 8),
@@ -228,7 +231,8 @@ class Appearance:
         w = self.done_win = tk.Toplevel(app.root)
         w.title("Clear finished sessions")
         w.attributes("-topmost", True)
-        w.resizable(False, False)
+        w.resizable(True, True)
+        w.columnconfigure(0, weight=1)
         var = tk.DoubleVar(value=preferences.DONE_TIMEOUT["v"])
         val = tk.Label(w, width=10, font=(theme.UI_FONT, 12, "bold"))
 
@@ -252,7 +256,7 @@ class Appearance:
         tk.Label(w, text="Clear a finished session's pet after:", font=(theme.UI_FONT, 10, "bold")
                  ).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
         scale = ttk.Scale(w, from_=0, to=preferences.MAX_WAIT // 60, orient="horizontal", length=260, variable=var, command=apply)
-        scale.grid(row=1, column=0, padx=(14, 6), pady=8)
+        scale.grid(row=1, column=0, sticky="ew", padx=(14, 6), pady=8)
         scale.bind("<ButtonRelease-1>", commit)
         val.grid(row=1, column=1, padx=(0, 14))
         tk.Label(w, justify="left", wraplength=360, fg="#6b7280", font=(theme.UI_FONT, 8),
@@ -286,7 +290,8 @@ class Appearance:
         w = self.health_win = tk.Toplevel(app.root)
         w.title("Health check")
         w.attributes("-topmost", True)
-        w.resizable(False, False)
+        w.resizable(True, True)
+        w.columnconfigure(0, weight=1)
         var = tk.DoubleVar(value=preferences.HEALTH["v"])
         val = tk.Label(w, width=10, font=(theme.UI_FONT, 12, "bold"))
 
@@ -310,7 +315,7 @@ class Appearance:
         tk.Label(w, text="Check that working sessions are still running every:", font=(theme.UI_FONT, 10, "bold")
                  ).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 0))
         scale = ttk.Scale(w, from_=0, to=preferences.MAX_HEALTH, orient="horizontal", length=260, variable=var, command=apply)
-        scale.grid(row=1, column=0, padx=(14, 6), pady=8)
+        scale.grid(row=1, column=0, sticky="ew", padx=(14, 6), pady=8)
         scale.bind("<ButtonRelease-1>", commit)
         val.grid(row=1, column=1, padx=(0, 14))
         tk.Label(w, justify="left", wraplength=360, fg="#6b7280", font=(theme.UI_FONT, 8),
