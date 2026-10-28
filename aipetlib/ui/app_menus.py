@@ -137,6 +137,15 @@ def _mac_menu_spec(app, settings=False):
                 for key, spec in app.addins.entries() if not spec['builtin']]
                  or [item("No user add-ins installed", enabled=False)]),
             None, item("Open add-ins folder", app.open_addins),
+            item("Alert window always on top",
+                 lambda: app.set_addin_alert_option('addin_alert_topmost', not cfg.get('addin_alert_topmost', True)),
+                 checked=bool(cfg.get('addin_alert_topmost', True))),
+            item("Do not steal focus for alerts",
+                 lambda: app.set_addin_alert_option('addin_alert_no_focus', not cfg.get('addin_alert_no_focus', True)),
+                 checked=bool(cfg.get('addin_alert_no_focus', True)),
+                 help="Automatic alerts leave typing in your current app. Click an alert window to use its shortcuts."),
+            item("Copy Markdown for AI", app.copy_addin_guide,
+                 help="Copy the custom add-in interface, limits, settings and AIPet theming guide for an AI assistant."),
             item("Reload add-ins", app.reload_addins,
                  help="Find new manifests and apply changed commands. Already enabled scripts may run immediately.")
         ])] if getattr(app, 'addins', None) is not None else []),

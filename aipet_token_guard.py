@@ -29,6 +29,8 @@ SENSITIVE_KEY = re.compile(r'^(?:api[_-]?key|(?:api|access|auth|refresh|id)[_-]?
 HASH = re.compile(r'(?<![A-Za-z0-9_])[a-fA-F0-9]{32,128}(?![A-Za-z0-9_])')
 BASE64 = re.compile(r'(?<![A-Za-z0-9_+/-])[A-Za-z0-9_+/-]{4,8192}={0,2}(?![A-Za-z0-9_+/=-])')
 PAIR = re.compile(r'''[^:\s"'{}\[\]<>]{1,128}:[^:\s"'{}\[\]<>]{1,256}''')
+BARE_PAIR = re.compile(r'(?<![\w:./\\@-])[A-Za-z0-9]{1,128}:[A-Za-z0-9]{1,128}(?![\w:./\\@-])')
+PAIR_CONTEXT = re.compile(r'\b(?:basic(?:\s+auth)?|credentials?|login)\s*(?:[:=]\s*)?$', re.I)
 # Inspect each bounded token once. An unanchored greedy prefix would retry at
 # every character of large non-encoded strings, holding the GIL and freezing Tk.
 _URL_CHARS = r'A-Za-z0-9_.~+/@:%=?&-'
@@ -38,6 +40,10 @@ COOKIE_HEADER = re.compile(r'\b(?:Cookie|Set-Cookie)\s*:\s*([^\r\n]+)', re.I)
 COOKIE = re.compile(r'''(?:^|[;\s])(?:session(?:id|_id|_token)?|connect\.sid|PHPSESSID|JSESSIONID|auth(?:_token)?|access_token|refresh_token|__Secure-[\w-]+)=([^;\s"']{8,})''', re.I)
 ENTROPY_ASSIGN = re.compile(r'''\b([A-Za-z_][\w.-]{0,100})\s*(?::=|=>|<-|[:=])\s*["']?([A-Za-z0-9_./+=~$-]{16,1024})''')
 RULES = {
+    'Possible credential pair': ('credential.possible_pair', 'Possible bare credential pair', 'low',
+        'Two alphanumeric values are separated by a colon without explicit credential context; this can also be ordinary text or code.'),
+    'Base64 possible pair': ('base64.possible_pair', 'Encoded possible credential pair', 'standard',
+        'Local decoding reveals a bare alphanumeric pair separated by a colon, without explicit credential context.'),
     'API token': ('token.known_prefix', 'Known API token prefix', 'standard', 'Matches a recognized provider token prefix and token-shaped suffix.'),
     'Bearer token': ('token.bearer', 'Bearer credential', 'standard', 'A Bearer label is followed by a token-shaped value.'),
     'JWT': ('token.jwt', 'JSON Web Token', 'standard', 'Matches the three encoded segments of a JWT.'),
@@ -108,7 +114,15 @@ def _credential_pair(value):
     return bool(user and password and not _placeholder(password))
 
 
-def _decode_candidate(encoded, url=False):
+def _bare_pair(value):
+    if not BARE_PAIR.fullmatch(value):
+        return False
+    user, password = value.split(':', 1)
+    # Numeric right sides commonly mean a time, line number or host/port.
+    return not password.isdigit() and user.lower() not in ('http', 'https', 'ftp', 'mailto', 'urn')
+
+
+def _decode_candidate(encoded, url=False, credential_context=False):
     current = encoded
     for depth in range(3):
         try:
@@ -120,9 +134,10 @@ def _decode_candidate(encoded, url=False):
             return None
         if decoded == current:
             return None
-        kind = _decoded_kind(decoded.strip())
+        kind = _decoded_kind(decoded.strip(), credential_context=credential_context or url)
         if kind:
-            return ('Layered encoded credentials' if depth else 'URL encoded credentials' if url else kind), decoded
+            return (kind if kind == 'Base64 possible pair' else
+                    'Layered encoded credentials' if depth else 'URL encoded credentials' if url else kind), decoded
         current = decoded
     return None
 
@@ -131,11 +146,18 @@ def _placeholder(value):
     return value.startswith(('${', '<', 'your_', 'YOUR_', '{{')) or bool(re.fullmatch(r'\$[A-Za-z_]\w*|%[A-Za-z_]\w*%', value))
 
 
-def _decoded_kind(text):
+def _decoded_kind(text, credential_context=False):
     """Recognize credential structures in decoded text, never report that text."""
     if not all(char.isprintable() or char in '\r\n\t' for char in text):
         return None
     if PAIR.fullmatch(text) and _credential_pair(text):
+        if not credential_context and (text.split(':', 1)[1].isdigit() or re.match(r'^[A-Za-z]:[\\/]', text)):
+            return None
+        if BARE_PAIR.fullmatch(text):
+            if not credential_context and not _bare_pair(text):
+                return None
+            if not credential_context:
+                return 'Base64 possible pair'
         return 'Base64 credentials'
     for kind, pattern in PATTERNS:
         for match in pattern.finditer(text):
@@ -217,6 +239,9 @@ def detect(data):
             for match in HASH.finditer(text):
                 if len(match.group()) in (32, 40, 64, 96, 128):
                     record('Hash-like value', match.group(), preserve=True, source=text, path=path, span=match.span())
+            for match in BARE_PAIR.finditer(text):
+                if _bare_pair(match.group()):
+                    record('Possible credential pair', match.group(), preserve=True, source=text, path=path, span=match.span())
             for kind, pattern in PATTERNS:
                 for match in pattern.finditer(text):
                     secret = match.group(1) if pattern.groups else match.group()
@@ -243,12 +268,13 @@ def detect(data):
                     break
                 decode_budget -= 1
                 encoded = match.group()
-                decoded_match = _decode_candidate(encoded, url=url)
+                explicit = bool(PAIR_CONTEXT.search(text[max(0, match.start()-80):match.start()]))
+                decoded_match = _decode_candidate(encoded, url=url, credential_context=explicit)
                 if decoded_match:
                     kind, decoded = decoded_match
                     record(kind, encoded, decoded, source=text, path=path, span=match.span())
     # A flood of low-confidence hashes must not hide a stronger encoded credential finding.
-    reports = sorted(found.values(), key=lambda item: (item['kind'] not in HIGH_KINDS, item['kind'], item['fingerprint']))[:10]
+    reports = sorted(found.values(), key=lambda item: (-SEVERITY[item['warning_level']], item['kind'], item['fingerprint']))[:10]
     for report in reports:
         spans = []
         for start, end in sorted(set(source_spans[report.pop('_path')])):
@@ -284,7 +310,7 @@ def on_event(event, context):
         report['markdown_template'] = report_markdown(report)
         level = report['warning_level']
         notify = api.error if level == 'high' else api.warning
-        title = {'low': 'Low warning: hash-like value', 'standard': 'Possible secret in hook data',
+        title = {'low': 'Low warning: possible secret', 'standard': 'Possible secret in hook data',
                  'high': 'High warning: potential credentials'}[level]
         content, _ = format_markdown_report(report, event.get('timestamp'), include_source=False)
         notify(title,

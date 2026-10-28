@@ -35,6 +35,7 @@ from aipetlib.addins import AddinManager
 from aipetlib import text as textfmt
 from aipetlib import update as releases
 from aipetlib.app.agent_windows import AgentWindows
+from aipetlib.app.addin_intro import AddinIntro
 from aipetlib.app.approvals import Approvals
 from aipetlib.app.config_watch import ConfigWatcher
 import aipetlib.app.diagnostics as app_diagnostics
@@ -207,6 +208,7 @@ class TrayApp:
         self.pet.addin_snapshot = []
         self.pet.open_addin_messages = self.open_addin_messages
         self._addin_catalog_seen = self.addins.entries()
+        self.addin_intro = AddinIntro(self)
 
         self.pet.on_alert = self.presentation.on_alert
         self.agent_tracker = NetworkTracker(lambda: list(self.pet._agent_items))
@@ -220,6 +222,7 @@ class TrayApp:
         self.config_watch = ConfigWatcher(self)  # config.json edited by hand: applied live
         self.config_watch.start()
         self.pump()
+        self.root.after(2000, self.addin_intro.maybe_show)
 
     # ---- threading
     def ui(self, fn):
@@ -269,6 +272,8 @@ class TrayApp:
         pet = self.pet
         return {
             "addins": self.configure_addins,
+            "addin_alert_topmost": lambda value: self.set_addin_alert_option('addin_alert_topmost', value),
+            "addin_alert_no_focus": lambda value: self.set_addin_alert_option('addin_alert_no_focus', value),
             "theme": lambda v: (pet.preferences.apply_theme(v), hasattr(self, "theme_var") and self.theme_var.set(v == "dark")),
             "size": lambda v: pet.appearance.set_size(float(v)),
             "tooltip_text_scale": pet.tooltips.set_tooltip_text_scale,
@@ -354,9 +359,7 @@ class TrayApp:
     def copy_ai_guide(self):
         """Settings > General: the settings guide for an AI assistant, on the clipboard (Tk's clipboard is the
         system one on Windows and macOS)."""
-        addins = [dict(id=key, name=spec['name'],
-                       enabled=self.pet.cfg.get('addins', {}).get(key) is True,
-                       settings=self.addins.get_settings(key)) for key, spec in self.addins.entries()]
+        addins = self._addin_guide_entries()
         text = aipet_guide.build_guide(self.pet.cfg, paths.HOME_DIR, self.version, addins=addins)
         try:
             self.root.clipboard_clear()
@@ -367,6 +370,25 @@ class TrayApp:
             return
         self.info("The AIPet settings guide is on your clipboard, including add-in settings and the script interface."
                   "\n\nPaste it into Claude, Codex or another assistant, then ask it to change settings or build an add-in.")
+
+    def _addin_guide_entries(self):
+        return [dict(id=key, name=spec['name'], enabled=self.pet.cfg.get('addins', {}).get(key) is True,
+                     settings=self.addins.get_settings(key)) for key, spec in self.addins.entries()]
+
+    def copy_addin_guide(self, notify=True):
+        text = aipet_guide.build_addin_guide(paths.HOME_DIR, self.version)
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self.root.update_idletasks()
+        except tk.TclError as error:
+            if notify:
+                self.info(f"Couldn't copy to the clipboard:\n{error}", error=True)
+            return False
+        if notify:
+            self.info('The add-in Markdown guide is on your clipboard. Paste it into your AI assistant '
+                      'and describe the add-in you want to build.')
+        return True
 
     def settings_zoom(self):
         return preferences.clamp_zoom(self.pet.cfg.get("settings_zoom", 1.0))
@@ -544,8 +566,44 @@ class TrayApp:
     def open_addin_messages(self, rows, parent=None):
         if not rows:
             return
-        addin_message_ui.show(parent if parent is not None else self.root, rows)
-        self.acknowledge_addin_messages(rows)
+        unread = [dict(row, messages=[m for m in row['messages'] if m['unread']])
+                  for row in self.pet.addin_snapshot]
+        self._show_addin_window([row for row in unread if row['messages']] or rows)
+
+    def _show_addin_window(self, rows, screen=None):
+        win = getattr(self, '_addin_alert_window', None)
+        try:
+            exists = win is not None and win.winfo_exists()
+        except tk.TclError:
+            exists = False
+        if exists:
+            win.append_addin_rows(rows)
+            win.lift()
+            win.focus_addin_report()
+        else:
+            win = self._addin_alert_window = addin_message_ui.show(self.root, rows,
+                on_close=self.acknowledge_addin_messages, screen=screen,
+                options={key: self.pet.cfg.get(key, True) for key in ('addin_alert_topmost', 'addin_alert_no_focus')},
+                on_options=self.set_addin_alert_option)
+        return win
+
+    def set_addin_alert_option(self, key, value):
+        if key not in ('addin_alert_topmost', 'addin_alert_no_focus'):
+            raise ValueError('Unknown add-in alert option')
+        value = bool(value)
+        if not runtime_settings.save_setting(key, value):
+            self.info('Could not save the add-in alert preference.', error=True)
+            return False
+        self.pet.cfg[key] = value
+        win = getattr(self, '_addin_alert_window', None)
+        if win is not None:
+            try:
+                if win.winfo_exists():
+                    win.set_addin_options({key: value})
+            except tk.TclError:
+                pass
+        self.refresh_menu()
+        return True
 
     def acknowledge_addin_messages(self, rows):
         ids = {m['id'] for row in rows for m in row['messages']}
@@ -581,32 +639,29 @@ class TrayApp:
         self.addins.set_pet_locations(default, sessions)
 
     def show_addin_alerts(self):
-        """Each new explicit SDK warning gets an independent window and acknowledgment."""
+        """New alerts join one carousel without interrupting the alert being reviewed."""
         # Native file choosers can still own input. Never cover one with an unclickable alert.
         if self.root.grab_current() is not None:
             return
-        current = {m['id'] for row in self.pet.addin_snapshot for m in row['messages']}
-        seen = getattr(self, '_addin_alert_seen', set())
-        windows = getattr(self, '_addin_alert_windows', {})
-        self._addin_alert_windows = windows
-        for row in self.pet.addin_snapshot:
-            for message in row['messages']:
-                target = message.get('window')
-                if target not in ('main', 'pet') or not message['unread'] or message['id'] in seen:
-                    continue
-                position = self.addins.pet_location(row) if target == 'pet' else None
-                screen = position.get('screen') if position else None
-                screen = screen or geometry.screen_info(0, 0, self.root)
-                rows = [dict(row, messages=[message])]
-                windows[message['id']] = addin_message_ui.show(self.root, rows,
-                    on_close=self.acknowledge_addin_messages, screen=screen)
-        self._addin_alert_seen = current
-        for key, win in list(windows.items()):
-            try:
-                if not win.winfo_exists():
-                    del windows[key]
-            except tk.TclError:
-                del windows[key]
+        rows = [dict(row, messages=[m for m in row['messages'] if m['unread']])
+                for row in self.pet.addin_snapshot]
+        rows = [row for row in rows if row['messages']]
+        if not rows:
+            return
+        win = getattr(self, '_addin_alert_window', None)
+        try:
+            if win is not None and win.winfo_exists():
+                win.append_addin_rows(rows)
+                return
+        except tk.TclError:
+            pass
+        first = next(((row, message) for row in rows for message in row['messages']
+                      if message.get('window') in ('main', 'pet')), None)
+        if first:
+            row, message = first
+            position = self.addins.pet_location(row) if message['window'] == 'pet' else None
+            screen = position.get('screen') if position else None
+            self._show_addin_window(rows, screen=screen or geometry.screen_info(0, 0, self.root))
 
     def toggle_addin(self, key):
         old = self.pet.cfg.get("addins")

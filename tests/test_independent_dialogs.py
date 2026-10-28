@@ -32,7 +32,7 @@ class IndependentDialogTests(unittest.TestCase):
         approval = self.open(approval_result)
         rows = [dict(name='Token guard', level='warning', messages=[
             dict(title='Token warning', level='warning', timestamp=1234, content='Masked summary')])]
-        with patch.object(addin_messages, 'ScrolledText') as text, patch.object(addin_messages, 'WarningBeacon'), \
+        with patch.object(addin_messages, 'ScrolledText') as text, patch.object(addin_messages, 'WarningBeacon'), patch.object(addin_messages, 'ToggleSwitch'), \
                 patch.object(addin_messages.theme, 'theme_window'), patch.object(addin_messages.tk, 'Checkbutton'), \
                 patch.object(addin_messages.tk, 'BooleanVar') as preview:
             preview.return_value.get.return_value = False
@@ -41,7 +41,7 @@ class IndependentDialogTests(unittest.TestCase):
                                        screen=dict(work_area=[0, 0, 1920, 1080]))
             alert.grab_set.assert_not_called()
             approval.grab_set.assert_not_called()
-            next(button['command'] for button in self.buttons if button['text'] == 'Close')()
+            next(button['command'] for button in self.buttons if button['text'] == 'Dismiss')()
             alert_closed.assert_called_once_with(rows)
             approval_result.assert_not_called()
             approval.destroy.assert_not_called()

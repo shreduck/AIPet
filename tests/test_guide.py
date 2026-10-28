@@ -4,6 +4,26 @@ import aipet_guide
 
 
 class GuideTests(unittest.TestCase):
+    def test_compact_addin_example_can_emit_a_warning_without_opening_ui(self):
+        import json
+        from pathlib import Path
+        import re
+        import subprocess
+        import sys
+        import tempfile
+        guide = aipet_guide.build_addin_guide('/test-home')
+        source = re.search(r'```python\n(.*?)```', guide, re.S).group(1)
+        self.assertLess(len(guide.splitlines()), 85)
+        with tempfile.TemporaryDirectory() as folder:
+            context = dict(addin_id='my-addin', run_id='fixture', agent='codex', session_id='fixture',
+                outbox=folder, sdk_dir=str(Path(__file__).resolve().parents[1]), settings={}, settings_properties=[])
+            event = dict(id='test-event', data=dict(prompt='aipet demo warning'))
+            result = subprocess.run([sys.executable, '-c', source], input=json.dumps(dict(event=event, context=context)),
+                text=True, capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            message, = [json.loads(path.read_text(encoding='utf-8')) for path in Path(folder).glob('*.json')]
+            self.assertEqual((message['kind'], message['level'], message['window']), ('message', 'warning', 'pet'))
+
     def test_every_setting_is_explained(self):
         missing = [k for k in config.DEFAULT_CONFIG if k not in aipet_guide.CONFIG_KEYS]
         self.assertEqual(missing, [])

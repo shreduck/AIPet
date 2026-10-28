@@ -22,13 +22,13 @@ class InterjectionTests(unittest.TestCase):
         self.assertEqual(report['hook_text'], text)
         start, end = report['hook_spans'][0]
         self.assertEqual(text[start:end], secret)
-    def test_each_warning_opens_its_own_window_and_acknowledges_independently(self):
+    def test_warnings_share_one_window_and_acknowledge_independently(self):
         import aipet_app
         app = object.__new__(aipet_app.TrayApp)
         app.root = MagicMock()
         app.root.grab_current.return_value = None
         app.addins = self.manager
-        app.pet = SimpleNamespace(addin_snapshot=[])
+        app.pet = SimpleNamespace(addin_snapshot=[], cfg={})
         screen = dict(id='pet-screen', work_area=[-1920, 0, 0, 1080])
         self.manager.set_pet_locations(dict(x=-100, y=900, screen_id='pet-screen', screen=screen), {})
         self.api.warning('Low warning: hash-like value', window='pet')
@@ -43,10 +43,10 @@ class InterjectionTests(unittest.TestCase):
             self.api.error('High warning: encoded credentials', window='pet')
             app.pet.addin_snapshot = self.snapshot()
             app.show_addin_alerts()
-            self.assertEqual(show.call_count, 2)
-            show.return_value.set_addin_rows.assert_not_called()
+            self.assertEqual(show.call_count, 1)
             first_rows = show.call_args_list[0].args[1]
-            second_rows = show.call_args_list[1].args[1]
+            second_rows = [dict(row, messages=[row['messages'][1]]) for row in app.pet.addin_snapshot]
+            self.assertEqual(len(show.return_value.append_addin_rows.call_args.args[0][0]['messages']), 2)
             self.assertEqual(len(first_rows[0]['messages']), 1)
             self.assertEqual(len(second_rows[0]['messages']), 1)
             self.assertNotEqual(first_rows[0]['messages'][0]['id'], second_rows[0]['messages'][0]['id'])
@@ -55,15 +55,18 @@ class InterjectionTests(unittest.TestCase):
             self.snapshot()
             show.call_args_list[0].kwargs['on_close'](first_rows)
             self.assertEqual(unread_summary(app.pet.addin_snapshot), ('error', 2))
-            show.call_args_list[1].kwargs['on_close'](second_rows)
+            show.call_args_list[0].kwargs['on_close'](second_rows)
             self.assertEqual(unread_summary(app.pet.addin_snapshot), ('warning', 1))
-            # Explicit window requests only; the ordinary warning remains in the bubble.
+            # Ordinary interjections join the carousel while it is open, too.
             app.show_addin_alerts()
-            self.assertEqual(show.call_count, 2)
+            self.assertEqual(show.call_count, 1)
+            self.assertEqual(show.return_value.append_addin_rows.call_args.args[0][0]['messages'][0]['title'],
+                             'Arrived after display')
+            show.return_value.winfo_exists.return_value = False
             self.api.warning('New alert window', window='pet')
             app.pet.addin_snapshot = self.snapshot()
             app.show_addin_alerts()
-            self.assertEqual(show.call_count, 3)
+            self.assertEqual(show.call_count, 2)
 
     def test_alert_window_uses_theme_tags_and_close_tracks_displayed_rows(self):
         from aipetlib.ui import addin_messages as ui
@@ -76,7 +79,7 @@ class InterjectionTests(unittest.TestCase):
         parent.winfo_width.return_value = parent.winfo_height.return_value = 100
         with patch.object(ui.tk, 'Toplevel') as top, patch.object(ui.tk, 'Frame'), \
                 patch.object(ui.tk, 'Label'), patch.object(ui.tk, 'Button'), patch.object(ui, 'WarningBeacon'), \
-                patch.object(ui, 'ScrolledText') as text, patch.object(ui.theme, 'theme_window') as themed, \
+                patch.object(ui, 'ScrolledText') as text, patch.object(ui, 'ToggleSwitch'), patch.object(ui.theme, 'theme_window') as themed, \
                 patch.object(ui.geometry, 'screen_info', return_value=dict(id='main', work_area=[0, 0, 1000, 800])) as screen_info:
             top.return_value.winfo_reqwidth.return_value = 600
             top.return_value.winfo_reqheight.return_value = 400
@@ -96,8 +99,15 @@ class InterjectionTests(unittest.TestCase):
             updated = self.snapshot()
             win.set_addin_rows(updated)
             close = next(call.args[1] for call in win.protocol.call_args_list if call.args[0] == 'WM_DELETE_WINDOW')
-            close()
-            closed.assert_called_once_with(updated)
+            with patch.object(ui.theme, 'themed_dialog') as confirm:
+                close()
+                closed.assert_not_called()
+                win.destroy.assert_not_called()
+                confirm.assert_called_once()
+                confirm.call_args.kwargs['on_result'](True)
+            dismissed = closed.call_args.args[0]
+            self.assertEqual({m['id'] for row in dismissed for m in row['messages']},
+                             {m['id'] for row in updated for m in row['messages']})
             win.destroy.assert_called_once()
 
     def test_sdk_pet_location_is_delivery_snapshot_and_alert_window_target_is_validated(self):
@@ -139,7 +149,7 @@ class InterjectionTests(unittest.TestCase):
         parent.winfo_viewable.return_value = False
         with patch.object(ui.tk, 'Toplevel') as top, patch.object(ui.tk, 'Frame'), \
                 patch.object(ui.tk, 'Label'), patch.object(ui.tk, 'Button'), patch.object(ui, 'WarningBeacon'), \
-                patch.object(ui, 'ScrolledText') as text, patch.object(ui.theme, 'theme_window'):
+                patch.object(ui, 'ScrolledText') as text, patch.object(ui, 'ToggleSwitch'), patch.object(ui.theme, 'theme_window'):
             top.return_value.winfo_reqwidth.return_value = 600
             top.return_value.winfo_reqheight.return_value = 400
             text.return_value.yview.return_value = (0.0, 1.0)
@@ -296,11 +306,18 @@ class InterjectionTests(unittest.TestCase):
         pet.app = SimpleNamespace(addin_snapshot=rows)
         pet.data = {'everyone': [{'session_id': 'fixture'}, {'session_id': 'other'}]}
         pet.canvas = MagicMock()
-        with patch('aipetlib.ui.pet_view.sprites.mono', return_value='font'):
+        with patch('aipetlib.ui.pet_view.sprites.mono', return_value='font'), \
+                patch.object(pet, '_bubble') as bubble:
             left = pet._draw_addin_bubble(-10)
         self.assertLess(left, -10)
-        self.assertEqual(pet.canvas.create_rectangle.call_args.kwargs['outline'], '#b91c1c')
-        self.assertEqual(pet.canvas.create_text.call_args.kwargs['text'], '× 2')
+        from aipetlib.ui import theme
+        self.assertEqual(bubble.call_args.args[5:7], (theme.T['bubble_bg'], theme.T['tag_outline']))
+        self.assertEqual(bubble.call_args.kwargs['tags'], ('addin',))
+        self.assertEqual(pet.canvas.create_oval.call_args.kwargs['fill'], '#b91c1c')
+        self.assertEqual([call.kwargs['text'] for call in pet.canvas.create_text.call_args_list],
+                         ['!', 'Add-ins', '2 alerts'])
+        self.assertTrue(all(call.kwargs['tags'] == ('addin',)
+                            for call in pet.canvas.create_text.call_args_list))
         self.manager.messages.acknowledge({m['id'] for row in rows for m in row['messages']})
         pet.app.addin_snapshot = self.snapshot()
         self.assertIsNone(pet._draw_addin_bubble())

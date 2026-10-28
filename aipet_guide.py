@@ -12,6 +12,11 @@ IS_MAC = sys.platform == "darwin"
 
 # key -> (allowed values, what it does, "live" | "restart")
 CONFIG_KEYS = {
+    "addin_alert_topmost": ('true / false (default true)', 'Keep the shared add-in alert window above other windows.', 'live'),
+    "addin_alert_no_focus": ('true / false (default true)',
+                             'Automatic add-in alerts do not request keyboard focus. Click the alert to use its shortcuts.', 'live'),
+    "addins_intro_seen": ('true / false (default false)',
+                          'Internal flag: the custom add-in introduction has been dismissed. False shows it on next startup.', 'restart'),
     "theme": ('"light" or "dark"', "Colours of name tags, bubbles, cards and windows.", "live"),
     "pet_style": ('"robot" (default), "mole", "cat"', "Which creature is drawn. mole and cat are old, unmaintained styles.",
                   "live"),
@@ -180,6 +185,61 @@ Lets AIPet approve permission prompts automatically. Format:
 """
 
 
+def build_addin_guide(home_dir, version=''):
+    """Compact authoring contract; the full settings guide retains detailed reference material."""
+    folder = os.path.join(home_dir, 'addins', 'my-addin')
+    manifest = dict(api_version=1, name='My add-in',
+                    command=['C:/path/to/python.exe' if os.name == 'nt' else '/path/to/python3', '{addin_dir}/main.py'],
+                    events=['*'], timeout_seconds=5,
+                    settings=[dict(key='enabled', type='boolean', default=True)])
+    return (f'# Build an AIPet add-in\n\nAIPet: `{version or "dev"}`. Objective: implement the requested '
+            'feature as a custom add-in, using AIPet for settings, status and themed alert windows.\n\n'
+            'How it works: each hook event starts a fresh Python process that reads one JSON envelope from stdin. '
+            'Use the SDK below; store persistent files in `context["data_dir"]`. Scripts have account permissions '
+            '(no sandbox), bounded queues and a 0.1–30 second timeout. They observe events and cannot approve, '
+            'reject or block requests. Do not create Tk windows or put secrets in ordinary alert text.\n\n'
+            f'Put **addin.json** and **main.py** in `{folder}`. Replace the interpreter path below with an installed '
+            'Python executable. Then select **Add-ins → Reload add-ins** and enable **My add-in**.\n\n'
+            '```json\n' + json.dumps(manifest, indent=2) + '\n```\n\n'
+            '```python\n' + '''# main.py — one invocation per event
+import json
+import sys
+
+message = json.loads(sys.stdin.buffer.read().decode("utf-8"))
+event, context = message["event"], message["context"]
+sys.path.insert(0, context["sdk_dir"])
+from aipet_addin import AIPet, format_markdown_report
+pet = AIPet(context)
+
+# event: id, timestamp, agent, event, session_id, data (raw hook payload)
+# Settings types: string, boolean, integer, number, directory,
+# integer-slider / number-slider (min, max, optional step).
+properties = pet.get_settings()  # descriptors including key/type/default/value
+values = {prop["key"]: prop["value"] for prop in properties}
+# pet.set_settings({"enabled": False})  # queue a partial update; bool = queued
+
+# Warning window demo: after enabling, send "aipet demo warning" to your AI.
+if values.get("enabled", True) and "aipet demo warning" in json.dumps(event.get("data", {})).lower():
+    pet.warning("Demo add-in warning", "The example trigger was detected.",
+                key="demo:" + str(event["id"]), window="pet")
+
+# Supported nonblocking SDK methods (call only when needed):
+# pet.status("working" | "stopped" | "needs_attention", detail="")
+# pet.info(title, content="", *, key=None, window=None)
+# pet.warning(title, content="", *, key=None, window=None, report=None)
+# pet.error(title, content="", *, key=None, window=None, report=None)
+# pet.get_pet_position() -> x/y/size/screen snapshot or None
+# pet.get_pet_screen() -> id/bounds/work_area snapshot or None
+# window="pet" / "main": open or join the alert carousel; None: pet bubble.
+# The host supplies the AIPet theme, scaling, navigation and dismissal controls.
+# Optional masked report: rule, name, warning_level (low/standard/high),
+# explanation, fingerprint, value; optional decoded, context, hook_text,
+# hook_field, hook_spans ([start,end] character ranges), markdown_template.
+# content, spans = format_markdown_report(report, include_source=False)
+# pet.warning("Finding", content, window="pet", report=report)
+''' + '```\n')
+
+
 def _addin_guide(addins):
     current = json.dumps(addins or [], ensure_ascii=False, indent=2)
     return '''### Add-ins: configuration and expected interface
@@ -193,23 +253,33 @@ the old settings. Use the editor for this move, rather than editing the saved se
 Token guard reports named rules, explanations, warning levels and fingerprints. Values and decoded contents are
 masked by default. Full matching hook text (prompt/command/field) appears with sensitive spans emphasized inline,
 each immediately followed by an eye control for explicit reveal/hide. Reports include conversation title, AI harness,
-session ID, project/directory, hook event/time and available tool/agent context. A rotating amber/red beacon marks
-severity. Raw values are isolated in structured local reports (temporary outbox plus bounded in-memory history),
+session ID, project/directory, hook event/time and available tool/agent context. A rotating cyan beacon animates
+on the robot's screen; the report states severity. Raw values are isolated in structured local reports (temporary outbox plus bounded in-memory history),
 never ordinary notification text. Hook text/spans remain complete; decoded/legacy previews are limited to 4 KiB
 and marked if truncated. It does not block requests.
 Additional rules recognize plain credential pairs, connection URLs, CLI password/authentication flags, session
 cookies, additional provider token prefixes and random-looking secrets in sensitive variable contexts. Placeholder,
 public-URL and unrelated cookie contexts are filtered. URL/Base64 decoding is bounded to three layers; high warnings
 require decoded credential/token structures rather than arbitrary encoded text.
-Standalone hexadecimal hash-like strings get a low warning (amber). Base64 that decodes to likely credentials,
-credential JSON, known token formats, or hash-like tokens gets a high warning (red, SDK error severity).
+Standalone hexadecimal hash-like strings and bare alphanumeric colon pairs get a low warning (amber).
+Base64 decoding to a bare alphanumeric pair gets medium confidence (`standard` internally); obvious times,
+host/port pairs, drive paths and common URL/namespace forms are excluded from the fallback pair rules.
+Explicit credential context keeps its stronger warning. Base64 that decodes to credential JSON,
+known token formats, or hash-like tokens gets a high warning (red, SDK error severity).
 Ordinary Base64 text and model token counters do not trigger alerts. Detection is heuristic, not proof of a leak.
-Each Token guard warning opens its own timestamped, nonmodal report window centered on the pet's screen.
-Later warnings never replace earlier reports; closing one acknowledges only that warning.
-Other add-in messages remain available through their pet bubbles.
+Add-in alerts share one nonmodal carousel with Previous/Next navigation, a position counter and a Dismiss button.
+Left/Right arrows navigate; D dismisses the current alert. Arrow keys still adjust the content slider when focused.
+Token guard opens it on the pet's screen. New alerts join without replacing the report being reviewed.
+Dismiss acknowledges only the current alert. Closing with multiple pending alerts asks before dismissing all;
+cancelling preserves them, and alerts arriving during the confirmation remain pending. Navigation does not mark read.
+Other add-in messages remain available through their pet bubbles and join the carousel when it is open.
 Alert windows default to approximately 60% of the destination screen's usable area (about 77.5% of width/height).
 Their Markdown preview toggle formats headings, emphasis, lists, quotes, links and fenced code locally, retaining
 inline masked values/eye controls. Toggling preview remasks revealed values. No HTML execution or remote content fetching.
+The Window scale slider (50–250%) resizes the whole interface and its window, including controls, spacing, robot,
+text and eye controls, without resetting scroll or reveal state. Always on top and Do not steal focus switches
+are in this window and Add-ins; both default on and persist in config. Click an unfocused alert before using shortcuts.
+The header uses AIPet's robot body asset with a rotating cyan alarm matching its eyes and mouth.
 
 For custom add-ins, create `addins/<id>/addin.json` and a script, reload, then enable. Built-in IDs are reserved.
 Minimal manifest (add `settings` only when needed):
@@ -272,7 +342,8 @@ screen bounds and may change with monitor layout. Both methods return None befor
 The host publishes the session's pet position (or the overlay fallback) on the UI thread, so workers never call Tk.
 Use `pet.warning('Title', 'Details', window='pet')` or `pet.error(..., window='pet')` to request a themed window
 centered on the current pet screen. `window='main'` centers on the main screen. Omit window for bubble-only delivery.
-Window requests are asynchronous, open a separate timestamped window per message, and are acknowledged individually when closed. Missing pet
+Window requests are asynchronous and share a carousel; each report keeps its timestamp and is acknowledged when
+dismissed. Placement is chosen on first opening, and later arrivals do not move the shared window. Missing pet
 geometry falls back to the main screen. Position getters are snapshots; placement uses current host geometry.
 Delivery is bounded and best effort; errors/timeouts appear in error.log and add-in messages. Enabled scripts run
 with the user's permissions. Discovery and editing settings do not execute disabled scripts.

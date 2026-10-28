@@ -12,6 +12,27 @@ def encode(value):
 
 
 class TokenGuardTests(unittest.TestCase):
+    def test_bare_alphanumeric_pairs_are_low_and_encoded_pairs_are_medium(self):
+        for pair in ('admin:admin', 'a:b', 'User123:Pass456'):
+            with self.subTest(pair=pair):
+                plain, = detect('test ' + pair)
+                self.assertEqual((plain['rule'], plain['warning_level']), ('credential.possible_pair', 'low'))
+                encoded, = detect(encode(pair))
+                self.assertEqual((encoded['rule'], encoded['warning_level']), ('base64.possible_pair', 'standard'))
+                self.assertEqual(encoded['decoded'], pair)
+                self.assertEqual(encoded['hook_spans'], [[0, len(encode(pair))]])
+                explicit, = detect('basic=' + pair)
+                self.assertEqual(explicit['warning_level'], 'high')
+                explicit_encoded, = detect('basic=' + encode(pair))
+                self.assertEqual(explicit_encoded['warning_level'], 'high')
+
+    def test_bare_pair_exclusions_apply_before_and_after_base64_decoding(self):
+        for value in ('12:30', 'localhost:8080', 'example.com:443', 'https://example.com',
+                      r'C:\\Windows', 'std::string', 'mailto:someone', 'urn:example'):
+            with self.subTest(value=value):
+                self.assertEqual(detect(value), [])
+                self.assertEqual(detect(encode(value)), [])
+
     def test_large_non_encoded_payload_does_not_hold_the_interpreter_for_seconds(self):
         import subprocess
         import sys
@@ -47,10 +68,10 @@ class TokenGuardTests(unittest.TestCase):
     def test_url_and_nested_base64_decoding_are_bounded_and_structural(self):
         from urllib.parse import quote
         for value, rule in ((quote('demo:short', safe=''), 'encoding.url'),
-                            (encode(encode('demo:short')), 'encoding.layered'),
-                            (encode(quote('demo:short', safe='')), 'encoding.layered')):
+                            (encode(encode('basic=demo:short')), 'encoding.layered'),
+                            (encode(quote('basic=demo:short', safe='')), 'encoding.layered')):
             report = next(report for report in detect(value) if report['rule'] == rule)
-            self.assertEqual(report['decoded'], 'demo:short')
+            self.assertIn('demo:short', report['decoded'])
             self.assertEqual(report['warning_level'], 'high')
         value = 'demo:short'
         for _ in range(4):

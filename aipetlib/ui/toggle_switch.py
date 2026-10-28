@@ -8,7 +8,7 @@ class ToggleSwitch(tk.Canvas):
     def __init__(self, parent, variable):
         super().__init__(parent, width=42, height=24, highlightthickness=1, bd=0,
                          takefocus=True, cursor='hand2', bg=theme.T['win_bg'])
-        self.variable, self.disabled = variable, False
+        self.variable, self.disabled, self.ui_scale = variable, False, 1.0
         self._trace = variable.trace_add('write', self.draw)
         self._pet_retheme = self.draw
         for event in ('<Button-1>', '<space>', '<Return>'):
@@ -28,9 +28,14 @@ class ToggleSwitch(tk.Canvas):
         self.configure(takefocus=not disabled, cursor='arrow' if disabled else 'hand2')
         self.draw()
 
+    def set_scale(self, scale):
+        self.ui_scale = scale
+        self.draw()
+
     def draw(self, *_):
         self.delete('all')
-        self.configure(bg=theme.T['win_bg'], highlightbackground=theme.T['win_bg'], highlightcolor=theme.T['primary'])
+        self.configure(bg=theme.T['win_bg'], highlightbackground=theme.T['win_bg'], highlightcolor=theme.T['primary'],
+                       width=round(42*self.ui_scale), height=round(24*self.ui_scale))
         on = bool(self.variable.get())
         color = theme.T['menu_disabled'] if self.disabled else theme.T['primary'] if on else theme.T['border']
         self.create_oval(2, 3, 20, 21, fill=color, outline=color)
@@ -38,6 +43,8 @@ class ToggleSwitch(tk.Canvas):
         self.create_rectangle(11, 3, 31, 21, fill=color, outline=color)
         x = 24 if on else 4
         self.create_oval(x, 5, x+14, 19, fill='#ffffff', outline='')
+        if self.ui_scale != 1.0:
+            self.scale('all', 0, 0, self.ui_scale, self.ui_scale)
 
     def close(self, event):
         if event.widget is self:

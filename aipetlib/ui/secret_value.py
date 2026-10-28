@@ -13,16 +13,19 @@ def inline(text, value, tag='secret-emphasis'):
     text.mark_set(end, index)
     text.mark_gravity(start, 'left')
     revealed = False
+    scale = [1.0]
 
     def draw():
         eye.delete('all')
-        eye.configure(bg=theme.T['btn_bg'], highlightbackground=theme.T['border'])
+        eye.configure(bg=theme.T['btn_bg'], highlightbackground=theme.T['border'],
+                      width=round(24*scale[0]), height=round(20*scale[0]))
         color = theme.T['btn_fg']
         eye.create_oval(3, 5, 21, 15, outline=color, width=2)
         if revealed:
             eye.create_oval(9, 7, 15, 13, fill=color, outline='')
         else:
             eye.create_line(2, 18, 22, 2, fill=color, width=2)
+        eye.scale('all', 0, 0, scale[0], scale[0])
 
     def render():
         text.configure(state='normal')
@@ -53,4 +56,8 @@ def inline(text, value, tag='secret-emphasis'):
     text.configure(state='normal')
     text.window_create('end', window=eye, align='center', padx=3)
     eye.retheme_secret = draw
+    def set_content_scale(value):
+        scale[0] = value
+        draw()
+    eye.set_content_scale = set_content_scale
     return eye

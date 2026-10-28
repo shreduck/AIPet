@@ -113,15 +113,24 @@ class PetView:
         if summary is None:
             return None
         level, count = summary
-        icon, color, bg = LEVELS[level]
+        _, color, _ = LEVELS[level]
+        color = ('#60a5fa' if level == 'info' else theme.themed_color(color)) \
+            if theme.T.get('name') == 'dark' else color
+        bg = theme.T['bubble_bg']
         right = min(-3, (badge_left if badge_left is not None else 0)-4)
-        left, top, bottom = right-28, 38, 55
+        left, top, bottom = right-72, 33, 63
         tags = ('addin',)
-        self.canvas.create_rectangle(left, top, right, bottom, fill=bg, outline=color, tags=tags)
-        self.canvas.create_polygon(right, top+7, right+4, top+11, right, top+13,
-                                   fill=bg, outline=color, tags=tags)
-        self.canvas.create_text((left+right)//2, (top+bottom)//2,
-                                text=f'{icon} {min(count, 99)}', font=sprites.mono(5), fill=color, tags=tags)
+        c = self.canvas
+        # Share the pet's pixel-art outline, tail and scaling on every platform.
+        self._bubble(left, top, right, bottom, right-8, bg, theme.T['tag_outline'], tags=tags)
+        c.create_oval(left+6, top+9, left+18, top+21, fill=color, outline='', tags=tags)
+        c.create_text(left+12, top+15, text='i' if level == 'info' else '!',
+                      font=sprites.mono(7), fill=bg, tags=tags)
+        c.create_text(left+23, top+9, text='Add-ins', anchor='w',
+                      font=sprites.mono(6), fill=theme.T['bubble_fg'], tags=tags)
+        label = f'{count if count <= 99 else "99+"} alert' + ('s' if count != 1 else '')
+        c.create_text(left+23, top+21, text=label, anchor='w',
+                      font=sprites.mono(5.5), fill=color, tags=tags)
         return left
 
     def _draw_usage(self):

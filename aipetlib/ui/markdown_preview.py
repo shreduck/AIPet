@@ -5,13 +5,16 @@ import uuid
 from . import theme
 
 
-def configure(text):
+def configure(text, scale=1.0):
+    def pixels(value):
+        return max(1, round(value * scale))
     for level, size in ((1, 18), (2, 15), (3, 12)):
-        text.tag_configure(f'md-h{level}', font=(theme.UI_FONT, size, 'bold'), spacing1=8, spacing3=4)
-    text.tag_configure('md-bold', font=(theme.UI_FONT, 10, 'bold'))
-    text.tag_configure('md-italic', font=(theme.UI_FONT, 10, 'italic'))
-    text.tag_configure('md-code', font=(theme.UI_FONT, 10), background=theme.T['code_bg'], foreground=theme.T['code_fg'])
-    text.tag_configure('md-quote', foreground=theme.T['muted'], lmargin1=16, lmargin2=16)
+        text.tag_configure(f'md-h{level}', font=(theme.UI_FONT, pixels(size), 'bold'),
+                           spacing1=round(8 * scale), spacing3=round(4 * scale))
+    text.tag_configure('md-bold', font=(theme.UI_FONT, pixels(10), 'bold'))
+    text.tag_configure('md-italic', font=(theme.UI_FONT, pixels(10), 'italic'))
+    text.tag_configure('md-code', font=(theme.UI_FONT, pixels(10)), background=theme.T['code_bg'], foreground=theme.T['code_fg'])
+    text.tag_configure('md-quote', foreground=theme.T['muted'], lmargin1=round(16 * scale), lmargin2=round(16 * scale))
 
 
 def render(text, source, spans=(), insert_secret=None):

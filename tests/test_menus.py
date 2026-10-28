@@ -140,6 +140,19 @@ class MenuTests(unittest.TestCase):
 
     @patch.object(aipet_app.app_menus.hook_backups, 'list_backups', return_value=[])
     @patch.object(permissions_owner, 'auto_approve_rules', return_value={})
+    def test_addins_menu_offers_the_ai_authoring_guide_in_tray_and_settings(self, *_):
+        app = self.make_app()
+        app.addins = MagicMock()
+        app.addins.entries.return_value = []
+        app.copy_addin_guide = MagicMock()
+        for settings in (False, True):
+            group = next(entry for entry in app._mac_menu_spec(settings=settings) if entry and entry['label'] == 'Add-ins')
+            entry = next(entry for entry in group['submenu'] if entry and entry['label'] == 'Copy Markdown for AI')
+            entry['action']()
+        self.assertEqual(app.copy_addin_guide.call_count, 2)
+
+    @patch.object(aipet_app.app_menus.hook_backups, 'list_backups', return_value=[])
+    @patch.object(permissions_owner, 'auto_approve_rules', return_value={})
     def test_context_and_status_menus_share_groups_and_current_values(self, *_):
         app = self.make_app()
         pet = SimpleNamespace(key='session', data={'source': 'CC', 'cwd': '/tmp', 'state': 'working'})

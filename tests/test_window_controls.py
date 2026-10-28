@@ -34,6 +34,7 @@ class WindowControlTests(unittest.TestCase):
     def test_switch_thumb_moves_to_opposite_end_when_value_changes(self):
         switch = object.__new__(ToggleSwitch)
         switch.variable, switch.disabled = MagicMock(), False
+        switch.ui_scale = 1.0
         for method in ('delete', 'configure', 'create_oval', 'create_rectangle'):
             setattr(switch, method, MagicMock())
         for value, left in ((False, 4), (True, 24)):

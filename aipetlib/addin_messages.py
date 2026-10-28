@@ -125,3 +125,36 @@ def unread_summary(rows):
     if not messages:
         return None
     return max((m['level'] for m in messages), key=RANK.get), len(messages)
+
+
+class AlertCarousel:
+    """An ordered queue that preserves the current alert as new messages arrive."""
+    def __init__(self):
+        self.entries = []
+        self.seen = set()
+        self.index = 0
+
+    def add(self, rows):
+        for row in rows:
+            for message in row['messages']:
+                key = message.get('id') or id(message)
+                if key not in self.seen:
+                    self.seen.add(key)
+                    self.entries.append(dict(row, level=message['level'], messages=[message]))
+
+    def current(self):
+        return self.entries[self.index:self.index+1]
+
+    def step(self, delta):
+        if self.entries:
+            self.index = (self.index + delta) % len(self.entries)
+
+    def dismiss(self, rows):
+        keys = {message.get('id') or id(message) for row in rows for message in row['messages']}
+        current = self.current()
+        self.entries[:] = [row for row in self.entries
+                           if (row['messages'][0].get('id') or id(row['messages'][0])) not in keys]
+        if current and current[0] in self.entries:
+            self.index = self.entries.index(current[0])
+        else:
+            self.index = min(self.index, max(0, len(self.entries)-1))

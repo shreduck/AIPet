@@ -379,12 +379,16 @@ The host exposes `AddinManager.get_settings(id)` and `set_settings(id, values)`;
 
 The built-in **Token guard** detects likely credentials in raw hook data (known token prefixes, Bearer tokens,
 JWTs, private-key headers, credential fields and assignments). Enable it under **Add-ins > Built-in add-ins**.
+The first launch with custom add-in support shows a brief introduction after setup, with **Copy Markdown for AI**
+to help an assistant build one. Dismissing it is remembered across launches. The same authoring guide remains
+available under **Add-ins → Copy Markdown for AI**, including the interface, limits, settings and theming rules.
 Its full report includes named rules, explanations, warning levels, fingerprints, conversation title, AI harness,
 session ID, project/directory and available hook/tool/agent context. Detected and decoded values are censored by
 default. The full matching hook text field (prompt, command, or credential field) is shown with detected values
 emphasized in place and an eye immediately after each value. Each eye reveals only its own span; surrounding text
-does not move into a separate input box. Empty session records are omitted; a rotating amber/red
-beacon reflects severity. Values are carried in structured local reports (including the temporary outbox), retained
+does not move into a separate input box. Empty session records are omitted. AIPet's robot displays a rotating
+cyan beacon on its screen, matching its eyes and mouth. Warning levels retain their report colours.
+Values are carried in structured local reports (including the temporary outbox), retained
 in bounded in-memory history, and excluded from ordinary message text and automatic copying.
 Repeated findings are deduplicated per session. Detection is heuristic, can have false positives or misses,
 and does not block requests. Normal model token counters such as `input_tokens` do not trigger it.
@@ -398,29 +402,43 @@ access key IDs. Randomness detection requires a sensitive variable name and excl
 URL encoding and nested Base64 are decoded locally to a maximum of three layers, with bounded candidate work;
 only recognized credential/token structures raise a high warning after decoding.
 Standalone hexadecimal hashes (32, 40, 64, 96 or 128 characters) produce low warnings in amber.
-Base64 and URL-safe Base64 are decoded locally with bounded work; likely credential pairs, credential JSON,
+Bare alphanumeric pairs such as `admin:admin` produce low warnings (`credential.possible_pair`). Base64 decoding
+to a bare pair produces a medium/standard warning (`base64.possible_pair`). Obvious times, host/port pairs, drive
+paths and common URL/namespace forms are excluded from these fallback rules. Explicit credential labels retain
+the stronger warning, and the highest-confidence rule wins for the same detected value.
+Base64 and URL-safe Base64 are decoded locally with bounded work; explicitly labeled credential pairs, credential JSON,
 known token formats or hash-like token structures produce high warnings in red. Both encoded and decoded values
 stay masked until explicitly revealed. Matching hook text and secret spans are preserved in full; decoded and legacy
 value previews are limited to 4 KiB and marked when truncated. Fingerprints cover the complete value.
 Ordinary encoded text, binary data and URLs do not trigger this rule.
 The AIPet alert window follows the selected light/dark theme, including readable severity colours and Windows
 titlebar styling. The copied settings guide includes add-in UI/theming instructions.
-Each Token guard warning opens its own timestamped, nonmodal report window automatically, centered on the pet's
-screen. Later warnings never replace an existing report. Other message windows default to the main screen's center.
-Alert windows initially occupy about 60% of that screen's usable area, and remain resizable.
+Add-in alerts share one nonmodal carousel window, with Previous/Next navigation and a position counter.
+Use **Left/Right arrows** to navigate and **D** to dismiss the current alert (slider arrows still adjust its scale).
+Token guard opens it automatically on the pet's screen; subsequent alerts join without interrupting the current report.
+Other message windows default to the main screen's center. The initial window occupies about 60% of that screen's
+usable area and remains resizable. A **Window scale** slider (50–250%) resizes the entire interface: headings,
+buttons, switches, spacing, scrollbar, robot, report text and inline eye controls. The window grows within its
+screen's usable area, preserving scroll and reveal state. **Always on top** and **Do not steal focus** switches
+are available in the alert window and the Add-ins menu; both are saved in config and default on. Automatic alerts
+leave keyboard focus in your current app; click the alert to use its shortcuts. Windows NumLock does not block them.
 **Markdown preview** toggles local formatting of hook text and ordinary message content (headings, emphasis,
 lists, quotes, links and fenced code). Inline secret eye controls work in either mode; changing mode remasks values.
 Token guard sends a Markdown report with headings for conversation context, the finding, hook text and decoded
 content when present. These reports open with preview enabled; the shared AIPet window header stays unchanged.
 Preview never runs HTML or fetches links/images.
-Closing it marks only the displayed messages as read; other add-ins still use their clickable pet bubbles.
+**Dismiss** acknowledges the current alert and advances to the next. Closing with multiple alerts asks before
+dismissing all; cancel keeps them pending. Alerts arriving during that confirmation remain pending even after
+confirmation. Reading or navigating does not acknowledge alerts.
 Scripts can read delivery-time position/screen snapshots with `pet.get_pet_position()` and `pet.get_pet_screen()`.
 Messages accept `window='pet'` or `window='main'` to request a centered, themed host window; omit it for a bubble.
-Missing pet geometry falls back to the main screen. Each explicit window request has its own report and acknowledgment.
+Missing pet geometry falls back to the main screen. Placement is chosen when the shared window first opens;
+later alerts join it with their own timestamps and individual acknowledgment.
 
-Unread interjections appear in a small bubble to the **left of the pet**: blue **i** for info, amber **!** for warning,
-and red **×** for error, with an unread count. The strongest unread severity wins. Click to open the full scrollable
-message content and mark the messages you saw as read; new arrivals remain unread. Compact pets include all their
+Unread interjections appear in an **Add-ins** bubble to the **left of the pet**, using the same pixel-art outline,
+tail and theme as the pet's other bubbles: blue **i** for info and amber/red **!** for warnings/errors, with an
+unread alert count. The strongest unread severity wins. Click to open the full scrollable
+carousel and review pending alerts. Compact pets include all their
 sessions. Add-in messages never answer or acknowledge an agent's permission prompt.
 The agent window also shows clickable mini nodes with only the add-in name and status: **working**, **stopped**,
 or its attention severity (**info**, **warning**, **error**). Nodes are scoped to their agent/session and included

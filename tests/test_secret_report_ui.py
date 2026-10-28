@@ -20,12 +20,17 @@ class ReportUITests(unittest.TestCase):
         secret = 'synthetic-secret-for-reveal'
         text = MagicMock()
         with patch.object(secret_value.tk, 'Canvas') as eye:
-            secret_value.inline(text, secret)
+            control = secret_value.inline(text, secret)
             self.assertNotIn(secret, repr(text.mock_calls))
             toggle = next(call.args[1] for call in eye.return_value.bind.call_args_list if call.args[0] == '<Button-1>')
             toggle()
             self.assertEqual(text.insert.call_args.args[1], secret)
             text.reset_mock()
+            control.set_content_scale(1.5)
+            text.insert.assert_not_called()
+            text.delete.assert_not_called()
+            eye.return_value.configure.assert_any_call(bg=secret_value.theme.T['btn_bg'],
+                highlightbackground=secret_value.theme.T['border'], width=36, height=30)
             toggle()
             self.assertEqual(text.insert.call_args.args[1], '••••••••••••')
             self.assertNotIn(secret, repr(text.mock_calls))
@@ -45,16 +50,20 @@ class ReportUITests(unittest.TestCase):
             first()
             self.assertEqual(text.insert.call_args.args[1], '••••••••••••')
 
-    def test_beacon_rotates_changes_severity_and_cancels_timer(self):
+    def test_beacon_rotates_in_brand_cyan_and_cancels_timer(self):
         with patch.object(warning_beacon.tk, 'Canvas') as canvas:
             beacon = warning_beacon.WarningBeacon(MagicMock())
             first_phase = beacon.phase
+            self.assertTrue(beacon.robot, 'the alert should use the packaged AIPet robot body')
             beacon.set_level('error')
+            beacon.phase = 1.4  # Ensure the rotating beam is visible as well as the dome.
             beacon.tick()
             self.assertGreater(beacon.phase, first_phase)
-            self.assertTrue(any(call.kwargs.get('fill') == '#ef4444'
+            self.assertTrue(any(call.kwargs.get('fill') == beacon.robot['meta']['cyan']
                                 for call in canvas.return_value.create_rectangle.call_args_list))
             canvas.return_value.after.assert_called_with(70, beacon.tick)
+            canvas.return_value.move.assert_called_with('alarm', 14, 34)
+            canvas.return_value.scale.assert_called_with('alarm', 0, 0, 40/76, 36/58)
             timer = beacon.timer
             beacon.stop()
             canvas.return_value.after_cancel.assert_called_once_with(timer)
@@ -72,7 +81,7 @@ class ReportUITests(unittest.TestCase):
         parent.winfo_viewable.return_value = False
         with patch.object(addin_messages.tk, 'Toplevel') as top, patch.object(addin_messages.tk, 'Frame'), \
                 patch.object(addin_messages.tk, 'Label'), patch.object(addin_messages.tk, 'Button'), \
-                patch.object(addin_messages, 'WarningBeacon'), patch.object(addin_messages, 'inline_secret') as field, \
+                patch.object(addin_messages, 'WarningBeacon'), patch.object(addin_messages, 'ToggleSwitch'), patch.object(addin_messages, 'inline_secret') as field, \
                 patch.object(addin_messages, 'ScrolledText') as text, patch.object(addin_messages.theme, 'theme_window'), \
                 patch.object(addin_messages.theme, 'theme_widget'):
             top.return_value.winfo_reqwidth.return_value = 600
@@ -104,7 +113,7 @@ class ReportUITests(unittest.TestCase):
         with patch.object(addin_messages.tk, 'Toplevel'), patch.object(addin_messages.tk, 'Frame'), \
                 patch.object(addin_messages.tk, 'Label'), patch.object(addin_messages.tk, 'Button'), \
                 patch.object(addin_messages.tk, 'BooleanVar') as preview, patch.object(addin_messages.tk, 'Checkbutton') as check, \
-                patch.object(addin_messages, 'WarningBeacon'), patch.object(addin_messages, 'inline_secret') as field, \
+                patch.object(addin_messages, 'WarningBeacon'), patch.object(addin_messages, 'ToggleSwitch'), patch.object(addin_messages, 'inline_secret') as field, \
                 patch.object(addin_messages, 'ScrolledText') as text, patch.object(addin_messages.theme, 'theme_window'):
             preview.return_value.get.return_value = False
             text.return_value.yview.return_value = (0.0, 1.0)
