@@ -229,7 +229,13 @@ class Approvals:
         win.bind("<Escape>", lambda e: close())
         theme.theme_window(win)
         sync()
-        frame.configure(width=body.winfo_reqwidth()+28, height=body.winfo_reqheight()+28)
+        # Resolve the packed controls before choosing the canvas's initial size.
+        # Without this, their requested size is still 1x1; the window opens at
+        # its minimum size and the footer buttons never get mapped.
+        win.update_idletasks()
+        width, height = max(520, body.winfo_reqwidth()+28), max(420, body.winfo_reqheight()+28)
+        win.minsize(width, height)  # resizing must not hide the save/cancel controls either
+        frame.configure(width=width, height=height)
         win.update_idletasks()
         win.geometry(f"+{max(0, (win.winfo_screenwidth() - win.winfo_reqwidth()) // 2)}"
                      f"+{max(0, (win.winfo_screenheight() - win.winfo_reqheight()) // 3)}")

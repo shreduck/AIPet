@@ -69,6 +69,23 @@ class ApprovalEditorGuiTests(unittest.TestCase):
     def texts(self):
         return [str(w.cget('text')) for w in self.descendants(self.win) if isinstance(w, self.tk.Label)]
 
+    def test_initial_size_keeps_footer_buttons_visible_and_clickable(self):
+        self.assert_footer_visible()
+
+    def test_minimum_resize_keeps_footer_buttons_visible_and_clickable(self):
+        self.win.geometry('1x1')
+        self.root.update()
+        self.assert_footer_visible()
+
+    def assert_footer_visible(self):
+        for label in ('Save', 'Cancel', 'Choose rules folder…'):
+            button = self.button(self.win, label)
+            self.assertTrue(button.winfo_ismapped(), label)
+            self.assertGreater(button.winfo_width(), 1, label)
+            self.assertGreater(button.winfo_height(), 1, label)
+            self.assertLessEqual(button.winfo_rooty() + button.winfo_height(),
+                                 self.win.winfo_rooty() + self.win.winfo_height(), label)
+
     def test_cancel_warning_then_save_again_and_confirm(self):
         next(w for w in self.descendants(self.win) if isinstance(w, self.tk.Checkbutton)).invoke()
         save = self.button(self.win, 'Save')
@@ -90,6 +107,17 @@ class ApprovalEditorGuiTests(unittest.TestCase):
         self.assertIsNone(self.root.grab_current())
         self.save.assert_called_once()
         self.assertTrue(self.save.call_args.args[1]['enabled'])
+
+    def test_cancel_editor_while_confirmation_is_open_never_saves(self):
+        next(w for w in self.descendants(self.win) if isinstance(w, self.tk.Checkbutton)).invoke()
+        self.click(self.button(self.win, 'Save'))
+        warning = self.warning()
+        self.assertIsNone(self.root.grab_current())
+        self.click(self.button(self.win, 'Cancel'))
+        self.assertFalse(self.win.winfo_exists())
+        self.assertFalse(warning.winfo_exists())
+        self.assertNotIn('codex:isolated-qa', self.controller.editors)
+        self.save.assert_not_called()
 
     def test_save_permission_failure_retains_draft_and_folder_retry(self):
         text = next(w for w in self.descendants(self.win) if isinstance(w, self.tk.Text))

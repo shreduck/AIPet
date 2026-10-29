@@ -148,7 +148,7 @@ class SettingsTests(unittest.TestCase):
         (old / 'events.previous.jsonl').write_text('previous')
         move = addin_settings.shutil.move
         def fail_previous(source, destination):
-            if source == str(old / 'events.previous.jsonl'):
+            if Path(source).resolve() == (old / 'events.previous.jsonl').resolve():
                 raise OSError('cannot move previous')
             return move(source, destination)
         with patch.object(addin_settings.shutil, 'move', side_effect=fail_previous):

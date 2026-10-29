@@ -70,6 +70,10 @@ class RuleLists:
                             'When both lists match, the blacklist wins. Switch on to give the whitelist precedence.')
 
     def read(self):
+        # These edits are included in this validation/save attempt. A queued
+        # <<Modified>> notification must not erase the error it produces.
+        for text in self.boxes.values():
+            text.edit_modified(False)
         raw = {key: text.get('1.0', 'end-1c').splitlines() for key, text in self.boxes.items()}
         bad = [(key, number, pattern, error) for key, lines in raw.items()
                for number, pattern, error in permissions.bad_patterns(lines)]

@@ -317,6 +317,7 @@ class MacWindowTests(unittest.TestCase):
                     checks = [w for w in descendants(settings) if isinstance(w, tk.Checkbutton)]
                     checks[0].invoke()
                     expected = {"enabled": True, "allow_all": False,
+                                "precedence": "blacklist",
                                 "whitelist": ["git (status|diff)", "# retained comment", "Read"],
                                 "blacklist": ["rm", "sudo"]}
                     editors = [w for w in descendants(settings) if isinstance(w, tk.Text)]
@@ -404,8 +405,7 @@ class MacWindowTests(unittest.TestCase):
                     next(w for w in descendants(settings) if isinstance(w, tk.Checkbutton)).invoke()
                     def dismiss_warning():
                         warning = next(w for w in settings.winfo_children() if isinstance(w, tk.Toplevel))
-                        click(button(settings, "Cancel"))
-                        self.assertTrue(settings.winfo_exists())  # modal grab blocks its parent
+                        self.assertIsNone(root.grab_current())  # confirmations leave other windows interactive
                         if accept is None:
                             warning.destroy()
                         else:
@@ -623,6 +623,7 @@ class MacWindowTests(unittest.TestCase):
 
     def test_question_bubble_only_raises_its_card_preserving_agent_stacking(self):
         import aipetlib.mac_panels as mac_panels
+        import subprocess
         import tkinter as tk
         from types import SimpleNamespace
         from unittest.mock import Mock, patch
@@ -636,11 +637,6 @@ class MacWindowTests(unittest.TestCase):
         workspace = mac.send(mac.cls("NSWorkspace"), "sharedWorkspace")
         previous = mac.send(workspace, "frontmostApplication")
         mac.send(previous, "retain")
-        apps = mac.send(mac.cls("NSRunningApplication"), "runningApplicationsWithBundleIdentifier:",
-                        mac.nsstr("com.apple.finder"), argtypes=[mac.c_void_p])
-        finder = mac.send(apps, "objectAtIndex:", 0, argtypes=[mac.c_ulong])
-        mac.send(finder, "retain")
-        finder_pid = mac.send(finder, "processIdentifier", restype=mac.c_long)
         root = mac_panels.MacPetWindow()
         root.title("AIPet isolated bubble handoff regression")
         root.withdraw()
@@ -655,6 +651,7 @@ class MacWindowTests(unittest.TestCase):
         pointer = Pointer(app)
         pet = SimpleNamespace(key=item["key"], data=item, _on_bubble=True, _on_badge=None)
         agent = None
+        covering, child = None, None
 
         def settle():
             done = tk.BooleanVar(root, False)
@@ -672,17 +669,30 @@ class MacWindowTests(unittest.TestCase):
             return set(ordered[:ordered.index(number)])
 
         try:
+            # Finder may be active without any open windows. Use a separate,
+            # disposable app so the stacking precondition is deterministic.
+            child = subprocess.Popen([sys.executable, "-c",
+                "import tkinter as tk; r=tk.Tk(); r.title('AIPet isolated covering fixture'); "
+                "r.geometry('900x750+100+100'); r.after(60000,r.destroy); r.mainloop()"])
+            for _ in range(20):
+                settle()
+                covering = mac.send(mac.cls("NSRunningApplication"), "runningApplicationWithProcessIdentifier:",
+                                    child.pid, argtypes=[mac.ctypes.c_int])
+                if covering:
+                    mac.send(covering, "retain")
+                    break
+            self.assertTrue(covering, "covering fixture must register with macOS")
             agent = AgentNetworkWindow(root, SimpleNamespace(cfg={}, _last_items=[]))
             root.update()
             settle()
             settle()
             number = mac.send(mac.window_titled(agent.win.title()), "windowNumber", restype=mac.c_long)
             for _ in range(3):
-                mac.send(finder, "activateWithOptions:", 3, restype=mac.c_bool, argtypes=[mac.c_ulong])
+                mac.send(covering, "activateWithOptions:", 3, restype=mac.c_bool, argtypes=[mac.c_ulong])
                 settle()
-                if foreground() == finder_pid:
+                if foreground() == child.pid:
                     break
-            self.assertEqual(foreground(), finder_pid, "requires an unlocked desktop")
+            self.assertEqual(foreground(), child.pid, "requires an unlocked desktop")
             covered_by = above(number)
             self.assertTrue(covered_by, "fixture agent must be covered before opening its question card")
             with patch.object(sprites, "load_sprites", return_value=None):
@@ -690,17 +700,17 @@ class MacWindowTests(unittest.TestCase):
             settle()
             card = app.details[item["key"]]
             self.assertTrue(card.win.winfo_ismapped())
-            self.assertEqual(foreground(), finder_pid)
+            self.assertEqual(foreground(), child.pid)
             self.assertTrue(covered_by <= above(number))
             pet._on_bubble = True
             pointer.release(SimpleNamespace(state=0), pet)
             settle()
             self.assertIs(app.details[item["key"]], card)
-            self.assertEqual(foreground(), finder_pid)
+            self.assertEqual(foreground(), child.pid)
             self.assertTrue(covered_by <= above(number))
             card.close()
             settle()
-            self.assertEqual(foreground(), finder_pid)
+            self.assertEqual(foreground(), child.pid)
             self.assertTrue(covered_by <= above(number))
             app.focus_session.assert_not_called()
             app.answers.go_to_prompt.assert_not_called()
@@ -712,7 +722,11 @@ class MacWindowTests(unittest.TestCase):
             root.destroy()
             mac.send(previous, "activateWithOptions:", 3, restype=mac.c_bool, argtypes=[mac.c_ulong])
             mac.send(previous, "release", restype=None)
-            mac.send(finder, "release", restype=None)
+            if covering:
+                mac.send(covering, "release", restype=None)
+            if child:
+                child.terminate()
+                child.wait(timeout=5)
 
     def test_panel_mouse_bridge_delivers_clicks_and_drag_outside_canvas(self):
         import aipetlib.mac_panels as mac_panels
