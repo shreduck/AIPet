@@ -7,6 +7,98 @@ import unittest
 
 @unittest.skipUnless(os.environ.get('AIPET_NATIVE_WINDOW_TEST') == '1', 'opt-in native window test')
 class NativeCarouselTests(unittest.TestCase):
+    def test_scale_drag_does_not_resize_controls_until_mouse_release(self):
+        import tkinter as tk
+        from aipetlib.ui.addin_messages import show
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            win = show(root, [dict(name='Test', level='info', messages=[
+                dict(id='fixture', title='Scale test', level='info', content='Synthetic report')])],
+                screen=dict(work_area=[0, 0, 1280, 800]))
+            root.update()
+            def descendants(widget):
+                for child in widget.winfo_children():
+                    yield child
+                    yield from descendants(child)
+            slider = next(widget for widget in descendants(win) if widget.winfo_class() == 'Scale')
+            size = win.winfo_width(), win.winfo_height(), slider.winfo_width()
+            x, y = slider.coords(slider.get())
+            end_x, end_y = slider.coords(150)
+            slider.event_generate('<ButtonPress-1>', x=x, y=y)
+            slider.event_generate('<B1-Motion>', x=end_x, y=end_y, state=0x100)
+            root.update()
+            self.assertGreater(slider.get(), 100)
+            self.assertEqual((win.winfo_width(), win.winfo_height(), slider.winfo_width()), size)
+            slider.event_generate('<ButtonRelease-1>', x=end_x, y=end_y)
+            root.update()
+            self.assertGreater(win.winfo_width(), size[0])
+            self.assertGreater(slider.winfo_width(), size[2])
+            committed = win.winfo_width(), win.winfo_height(), slider.get()
+            until = time.monotonic()+0.15
+            while time.monotonic() < until:
+                root.update()
+            self.assertEqual((win.winfo_width(), win.winfo_height(), slider.get()), committed)
+        finally:
+            root.destroy()
+
+    def test_inline_whitelist_and_multiline_list_settings_work_with_real_widgets(self):
+        import hashlib
+        import json
+        from pathlib import Path
+        import tempfile
+        import tkinter as tk
+        from aipet_token_guard import detect, report_markdown
+        from aipetlib.addins import AddinManager
+        from aipetlib.ui import addin_settings
+        from aipetlib.ui.addin_messages import show
+        root = tk.Tk()
+        root.withdraw()
+        with tempfile.TemporaryDirectory() as folder:
+            manager = AddinManager(folder)
+            try:
+                value = 'testuser:testpassword'
+                report, = detect(value)
+                report['markdown_template'] = report_markdown(report)
+                row = dict(addin_id='token-guard', name='Token guard', level='warning', messages=[
+                    dict(id='fixture', title='Test finding', level='warning', report=report)])
+                def whitelist(row, value, done):
+                    manager.request_append_setting('token-guard', 'whitelist',
+                        'sha256:'+hashlib.sha256(value.encode()).hexdigest(), done)
+                win = show(root, [row], screen=dict(work_area=[0, 0, 1280, 800]), on_whitelist=whitelist)
+                root.update()
+                def descendants(widget):
+                    for child in widget.winfo_children():
+                        yield child
+                        yield from descendants(child)
+                button = next(widget for widget in descendants(win)
+                              if widget.winfo_class() == 'Button' and widget.cget('text') == 'Whitelist [+]')
+                button.invoke()
+                manager.apply_settings_requests()
+                root.update()
+                self.assertEqual(button.cget('text'), 'Whitelisted')
+                settings = {prop['key']: prop['value'] for prop in manager.get_settings('token-guard')}
+                self.assertEqual(detect(value, settings), [])
+                saved = Path(folder, 'addin-settings', 'token-guard.json').read_text()
+                self.assertNotIn(value, saved)
+                editor_win = tk.Toplevel(root)
+                def save(values, done):
+                    manager.set_settings('token-guard', values)
+                    done(None)
+                editor = addin_settings.build(editor_win, manager.get_settings('token-guard'), save)
+                editor.pack(fill='both', expand=True)
+                root.update()
+                lists = [widget for widget in descendants(editor_win) if widget.winfo_class() == 'Text']
+                self.assertEqual(len(lists), 2)
+                lists[1].insert('end', 'rule:hash.hex\nfixture!')
+                next(widget for widget in descendants(editor_win)
+                     if widget.winfo_class() == 'Button' and widget.cget('text') == 'Save').invoke()
+                settings = {prop['key']: prop['value'] for prop in manager.get_settings('token-guard')}
+                self.assertEqual(settings['blacklist'], ['rule:hash.hex', 'fixture!'])
+            finally:
+                manager.stop()
+                root.destroy()
+
     def test_no_focus_default_preserves_foreground_and_switches_apply_live(self):
         import tkinter as tk
         from aipetlib.ui.addin_messages import show

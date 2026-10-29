@@ -12,12 +12,63 @@ def encode(value):
 
 
 class TokenGuardTests(unittest.TestCase):
+    def test_numbered_code_output_is_not_a_credential_pair(self):
+        text = '\n'.join(f'{line}:import org.apache.fixture;' for line in range(19, 30))
+        self.assertEqual(detect(text), [])
+        self.assertEqual(detect(encode('19:import')), [])
+
+    def test_pair_length_and_warning_threshold_are_configurable(self):
+        self.assertEqual(detect('a:b'), [])
+        self.assertEqual(len(detect('a:b', {'pair_min_length': 1})), 1)
+        self.assertEqual(detect(encode('abc:def'), {'pair_min_length': 4}), [])
+        text = 'admin:admin Bearer ' + 'opaqueTestToken' * 3 + ' credentials are tester:short'
+        medium = detect(text, {'minimum_warning_level': 1})
+        self.assertTrue(medium)
+        self.assertTrue(all(report['warning_level'] in ('standard', 'high') for report in medium))
+        high = detect(text, {'minimum_warning_level': 2})
+        self.assertTrue(high)
+        self.assertTrue(all(report['warning_level'] == 'high' for report in high))
+
+    def test_value_and_rule_whitelists_and_blacklist_precedence(self):
+        import hashlib
+        value = 'admin:admin'
+        digest = 'sha256:' + hashlib.sha256(value.encode()).hexdigest()
+        for whitelist in ([value], [digest], ['rule:credential.possible_pair']):
+            self.assertEqual(detect(value, {'whitelist': whitelist}), [])
+        self.assertEqual(detect(encode(value), {'whitelist': [digest]}), [])
+        self.assertEqual(detect(value, {'whitelist': [digest], 'blacklist': [value]}), [])
+        text = value + ' Bearer ' + 'opaqueTestToken'*3
+        report, = detect(text, {'whitelist': [digest]})
+        self.assertEqual([text[start:end] for start, end in report['hook_spans']], ['opaqueTestToken'*3])
+        report, = detect(value, {'whitelist': [digest], 'blacklist': [value], 'whitelist_precedes': False})
+        self.assertEqual(report['warning_level'], 'high')
+        self.assertEqual(report['rule'], 'custom.blacklist')
+
+    def test_whitelisting_a_full_value_also_suppresses_nested_blacklist_hits(self):
+        import hashlib
+        value = 'admin:admin'
+        digest = 'sha256:' + hashlib.sha256(value.encode()).hexdigest()
+        self.assertEqual(detect(value, {'whitelist': [digest], 'blacklist': ['admin']}), [])
+        text = value + ' Bearer ' + 'opaqueTestToken'*3
+        report, = detect(text, {'whitelist': [digest], 'blacklist': ['admin']})
+        self.assertEqual([text[start:end] for start, end in report['hook_spans']], ['opaqueTestToken'*3])
+        report, = detect(value, {'whitelist': [digest], 'blacklist': ['admin'], 'whitelist_precedes': False})
+        self.assertEqual(report['warning_level'], 'high')
+
+    def test_blacklist_literals_and_rule_ids_force_high_and_mask_all_occurrences(self):
+        text = 'before fixture! between fixture! after'
+        report, = detect(text, {'blacklist': ['fixture!'], 'minimum_warning_level': 2})
+        self.assertEqual(report['rule'], 'custom.blacklist')
+        self.assertEqual([text[start:end] for start, end in report['hook_spans']], ['fixture!', 'fixture!'])
+        report, = detect('a'*32, {'blacklist': ['rule:hash.hex'], 'minimum_warning_level': 2})
+        self.assertEqual(report['warning_level'], 'high')
+
     def test_bare_alphanumeric_pairs_are_low_and_encoded_pairs_are_medium(self):
         for pair in ('admin:admin', 'a:b', 'User123:Pass456'):
             with self.subTest(pair=pair):
-                plain, = detect('test ' + pair)
+                plain, = detect('test ' + pair, {'pair_min_length': 1})
                 self.assertEqual((plain['rule'], plain['warning_level']), ('credential.possible_pair', 'low'))
-                encoded, = detect(encode(pair))
+                encoded, = detect(encode(pair), {'pair_min_length': 1})
                 self.assertEqual((encoded['rule'], encoded['warning_level']), ('base64.possible_pair', 'standard'))
                 self.assertEqual(encoded['decoded'], pair)
                 self.assertEqual(encoded['hook_spans'], [[0, len(encode(pair))]])

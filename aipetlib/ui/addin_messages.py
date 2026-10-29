@@ -28,7 +28,8 @@ def warning_timestamp(message):
     return 'Not available'
 
 
-def show(parent, rows, on_close=None, screen=None, options=None, on_options=None):
+def show(parent, rows, on_close=None, screen=None, options=None, on_options=None,
+         on_whitelist=None, on_configure=None):
     options = dict(options or {})
     options.setdefault('addin_alert_topmost', True)
     options.setdefault('addin_alert_no_focus', True)
@@ -141,9 +142,16 @@ def show(parent, rows, on_close=None, screen=None, options=None, on_options=None
     displayed = []
     carousel = AlertCarousel()
     confirmation = [None]
-    def insert_hook(source, spans):
+    def insert_secret(value, row):
+        if on_whitelist is not None and row.get('addin_id') == 'token-guard':
+            field = inline_secret(text, value, on_whitelist=lambda done: on_whitelist(row, value, done))
+        else:
+            field = inline_secret(text, value)
+        fields.append(field)
+
+    def insert_hook(source, spans, row):
         def secret(value):
-            fields.append(inline_secret(text, value))
+            insert_secret(value, row)
         if preview.get():
             markdown_preview.render(text, source, spans, secret)
         else:
@@ -171,7 +179,7 @@ def show(parent, rows, on_close=None, screen=None, options=None, on_options=None
                 report = message.get('report')
                 if report and report.get('markdown_template'):
                     document, spans = format_markdown_report(report, message.get('timestamp'))
-                    insert_hook(document, spans)
+                    insert_hook(document, spans, row)
                     text.insert('end', '\n')
                     continue
                 text.insert('end', f"\nTimestamp: {warning_timestamp(message)}\n")
@@ -191,13 +199,13 @@ def show(parent, rows, on_close=None, screen=None, options=None, on_options=None
                     text.insert('end', f"Fingerprint: {report['fingerprint']}\n\n")
                     if 'hook_text' in report:
                         text.insert('end', f"Hook text · {report['hook_field']}\n")
-                        insert_hook(report['hook_text'], report['hook_spans'])
+                        insert_hook(report['hook_text'], report['hook_spans'], row)
                     else:
                         text.insert('end', 'Detected value: ')
-                        fields.append(inline_secret(text, report['value']))
+                        insert_secret(report['value'], row)
                     if 'decoded' in report:
                         text.insert('end', '\nDecoded content: ')
-                        fields.append(inline_secret(text, report['decoded']))
+                        insert_secret(report['decoded'], row)
                     text.insert('end', '\n')
                     if report.get('truncated'):
                         text.insert('end', 'Decoded/legacy preview limited to 4 KiB; hook text and its matches are preserved in full.\n'
@@ -220,6 +228,7 @@ def show(parent, rows, on_close=None, screen=None, options=None, on_options=None
     scale_row.pack(side='bottom', fill='x', before=text)
     component(tk.Label(scale_row, text='Window scale', font=(theme.UI_FONT, 9)), (9,)).pack(side='left')
     scale_label = component(tk.Label(scale_row, text='100%', width=5, font=(theme.UI_FONT, 9)), (9,))
+    scale_dragging, scale_commit = [False], [None]
     def set_content_scale(percent):
         old_scale = content_scale[0]
         content_scale[0] = min(2.5, max(0.5, float(percent)/100))
@@ -235,9 +244,44 @@ def show(parent, rows, on_close=None, screen=None, options=None, on_options=None
             y = max(top, min(bottom-new_height, win.winfo_y()+(height-new_height)//2))
             win.minsize(min(right-left, round(420*content_scale[0])), min(bottom-top, round(260*content_scale[0])))
             win.geometry(f'{new_width}x{new_height}'+geometry.geo(x, y))
+    def preview_scale(percent):
+        scale_label.configure(text=f'{round(float(percent))}%')
+
+    def apply_pending_scale():
+        scale_commit[0] = None
+        if not scale_dragging[0] and win.winfo_exists():
+            set_content_scale(slider.get())
+
+    def commit_scale(_event=None):
+        if not scale_dragging[0] and scale_commit[0] is None:
+            # Tk must finish releasing its thumb/track-repeat state before resizing the slider itself.
+            scale_commit[0] = win.after_idle(apply_pending_scale)
+
+    def begin_scale_drag(_event=None):
+        scale_dragging[0] = True
+        if scale_commit[0] is not None:
+            win.after_cancel(scale_commit[0])
+            scale_commit[0] = None
+
+    def end_scale_drag(_event=None):
+        scale_dragging[0] = False
+        commit_scale()
+
+    def cancel_scale_commit(event):
+        if event.widget is win and scale_commit[0] is not None:
+            win.after_cancel(scale_commit[0])
+            scale_commit[0] = None
+
     slider = component(tk.Scale(scale_row, from_=50, to=250, resolution=10, orient='horizontal',
         showvalue=False, length=120, sliderlength=14, width=8, highlightthickness=0,
-        sliderrelief='flat', bd=0, command=set_content_scale), length=120, sliderlength=14, width=8)
+        sliderrelief='flat', bd=0, command=preview_scale), length=120, sliderlength=14, width=8)
+    slider.bind('<ButtonPress-1>', begin_scale_drag, add='+')
+    slider.bind('<ButtonRelease-1>', end_scale_drag, add='+')
+    slider.bind('<KeyRelease>', commit_scale, add='+')
+    slider.bind('<MouseWheel>', commit_scale, add='+')
+    slider.bind('<ButtonRelease-4>', commit_scale, add='+')
+    slider.bind('<ButtonRelease-5>', commit_scale, add='+')
+    win.bind('<Destroy>', cancel_scale_commit, add='+')
     slider.set(100)
     pack(slider, side='left', padx=8)
     scale_label.pack(side='left')
@@ -307,6 +351,11 @@ def show(parent, rows, on_close=None, screen=None, options=None, on_options=None
     next_button.pack(side='left')
     component(tk.Button(footer, text='Dismiss', command=lambda: dismiss(carousel.current()),
               **theme.button_style('primary')), (9, 'bold'), padx=14, pady=4).pack(side='right')
+    if on_configure is not None:
+        configure = component(tk.Button(scale_row, text='Configure add-in filters…',
+            command=lambda: on_configure(carousel.current()[0]), **theme.button_style('secondary')),
+            (9,), padx=12, pady=3)
+        configure.pack(side='right')
 
     def shortcut(event, action, navigation=False):
         # Windows Tk uses Mod1 (0x8) for NumLock, not Alt. Ignore lock/extended-key flags.

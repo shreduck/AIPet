@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import re
+from bisect import bisect_right
 from collections import Counter
 from urllib.parse import unquote
 
@@ -67,6 +68,34 @@ RULES = {
 }
 HIGH_KINDS = {kind for kind, rule in RULES.items() if rule[2] == 'high'}
 SEVERITY = {'low': 0, 'standard': 1, 'high': 2}
+SETTINGS = [
+    dict(key='minimum_warning_level', label='Minimum warning level', type='integer-slider', min=0, max=2, default=0,
+         description='0 = Low, 1 = Medium, 2 = High. Blacklist matches always produce High warnings.'),
+    dict(key='pair_min_length', label='Minimum length on each side of a bare pair', type='integer-slider',
+         min=1, max=32, default=3, description='Applies to bare user:password pairs and their decoded forms; explicit credential labels keep their rules.'),
+    dict(key='whitelist', label='Whitelist — ignore matches', type='list', default=[],
+         description='One entry per line: exact value, rule:<rule ID>, or sha256:<full value hash>. Inline Whitelist buttons save hashes.'),
+    dict(key='blacklist', label='Blacklist — always warn', type='list', default=[],
+         description='One entry per line. Literal text is also searched in hook data; rule:<rule ID> and sha256:<hash> upgrade detected matches to High. No regex.'),
+    dict(key='whitelist_precedes', label='Whitelist takes precedence over blacklist', type='boolean', default=True),
+]
+RULES['Blacklist match'] = ('custom.blacklist', 'Configured blacklist value', 'high',
+                          'The hook text contains a literal value from the configured blacklist.')
+
+
+def validate_settings(settings):
+    for name in ('whitelist', 'blacklist'):
+        for entry in settings.get(name, []):
+            if entry.startswith('sha256:') and not re.fullmatch(r'sha256:[0-9a-fA-F]{64}', entry):
+                raise ValueError(f'{name}: sha256 entries require a complete 64-digit hexadecimal hash')
+            if entry.startswith('rule:') and entry[5:] not in {rule[0] for rule in RULES.values()}:
+                raise ValueError(f'{name}: unknown Token guard rule ID')
+
+
+def _listed(entries, rule, value, decoded=None):
+    values = {value, decoded} - {None}
+    hashes = {'sha256:' + hashlib.sha256(item.encode('utf-8')).hexdigest() for item in values}
+    return any(entry == 'rule:' + rule or entry in values or entry.lower() in hashes for entry in entries)
 
 
 def report_markdown(report):
@@ -114,15 +143,16 @@ def _credential_pair(value):
     return bool(user and password and not _placeholder(password))
 
 
-def _bare_pair(value):
+def _bare_pair(value, min_length=3):
     if not BARE_PAIR.fullmatch(value):
         return False
     user, password = value.split(':', 1)
-    # Numeric right sides commonly mean a time, line number or host/port.
-    return not password.isdigit() and user.lower() not in ('http', 'https', 'ftp', 'mailto', 'urn')
+    # Numeric prefixes are common in grep/compiler output: 19:import is not a login.
+    return (min(len(user), len(password)) >= min_length and not user.isdigit() and not password.isdigit()
+            and user.lower() not in ('http', 'https', 'ftp', 'mailto', 'urn'))
 
 
-def _decode_candidate(encoded, url=False, credential_context=False):
+def _decode_candidate(encoded, url=False, credential_context=False, pair_min_length=3):
     current = encoded
     for depth in range(3):
         try:
@@ -134,7 +164,7 @@ def _decode_candidate(encoded, url=False, credential_context=False):
             return None
         if decoded == current:
             return None
-        kind = _decoded_kind(decoded.strip(), credential_context=credential_context or url)
+        kind = _decoded_kind(decoded.strip(), credential_context=credential_context or url, pair_min_length=pair_min_length)
         if kind:
             return (kind if kind == 'Base64 possible pair' else
                     'Layered encoded credentials' if depth else 'URL encoded credentials' if url else kind), decoded
@@ -146,7 +176,7 @@ def _placeholder(value):
     return value.startswith(('${', '<', 'your_', 'YOUR_', '{{')) or bool(re.fullmatch(r'\$[A-Za-z_]\w*|%[A-Za-z_]\w*%', value))
 
 
-def _decoded_kind(text, credential_context=False):
+def _decoded_kind(text, credential_context=False, pair_min_length=3):
     """Recognize credential structures in decoded text, never report that text."""
     if not all(char.isprintable() or char in '\r\n\t' for char in text):
         return None
@@ -154,7 +184,7 @@ def _decoded_kind(text, credential_context=False):
         if not credential_context and (text.split(':', 1)[1].isdigit() or re.match(r'^[A-Za-z]:[\\/]', text)):
             return None
         if BARE_PAIR.fullmatch(text):
-            if not credential_context and not _bare_pair(text):
+            if not credential_context and not _bare_pair(text, pair_min_length):
                 return None
             if not credential_context:
                 return 'Base64 possible pair'
@@ -193,28 +223,42 @@ def _decoded_kind(text, credential_context=False):
     return None
 
 
-def detect(data):
+def detect(data, settings=None):
     """Return structured reports; values must only be rendered through masked controls."""
     found = {}
+    settings = settings or {}
+    minimum_level = settings.get('minimum_warning_level', 0)
+    pair_min_length = settings.get('pair_min_length', 3)
+    whitelist, blacklist = settings.get('whitelist', []), settings.get('blacklist', [])
     source_spans = {}
+    allowed_spans = {}
     def record(kind, value, decoded=None, preserve=False, source=None, path=(), span=None):
         source = value if source is None else source
-        source_spans.setdefault(path, []).append(span or (0, len(source)))
         fingerprint = hashlib.sha256(value.encode('utf-8')).hexdigest()[:16]
         rule, name, level, explanation = RULES[kind]
+        blocked = _listed(blacklist, rule, value, decoded)
+        if _listed(whitelist, rule, value, decoded) and (settings.get('whitelist_precedes', True) or not blocked):
+            allowed_spans.setdefault(path, []).append(span or (0, len(source)))
+            return False
+        if blocked:
+            level, explanation = 'high', explanation + ' This finding matches the configured blacklist.'
+        if SEVERITY[level] < minimum_level:
+            return False
+        source_spans.setdefault(path, []).append(span or (0, len(source)))
         if fingerprint in found:
             old_severity, new_severity = SEVERITY[found[fingerprint]['warning_level']], SEVERITY[level]
             if old_severity > new_severity or preserve and old_severity >= new_severity:
-                return
+                return True
         # Bound transport size while making truncation explicit in the report.
         def bounded(text):
             return text.encode('utf-8')[:4096].decode('utf-8', errors='ignore')
         report = dict(kind=kind, rule=rule, name=name, warning_level=level, explanation=explanation,
                       fingerprint=fingerprint, value=bounded(value), truncated=len(value.encode('utf-8')) > 4096,
-                      hook_text=source, hook_field='.'.join(path) or '$', _path=path)
+                      hook_text=source, hook_field='.'.join(path) or '$', _path=path, _span=span or (0, len(source)))
         if decoded is not None:
             report.update(decoded=bounded(decoded), truncated=report['truncated'] or len(decoded.encode('utf-8')) > 4096)
         found[fingerprint] = report
+        return True
     pending = [(data, 0, ())]
     budget = 262144
     decode_budget, node_budget = 128, 4096
@@ -240,7 +284,7 @@ def detect(data):
                 if len(match.group()) in (32, 40, 64, 96, 128):
                     record('Hash-like value', match.group(), preserve=True, source=text, path=path, span=match.span())
             for match in BARE_PAIR.finditer(text):
-                if _bare_pair(match.group()):
+                if _bare_pair(match.group(), pair_min_length):
                     record('Possible credential pair', match.group(), preserve=True, source=text, path=path, span=match.span())
             for kind, pattern in PATTERNS:
                 for match in pattern.finditer(text):
@@ -269,16 +313,44 @@ def detect(data):
                 decode_budget -= 1
                 encoded = match.group()
                 explicit = bool(PAIR_CONTEXT.search(text[max(0, match.start()-80):match.start()]))
-                decoded_match = _decode_candidate(encoded, url=url, credential_context=explicit)
+                decoded_match = _decode_candidate(encoded, url=url, credential_context=explicit, pair_min_length=pair_min_length)
                 if decoded_match:
                     kind, decoded = decoded_match
                     record(kind, encoded, decoded, source=text, path=path, span=match.span())
+            for literal in dict.fromkeys(entry for entry in blacklist if not entry.startswith(('rule:', 'sha256:'))):
+                first = text.find(literal)
+                if first >= 0:
+                    if record('Blacklist match', literal, source=text, path=path, span=(first, first+len(literal))):
+                        start = text.find(literal, first+len(literal))
+                        while start >= 0:
+                            source_spans[path].append((start, start+len(literal)))
+                            start = text.find(literal, start+len(literal))
     # A flood of low-confidence hashes must not hide a stronger encoded credential finding.
-    reports = sorted(found.values(), key=lambda item: (-SEVERITY[item['warning_level']], item['kind'], item['fingerprint']))[:10]
+    for path, ranges in allowed_spans.items():
+        merged = []
+        for start, end in sorted(set(ranges)):
+            if merged and start <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+            else:
+                merged.append((start, end))
+        allowed_spans[path] = merged
+
+    def allowed(path, span):
+        if not settings.get('whitelist_precedes', True):
+            return False
+        ranges = allowed_spans.get(path, [])
+        index = bisect_right(ranges, (span[0], math.inf))-1
+        return index >= 0 and span[1] <= ranges[index][1]
+    reports = sorted((report for report in found.values() if not allowed(report['_path'], report['_span'])),
+                     key=lambda item: (-SEVERITY[item['warning_level']], item['kind'], item['fingerprint']))[:10]
     for report in reports:
         spans = []
-        for start, end in sorted(set(source_spans[report.pop('_path')])):
-            if spans and start < spans[-1][1]:
+        path = report.pop('_path')
+        report.pop('_span')
+        for start, end in sorted(set(source_spans[path])):
+            if allowed(path, (start, end)):
+                continue
+            if spans and start <= spans[-1][1]:
                 spans[-1][1] = max(spans[-1][1], end)
             else:
                 spans.append([start, end])
@@ -293,7 +365,7 @@ def findings(data):
 
 def on_event(event, context):
     api = AIPet(context)
-    for report in detect(event.get('data')):
+    for report in detect(event.get('data'), context.get('settings')):
         details = dict(context.get('session') or {})
         data = event.get('data') if isinstance(event.get('data'), dict) else {}
         agent = str(event.get('agent') or context.get('agent') or '')

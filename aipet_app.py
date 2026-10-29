@@ -11,6 +11,7 @@ AIPet - tray application (entry point for AIPet.exe, in the AIPet folder).
 """
 import aipetlib.ui.app_menus as app_menus
 import ctypes
+import hashlib
 import os
 import queue
 import subprocess
@@ -584,8 +585,30 @@ class TrayApp:
             win = self._addin_alert_window = addin_message_ui.show(self.root, rows,
                 on_close=self.acknowledge_addin_messages, screen=screen,
                 options={key: self.pet.cfg.get(key, True) for key in ('addin_alert_topmost', 'addin_alert_no_focus')},
-                on_options=self.set_addin_alert_option)
+                on_options=self.set_addin_alert_option, on_whitelist=self.whitelist_addin_value,
+                on_configure=self.configure_alert_addin)
         return win
+
+    def whitelist_addin_value(self, row, value, completed):
+        if row.get('addin_id') != 'token-guard':
+            completed('This add-in does not support value whitelisting.')
+            return
+        report = row['messages'][0].get('report') or {}
+        if report.get('truncated') and value == report.get('decoded'):
+            # A decoded preview may be truncated; whitelist its complete encoded source instead.
+            source = report.get('hook_text', '')
+            for start, end in report.get('hook_spans', []):
+                candidate = source[start:end]
+                if hashlib.sha256(candidate.encode('utf-8')).hexdigest()[:16] == report['fingerprint']:
+                    value = candidate
+                    break
+        entry = 'sha256:' + hashlib.sha256(value.encode('utf-8')).hexdigest()
+        self.addins.request_append_setting('token-guard', 'whitelist', entry,
+            lambda error: self.ui(lambda: completed(error)))
+
+    def configure_alert_addin(self, row):
+        self.show_settings()
+        self.settings_win.show_addin_settings(row['addin_id'])
 
     def set_addin_alert_option(self, key, value):
         if key not in ('addin_alert_topmost', 'addin_alert_no_focus'):

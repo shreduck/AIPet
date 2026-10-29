@@ -364,6 +364,8 @@ optional `step` defaults to `1` for integers and `0.1` for numbers. Bounds must 
 step must be positive. Integer sliders require integer bounds, step, default, and values. Defaults and saved
 values must fall within the bounds; step controls slider increments, rather than restricting SDK values.
 For example: `{"key": "opacity", "type": "number-slider", "min": 0, "max": 1, "step": 0.05, "default": 0.8}`.
+`list` properties store JSON arrays of strings and show a multiline editor, one entry per line. Limits are 128
+nonempty single-line entries, 4096 characters per entry and 64 KiB total. SDK get/set settings supports these lists.
 Custom scripts implement any migration needed when their own directory properties change.
 
 The SDK's `pet.get_settings()` returns a list of descriptors with current `value` fields.
@@ -410,6 +412,14 @@ Base64 and URL-safe Base64 are decoded locally with bounded work; explicitly lab
 known token formats or hash-like token structures produce high warnings in red. Both encoded and decoded values
 stay masked until explicitly revealed. Matching hook text and secret spans are preserved in full; decoded and legacy
 value previews are limited to 4 KiB and marked when truncated. Fingerprints cover the complete value.
+Token guard's inline settings include a minimum warning level (0 Low / 1 Medium / 2 High) and minimum length for
+each side of a bare pair (default 3). Numeric line prefixes such as `19:import` are excluded. Explicit labeled
+credentials retain their detection rules even when the bare-pair length is increased.
+Whitelist and blacklist settings are lists of exact values, `rule:<rule ID>` or `sha256:<full value hash>`.
+Blacklist literals are also searched in raw hook text; blacklist matches produce High warnings. No regex is used.
+A switch controls list precedence, with whitelist first by default. The **Whitelist** button beside each inline eye
+saves a SHA-256 value hash, keeping the raw secret out of settings. It affects future alerts; existing reports stay
+available for review. **Configure add-in filters…** opens the same inline settings under Add-ins.
 Ordinary encoded text, binary data and URLs do not trigger this rule.
 The AIPet alert window follows the selected light/dark theme, including readable severity colours and Windows
 titlebar styling. The copied settings guide includes add-in UI/theming instructions.
@@ -419,7 +429,9 @@ Token guard opens it automatically on the pet's screen; subsequent alerts join w
 Other message windows default to the main screen's center. The initial window occupies about 60% of that screen's
 usable area and remains resizable. A **Window scale** slider (50–250%) resizes the entire interface: headings,
 buttons, switches, spacing, scrollbar, robot, report text and inline eye controls. The window grows within its
-screen's usable area, preserving scroll and reveal state. **Always on top** and **Do not steal focus** switches
+screen's usable area, preserving scroll and reveal state. Dragging previews the percentage; resizing applies after
+mouse release, so the slider stays fixed beneath the pointer. Keyboard changes apply on key release.
+**Always on top** and **Do not steal focus** switches
 are available in the alert window and the Add-ins menu; both are saved in config and default on. Automatic alerts
 leave keyboard focus in your current app; click the alert to use its shortcuts. Windows NumLock does not block them.
 **Markdown preview** toggles local formatting of hook text and ordinary message content (headings, emphasis,

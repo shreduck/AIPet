@@ -76,8 +76,8 @@ class AIPet:
     def get_settings(self):
         """Property descriptors and values captured when this delivery started."""
         values = self.context.get('settings', {})
-        return [dict(p, value=values.get(p['key'], p.get('default')))
-                for p in self.context.get('settings_properties', [])]
+        return copy.deepcopy([dict(p, value=values.get(p['key'], p.get('default')))
+                for p in self.context.get('settings_properties', [])])
 
     def get_pet_position(self):
         """Delivery-time x/y, width/height, screen_id and screen bounds, or None before UI is ready."""

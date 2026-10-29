@@ -19,7 +19,7 @@ def validate_schema(properties):
         if not isinstance(key, str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,63}', key) or key in keys:
             raise ValueError('settings keys must be unique lowercase identifiers')
         kind = prop.get('type', 'string')
-        if kind not in ('string', 'directory', 'boolean', 'integer', 'number', 'integer-slider', 'number-slider'):
+        if kind not in ('string', 'directory', 'boolean', 'integer', 'number', 'integer-slider', 'number-slider', 'list'):
             raise ValueError(f'unsupported setting type: {kind}')
         item = dict(key=key, label=str(prop.get('label') or key)[:160], type=kind,
                     description=str(prop.get('description') or '')[:1000], default=prop.get('default'))
@@ -33,7 +33,7 @@ def validate_schema(properties):
                     raise ValueError(f'{key}: {field} must be a finite ' + ('integer' if integer else 'number'))
             if item['min'] >= item['max'] or item['step'] <= 0:
                 raise ValueError(f'{key}: min must be less than max and step must be positive')
-        validate_value(item, item['default'])
+        item['default'] = validate_value(item, item['default'])
         result.append(item)
         keys.add(key)
     return result
@@ -41,6 +41,13 @@ def validate_schema(properties):
 
 def validate_value(prop, value):
     kind = prop['type']
+    if kind == 'list':
+        if (not isinstance(value, list) or len(value) > 128
+                or any(not isinstance(item, str) or not item.strip() or len(item) > 4096
+                       or any(char in item for char in ('\x00', '\r', '\n')) for item in value)
+                or len(json.dumps(value, ensure_ascii=False).encode('utf-8')) > 65536):
+            raise ValueError(f"{prop['label']} must be a list of up to 128 nonempty single-line strings (64 KiB total)")
+        return list(value)
     valid = ((kind in ('string', 'directory') and isinstance(value, str) and len(value) <= 4096
               and '\x00' not in value)
              or (kind == 'boolean' and type(value) is bool)

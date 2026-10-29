@@ -1,6 +1,7 @@
 """Generic property editor for built-in and user add-ins."""
 import tkinter as tk
 from tkinter import filedialog
+from tkinter.scrolledtext import ScrolledText
 
 from . import theme
 
@@ -27,6 +28,11 @@ def build(parent, properties, save, font=None):
             tk.Checkbutton(row, variable=var, text='Enabled').pack(side='left')
         elif prop['type'] in ('integer-slider', 'number-slider'):
             var = _slider(row, win, prop)
+        elif prop['type'] == 'list':
+            editor = ScrolledText(row, height=4, width=32, wrap='none', font=font(10))
+            editor.insert('1.0', '\n'.join(prop['value']))
+            editor.pack(fill='both', expand=True)
+            var = editor
         else:
             var = tk.StringVar(win, value=str(prop['value']))
             tk.Entry(row, textvariable=var, width=24, font=font(10)).pack(side='left', fill='x', expand=True)
@@ -61,7 +67,8 @@ def build(parent, properties, save, font=None):
         try:
             values = {}
             for prop, var in fields:
-                value = var.get()
+                value = ([line.strip() for line in var.get('1.0', 'end-1c').splitlines() if line.strip()]
+                         if prop['type'] == 'list' else var.get())
                 if prop['type'] in ('integer', 'integer-slider'):
                     value = int(value)
                 elif prop['type'] in ('number', 'number-slider'):

@@ -6,6 +6,19 @@ from aipetlib.ui import secret_value, warning_beacon, addin_messages
 
 
 class ReportUITests(unittest.TestCase):
+    def test_inline_whitelist_action_keeps_value_masked_and_reports_saved_state(self):
+        text, whitelist = MagicMock(), MagicMock()
+        value = 'synthetic-whitelist-test-value'
+        with patch.object(secret_value.tk, 'Canvas'), patch.object(secret_value.tk, 'Button') as button:
+            secret_value.inline(text, value, on_whitelist=whitelist)
+            self.assertNotIn(value, repr(text.mock_calls))
+            self.assertEqual(button.call_args.kwargs['text'], 'Whitelist [+]')
+            button.call_args.kwargs['command']()
+            whitelist.assert_called_once()
+            whitelist.call_args.args[0](None)
+            button.return_value.configure.assert_called_with(text='Whitelisted', state='disabled')
+            self.assertNotIn(value, repr(text.mock_calls))
+
     def test_warning_timestamp_uses_event_time_then_message_time_and_includes_timezone(self):
         from datetime import datetime
         expected = datetime.fromtimestamp(1234567890).astimezone().isoformat(timespec='seconds')

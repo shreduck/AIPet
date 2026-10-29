@@ -34,7 +34,16 @@ def window(*ids, options=None, on_options=None):
         win = ui.show(parent, rows(*ids), on_close=dismissed, screen=dict(work_area=[0, 0, 1920, 1080]),
                       options=options if options is not None else {'addin_alert_no_focus': False}, on_options=on_options)
         commands = {call.kwargs['text']: call.kwargs['command'] for call in mocks['Button'].call_args_list}
-        commands['scale'] = mocks['Scale'].call_args.kwargs['command']
+        commands['scale_preview'] = mocks['Scale'].call_args.kwargs['command']
+        commands['slider'] = mocks['Scale'].return_value
+        scale_bindings = {call.args[0]: call.args[1] for call in commands['slider'].bind.call_args_list}
+        commands['scale_bindings'] = scale_bindings
+        def scale(value):
+            commands['scale_preview'](value)
+            commands['slider'].get.return_value = float(value)
+            scale_bindings['<ButtonRelease-1>']()
+            win.after_idle.call_args.args[0]()
+        commands['scale'] = scale
         route = next(call.args[2] for call in win.bind_class.call_args_list if call.args[1] == '<KeyPress>')
         commands['keys'] = {sequence: lambda event, key=key: route(SimpleNamespace(**vars(event), keysym=key))
                             for sequence, key in (('<Left>', 'Left'), ('<Right>', 'Right'),
@@ -44,6 +53,29 @@ def window(*ids, options=None, on_options=None):
 
 
 class CarouselTests(unittest.TestCase):
+    def test_drag_previews_only_and_applies_scale_after_native_release(self):
+        with window('one') as (win, buttons, close, confirm, dismissed, text):
+            win.geometry.reset_mock()
+            text.configure.reset_mock()
+            win.after_idle.reset_mock()
+            bindings = buttons['scale_bindings']
+            bindings['<ButtonPress-1>']()
+            for value in ('110', '130', '150'):
+                buttons['scale_preview'](value)
+            text.configure.assert_not_called()
+            win.geometry.assert_not_called()
+            win.after_idle.assert_not_called()
+            buttons['slider'].get.return_value = 150
+            bindings['<ButtonRelease-1>']()
+            win.geometry.assert_not_called()
+            win.after_idle.assert_called_once()
+            win.after_idle.call_args.args[0]()
+            win.geometry.assert_called_once()
+            text.configure.assert_any_call(font=(ui.theme.UI_FONT, 15))
+            win.geometry.reset_mock()
+            buttons['scale_preview']('160')  # Any layout-induced callback cannot start feedback.
+            win.geometry.assert_not_called()
+
     def test_no_focus_default_and_live_topmost_update(self):
         with window('one', options={}) as (win, buttons, close, confirm, dismissed, text):
             win.after_idle.assert_not_called()

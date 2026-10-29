@@ -12,6 +12,20 @@ from aipetlib.config import ConfigStore
 
 
 class AddinIntroTests(unittest.TestCase):
+    def test_inline_whitelist_persists_only_a_hash_and_marshals_completion_to_ui(self):
+        import hashlib
+        app = object.__new__(aipet_app.TrayApp)
+        app.addins, app.ui = MagicMock(), MagicMock()
+        completed = MagicMock()
+        value = 'synthetic-value-for-whitelist'
+        app.whitelist_addin_value(dict(addin_id='token-guard', messages=[{}]), value, completed)
+        args = app.addins.request_append_setting.call_args.args
+        self.assertEqual(args[:3], ('token-guard', 'whitelist', 'sha256:'+hashlib.sha256(value.encode()).hexdigest()))
+        args[3](None)
+        completed.assert_not_called()
+        app.ui.call_args.args[0]()
+        completed.assert_called_once_with(None)
+
     def test_alert_options_persist_and_apply_to_an_existing_window(self):
         app = object.__new__(aipet_app.TrayApp)
         app.pet = SimpleNamespace(cfg={})

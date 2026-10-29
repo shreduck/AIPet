@@ -16,7 +16,7 @@ import time
 import uuid
 
 from aipet_addin import AIPet
-from aipet_token_guard import on_event as token_guard
+from aipet_token_guard import on_event as token_guard, SETTINGS as TOKEN_GUARD_SETTINGS, validate_settings as validate_token_guard_settings
 from .addin_messages import MessageStore
 from . import addin_settings
 
@@ -35,6 +35,7 @@ def discover(home):
     catalog['hook-journal']['settings'] = [dict(key='directory', label='Log directory', type='directory',
         default=str((Path(home) / 'addin-data' / 'hook-journal').resolve()),
         description='Moves the current and previous journal files to this directory.')]
+    catalog['token-guard']['settings'] = addin_settings.validate_schema(TOKEN_GUARD_SETTINGS)
     root = Path(home) / 'addins'
     try:
         folders = sorted(root.iterdir()) if root.is_dir() else []
@@ -245,11 +246,11 @@ class AddinManager(threading.Thread):
 
     def get_settings(self, key):
         """Return editable property descriptors including current values; no disk IO."""
-        return [dict(p) for p in self._settings_snapshot[key]]
+        return copy.deepcopy(self._settings_snapshot[key])
 
     def _publish_settings(self):
-        self._settings_snapshot = {key: [dict(p, value=self._settings[key][p['key']])
-            for p in spec.get('settings', [])] for key, spec in self.catalog.items()}
+        self._settings_snapshot = copy.deepcopy({key: [dict(p, value=self._settings[key][p['key']])
+            for p in spec.get('settings', [])] for key, spec in self.catalog.items()})
 
     def set_settings(self, key, values):
         """Validate and persist a partial update. Call from a background thread."""
@@ -259,6 +260,8 @@ class AddinManager(threading.Thread):
                 raise ValueError('Unknown add-in setting')
             updated = dict(self._settings[key])
             updated.update({k: addin_settings.validate_value(schema[k], v) for k, v in values.items()})
+            if key == 'token-guard':
+                validate_token_guard_settings(updated)
             worker = self.workers.get(key)
             with self._execution_locks.setdefault(key, threading.RLock()):
                 rollback = lambda: None
@@ -278,7 +281,14 @@ class AddinManager(threading.Thread):
     def request_set_settings(self, key, values, callback):
         """Queue a UI edit. callback(error) runs on dispatch's thread; None means success."""
         try:
-            self.settings_requests.put_nowait((key, dict(values), callback))
+            self.settings_requests.put_nowait((key, copy.deepcopy(dict(values)), callback))
+        except queue.Full:
+            callback('Too many pending settings changes; try again shortly.')
+
+    def request_append_setting(self, key, property_key, value, callback):
+        """Append on the dispatch thread so simultaneous inline whitelist actions cannot lose entries."""
+        try:
+            self.settings_requests.put_nowait((key, (property_key, value), callback))
         except queue.Full:
             callback('Too many pending settings changes; try again shortly.')
 
@@ -288,7 +298,14 @@ class AddinManager(threading.Thread):
         except queue.Empty:
             return
         try:
-            self.set_settings(key, values)
+            with self.lock:
+                if isinstance(values, tuple):
+                    property_key, value = values
+                    current = list(self._settings[key][property_key])
+                    if value not in current:
+                        current.append(value)
+                    values = {property_key: current}
+                self.set_settings(key, values)
         except Exception as error:
             callback(str(error))
         else:

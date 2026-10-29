@@ -212,7 +212,7 @@ from aipet_addin import AIPet, format_markdown_report
 pet = AIPet(context)
 
 # event: id, timestamp, agent, event, session_id, data (raw hook payload)
-# Settings types: string, boolean, integer, number, directory,
+# Settings types: string, boolean, integer, number, directory, list (strings),
 # integer-slider / number-slider (min, max, optional step).
 properties = pet.get_settings()  # descriptors including key/type/default/value
 values = {prop["key"]: prop["value"] for prop in properties}
@@ -277,7 +277,8 @@ Alert windows default to approximately 60% of the destination screen's usable ar
 Their Markdown preview toggle formats headings, emphasis, lists, quotes, links and fenced code locally, retaining
 inline masked values/eye controls. Toggling preview remasks revealed values. No HTML execution or remote content fetching.
 The Window scale slider (50–250%) resizes the whole interface and its window, including controls, spacing, robot,
-text and eye controls, without resetting scroll or reveal state. Always on top and Do not steal focus switches
+text and eye controls, without resetting scroll or reveal state. Dragging previews the percentage; apply scale
+after mouse release (or key release for keyboard adjustment). Always on top and Do not steal focus switches
 are in this window and Add-ins; both default on and persist in config. Click an unfocused alert before using shortcuts.
 The header uses AIPet's robot body asset with a rotating cyan alarm matching its eyes and mouth.
 
@@ -300,11 +301,19 @@ Minimal manifest (add `settings` only when needed):
 `settings` is a list of up to 32 properties with unique lowercase keys (letters, numbers, underscores; start with
 a letter). Each has `key`, optional `label`/`description`, `type`, and a matching `default`.
 Types: `string`, `boolean`, `integer`, `number` (finite), `directory` (absolute path). Defaults are required.
+`list` accepts up to 128 nonempty single-line strings (4096 characters each, 64 KiB total); the editor uses one
+entry per line. Get/set settings transports lists as JSON arrays and returns independent snapshots.
 Also `integer-slider` and `number-slider`: require finite `min < max`, with optional positive `step`
 (default 1 for integer-slider, 0.1 for number-slider). Integer sliders require integer bounds, step and values.
 Defaults and saved values must be in bounds; step controls UI increments, not the allowed SDK values.
 Example: {"key": "opacity", "type": "number-slider", "min": 0, "max": 1, "step": 0.05, "default": 0.8}.
 Directory properties on custom add-ins are values only; their scripts implement any file migration.
+Token guard exposes `minimum_warning_level` (0 Low / 1 Medium / 2 High), `pair_min_length` (default 3 per side),
+`whitelist`, `blacklist`, and `whitelist_precedes`. Numeric line prefixes such as `19:import` are excluded.
+Lists accept exact values, `rule:<stable rule ID>`, or `sha256:<64 hex digits>`; no regex. Blacklist literals are
+also searched in raw hook text and always warn High. Whitelist wins conflicts by default; switch precedence if needed.
+Each Token guard finding has a Whitelist button beside its eye; this saves a full value hash, never the raw secret.
+Configure add-in filters in the alert opens these inline settings under Add-ins. Changes affect future deliveries.
 Commands are argument arrays, never shell strings. `{addin_dir}` expands to the script folder; `{python}` works in
 source runs; packaged builds need an explicit installed interpreter. Timeout is 0.1–30 seconds.
 

@@ -14,6 +14,53 @@ from aipetlib.addins import AddinManager, discover
 
 
 class SettingsTests(unittest.TestCase):
+    def test_list_properties_round_trip_and_snapshots_do_not_alias_saved_lists(self):
+        self.script([dict(key='items', type='list', default=['first'])])
+        manager = self.manager()
+        manager.set_settings('example', {'items': ['first', 'second']})
+        properties = manager.get_settings('example')
+        properties[0]['value'].append('changed')
+        properties[0]['default'].append('changed')
+        self.assertEqual(manager.get_settings('example')[0]['value'], ['first', 'second'])
+        self.assertEqual(manager.get_settings('example')[0]['default'], ['first'])
+        self.assertEqual(self.manager().get_settings('example')[0]['value'], ['first', 'second'])
+        api = AIPet(dict(settings_properties=properties, settings={'items': ['first']}))
+        api.get_settings()[0]['value'].append('local mutation')
+        self.assertEqual(api.get_settings()[0]['value'], ['first'])
+        for invalid in ('not a list', [1], [''], ['line\nbreak'], ['null\x00'], ['x']*129):
+            with self.subTest(value=repr(invalid)[:20]), self.assertRaises(ValueError):
+                manager.set_settings('example', {'items': invalid})
+
+    def test_concurrent_whitelist_buttons_append_without_losing_entries(self):
+        import hashlib
+        manager = self.manager()
+        errors = []
+        for value in ('one', 'two', 'one'):
+            manager.request_append_setting('token-guard', 'whitelist',
+                'sha256:' + hashlib.sha256(value.encode()).hexdigest(), errors.append)
+        for _ in range(3):
+            manager.apply_settings_requests()
+        self.assertEqual(errors, [None, None, None])
+        values = {prop['key']: prop['value'] for prop in self.manager().get_settings('token-guard')}
+        self.assertEqual(len(values['whitelist']), 2)
+        self.assertNotIn('one', json.dumps(values))
+        for invalid in ({'whitelist': ['rule:missing']}, {'blacklist': ['sha256:bad']}, {'minimum_warning_level': 3}):
+            with self.assertRaises(ValueError):
+                manager.set_settings('token-guard', invalid)
+
+    def test_list_editor_saves_one_value_per_nonempty_line(self):
+        from unittest.mock import MagicMock
+        from aipetlib.ui import addin_settings as editor
+        with patch.object(editor.tk, 'Frame'), patch.object(editor.tk, 'Label'), \
+                patch.object(editor.tk, 'Button') as button, patch.object(editor, 'ScrolledText') as text, \
+                patch.object(editor.theme, 'theme_widget'):
+            text.return_value.get.return_value = 'first\n second \n\n'
+            save = MagicMock()
+            editor.build(MagicMock(), [dict(key='items', label='Items', type='list', value=['original'])], save)
+            text.return_value.insert.assert_called_once_with('1.0', 'original')
+            button.call_args.kwargs['command']()
+            self.assertEqual(save.call_args.args[0], {'items': ['first', 'second']})
+
     def test_slider_properties_preserve_bounds_steps_and_persist_typed_values(self):
         self.script([dict(key='opacity', type='number-slider', min=0, max=1, step=0.05, default=0.8),
                      dict(key='count', type='integer-slider', min=1, max=20, default=5),

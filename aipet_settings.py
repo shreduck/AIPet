@@ -198,6 +198,16 @@ class SettingsWindow:
         except tk.TclError:
             pass
 
+    def show_addin_settings(self, key):
+        """Open an add-in's inline editor from its alert without creating another configuration window."""
+        self._expanded_addins.add(key)
+        self.page = 'Add-ins'
+        if self.query.get():
+            self.query.set('')
+        else:
+            self._render(keep_scroll=False)
+        self.raise_()
+
     def close(self):
         if self._after:
             try:
