@@ -146,12 +146,16 @@ class Tooltips:
         c.tag_lower(border)
         c.config(width=w, height=h)
         tip.update_idletasks()
-        # Both session and usage details belong above the pet, clear of its body
-        # and badges. Centre on the pet itself, excluding the usage badge gutter.
+        # Prefer above the pet, but flip below when the monitor's top edge would
+        # push the tooltip onto its body. Centre excluding the usage badge gutter.
         x = pet.canvas.winfo_rootx() + pet_style.px(pet_style.BADGE_GUTTER + getattr(pet, "gutter", 0) + pet_style.PET_W / 2) - tip.winfo_reqwidth() // 2
         y = pet.canvas.winfo_rooty() - tip.winfo_reqheight() - 6
+        ref = (pet.canvas.winfo_rootx() + 10, pet.canvas.winfo_rooty() + 10)
+        screen = geometry.work_area(*ref, tip)
+        if screen and y < screen[1]:
+            y = pet.canvas.winfo_rooty() + pet.canvas.winfo_height() + 6
         tip.geometry(geometry.geo(*geometry.fit_on_screen(x, y, tip.winfo_reqwidth(), tip.winfo_reqheight(),
-                                        (pet.canvas.winfo_rootx() + 10, pet.canvas.winfo_rooty() + 10), tip)))
+                                        ref, tip)))
         tip.deiconify()
         if IS_MAC:
             import mac_statusbar as mac
