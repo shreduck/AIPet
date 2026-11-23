@@ -282,13 +282,12 @@ class PetApp:
             self.reader.stop()
             self.ssh_connections.close()
 
-    def show_ssh_settings(self, parent=None):
+    def show_ssh_settings(self, parent=None, *, connection=None):
         from aipetlib.ui.ssh_settings import SSHSettings
         window = getattr(self, "ssh_settings", None)
-        if window and window.win.winfo_exists():
-            window.show()
-        else:
-            self.ssh_settings = SSHSettings(parent or self.root, self.ssh_connections)
+        if window is None or not window.win.winfo_exists():
+            window = self.ssh_settings = SSHSettings(parent or self.root, self.ssh_connections)
+        window.show(connection)
 
     def read_items(self):
         """Every session, read from disk (and Workbench): the slow part, run by the session reader thread."""
@@ -738,7 +737,11 @@ def main():
     if "--probe-workbench" in sys.argv:
         probe_workbench()
         return
-    PetApp().root.mainloop()
+    from aipetlib.app.approvals import Approvals
+    pet = PetApp()
+    approvals = Approvals(pet)
+    pet.answers.ssh_rules_editor = approvals.open_session_editor
+    pet.root.mainloop()
 
 
 if __name__ == "__main__":

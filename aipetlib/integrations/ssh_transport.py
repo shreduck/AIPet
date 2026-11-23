@@ -152,8 +152,7 @@ print(json.dumps([sys.executable, {kind: os.path.join(folder, name)
             raise ConnectionProblem("No Claude Code or Codex installation was found on the SSH host.")
         return executable, configs
 
-    def install(self):
-        executable, configs = self._discover()
+    def _deploy_runtime(self):
         archive = io.BytesIO()
         root = Path(paths.RESOURCE_DIR)
         with ZipFile(archive, "w", ZIP_DEFLATED) as bundle:
@@ -164,7 +163,12 @@ print(json.dumps([sys.executable, {kind: os.path.join(folder, name)
                 bundle.write(source, str(source.relative_to(root)).replace(os.sep, "/"))
             for name in ("aipet_usage.py", "aipet_claude_usage.py"):
                 bundle.write(root / name, name)
+        self._write(self._path("aipet-hook.pyz"), archive.getvalue())
+        self._write(self._path(APPROVALS_MARKER), b"")
+        self.approvals_supported = True
 
+    def install(self):
+        executable, configs = self._discover()
         hook = self._path("aipet-hook.pyz")
         command = "env " + " ".join(shlex.quote(part) for part in ("AIPET_DIR=" + self.base, executable, hook))
         changes = []
@@ -200,7 +204,7 @@ print(json.dumps([sys.executable, {kind: os.path.join(folder, name)
         self._mkdir(self.base)
         for folder in ("answers", "sessions"):
             self._mkdir(self._path(folder))
-        self._write(hook, archive.getvalue())
+        self._deploy_runtime()
         for path, original, updated, mode in changes:
             self._mkdir(posixpath.dirname(path))
             try:
@@ -214,8 +218,6 @@ print(json.dumps([sys.executable, {kind: os.path.join(folder, name)
             if original is not None:
                 self._write(path + ".aipet-" + uuid4().hex + ".bak", original)
             self._write(path, updated, mode)
-        self._write(self._path(APPROVALS_MARKER), b"")
-        self.approvals_supported = True
         return "Hooks installed. Restart remote sessions" + (" and trust AIPet in Codex /hooks." if "codex" in configs else ".")
 
     def _sync_approvals(self, approvals, remote_now):
@@ -227,6 +229,11 @@ print(json.dumps([sys.executable, {kind: os.path.join(folder, name)
                 if not _missing(exc):
                     raise
                 self.approvals_supported = False
+                try:
+                    # Existing hook commands still point to the same AIPet-owned archive.
+                    self._deploy_runtime()
+                except (OSError, ValueError):
+                    pass  # Keep monitoring and expose the manual update in SSH settings.
         if not self.approvals_supported:
             return
         path = self._path(SSH_APPROVAL_FILE)

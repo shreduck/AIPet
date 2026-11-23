@@ -315,5 +315,6 @@ class Approvals:
     def changed(self):
         app = self.app
         self.targets_on = permissions.auto_approve_targets()
-        app.presentation.invalidate()  # the tray tooltip says when auto approve is on
-        app.refresh_menu()
+        if hasattr(app, "presentation"):
+            app.presentation.invalidate()  # the tray tooltip says when auto approve is on
+            app.refresh_menu()

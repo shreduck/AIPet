@@ -137,6 +137,8 @@ class PermissionCard:
         self.clearlink = tk.Label(right, text="Not asking anymore? Clear this prompt", bg=bg, fg=muted, cursor="hand2",
                                   anchor="w", font=self.f(8, "underline"))
         self.clearlink.bind("<Button-1>", lambda e: self.clear_prompt())
+        self.ssh_rules_button = tk.Button(right, command=self.open_ssh_approval_options,
+                                          **dict(theme.button_style("secondary"), font=self.f(9, "bold")))
         # Timed auto approve for this session (asks to confirm first)
         self.timed_row = tk.Frame(right, bg=bg)
         self.timedlink = tk.Label(self.timed_row, bg=bg, fg=theme.themed_color("#b45309"), cursor="hand2", anchor="w",
@@ -330,16 +332,23 @@ class PermissionCard:
         req = item.get("request") or {}
         can_answer = bool(self.app.answers.enabled(item) and permissions.hook_waiting(item) and not self.sent)
         stop = None if can_answer or self.sent or not req else permissions.hook_stop(item, permissions.answers_dir())
-        grant = permissions.timed_grant_for(item) if can_answer else None
+        show_timed = self._show_timed_controls(item, can_answer)
+        grant = permissions.timed_grant_for(item) if show_timed else None
+        visible_request = {key: value for key, value in req.items() if key != "ssh_wait_until"}
         return (item.get("state", "needs_input"), self.sent, getattr(self, "_sent_id", None),
-                json.dumps(req, sort_keys=True, default=str), item.get("pending", 0), item.get("title"),
+                json.dumps(visible_request, sort_keys=True, default=str), item.get("pending", 0), item.get("title"),
                 tuple(r.get("id") for r in item.get("requests") or []),
                 item.get("where"), item.get("detail"), item.get("agent"), item.get("message"), bool(item.get("changed")),
                 can_answer, bool(self.app.answers.enabled(item)), json.dumps(stop, default=str),
                 permissions.supports_session_approvals(item),
                 self.app.cfg.get("codex_answers", True), preferences.ANSWER_WAIT["v"],
                 json.dumps(grant, sort_keys=True), permissions.blacklist_blocked(item),
-                self.app.answers.timed_minutes() if can_answer else None)
+                self.app.answers.timed_minutes() if show_timed else None)
+
+    def _show_timed_controls(self, item, can_answer):
+        req = item.get("request") or {}
+        return (not self.sent and req.get("kind") != "question" and permissions.supports_session_approvals(item)
+                and (can_answer or permissions.ssh_permission_prompt(item)))
 
     def _tick_texts(self, item):
         if item.get("changed"):
@@ -454,18 +463,23 @@ class PermissionCard:
         elif question:
             note = f"Answer this in {who}: press Go to window."
         remote = bool(item.get("ssh_connection"))
+        ssh_prompt = permissions.ssh_permission_prompt(item)
+        approval_supported = permissions.supports_session_approvals(item)
         if remote and not self.sent:
             note = (f"Respond here or in your SSH session running {who}." if can_answer
                     else f"Respond in your SSH session running {who}.")
             if can_answer and item.get("agent") == "codex":
                 note = "Respond here or select Show in Codex to hand the prompt back to your SSH session."
+            if ssh_prompt and not approval_supported:
+                note += "\nUpdate the SSH hooks to use timed approvals and session rules."
+            elif ssh_prompt and not can_answer:
+                note += "\nTimed approvals and session rules apply to future requests."
         self.note.config(text=note)
         self.answer_row.pack_forget()
         self.q_row.pack_forget()
         if can_answer:
             (self.q_row if question else self.answer_row).pack(fill="x", after=self.note)
         self._req_id = req.get("id")
-        approval_supported = permissions.supports_session_approvals(item)
         if not approval_supported:
             self.btn_whitelist.pack_forget()
         elif not self.btn_whitelist.winfo_manager():
@@ -475,7 +489,8 @@ class PermissionCard:
         else:
             self.clearlink.pack_forget()
         self._timed_grant = False
-        if can_answer and not question and approval_supported:
+        show_timed = self._show_timed_controls(item, can_answer)
+        if show_timed:
             grant = permissions.timed_grant_for(item)
             self.timedlink.config(text=self._timed_text(grant))
             self._timed_grant = bool(grant)
@@ -487,6 +502,10 @@ class PermissionCard:
             self.timed_row.pack(fill="x", pady=(0, 4), after=self.note)
         else:
             self.timed_row.pack_forget()
+        self.ssh_rules_button.pack_forget()
+        if ssh_prompt and not self.sent:
+            self.ssh_rules_button.config(text="Whitelist / blacklist…" if approval_supported else "Update SSH hooks…")
+            self.ssh_rules_button.pack(anchor="w", after=self.timed_row if show_timed else self.note, pady=(0, 4))
         if remote:
             self.golink.pack_forget()
             self.go_row.pack_forget()
@@ -638,6 +657,7 @@ class PermissionCard:
         self.q_row.pack_forget()
         self.qframe.pack_forget()
         self.timed_row.pack_forget()
+        self.ssh_rules_button.pack_forget()
         self.golink.pack_forget()
         if remote:
             self.go_row.pack_forget()
@@ -694,6 +714,10 @@ class PermissionCard:
 
     def clear_prompt(self):
         self.app.answers.clear_prompt(self.key, getattr(self, "_req_id", None))  # the next poll moves the card on / closes it
+
+    def open_ssh_approval_options(self):
+        item = next((i for i in self.app._last_items if i["key"] == self.key), {})
+        self.app.answers.open_ssh_approval_options(item)
 
     def auto_approve_for_a_while(self):
         """Start the timed auto approve for this session (after its confirmation), and allow the prompt on screen."""

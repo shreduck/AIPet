@@ -61,7 +61,8 @@ class PromptPanel:
         req = item.get("request") or {}
         name = window.net["agents"][who]["name"]
         answerable = permission_rules.hook_waiting(item) and window.pet.answers.enabled(item)
-        self.chip.configure(text=f"[!] {name} needs your input · " + ("space to open" if answerable
+        ssh_prompt = permission_rules.ssh_permission_prompt(item)
+        self.chip.configure(text=f"[!] {name} needs your input · " + ("space to open" if answerable or ssh_prompt
                                                                        else "answer it in the window"))
         in_window = None if answerable else who
         if in_window != self.in_window:
@@ -71,7 +72,9 @@ class PromptPanel:
             self.chip.place(in_=window.graph.canvas, relx=1.0, rely=1.0, x=-window.px(170), y=-window.px(6), anchor="se")
         if req.get("id") != self.q_req:  # a new prompt: its first question, nothing picked yet
             self.q_req, self.q_index, self.q_state = req.get("id"), 0, {}
-        sig = (req.get("id"), str(req.get("questions")), window.theme, window.s, permission_rules.hook_waiting(item))
+        sig = (req.get("id"), str(req.get("questions")), window.theme, window.s, answerable,
+               permission_rules.supports_session_approvals(item),
+               permission_rules.timed_grant_for(item) if ssh_prompt else None)
         if sig != self.sig:
             self.sig = sig
             self.build_overlay(name, req, item)
@@ -149,6 +152,8 @@ class PromptPanel:
             lab.pack(fill="x", padx=pad, pady=window.px(4))
             self.wraps.append(lab)
         answerable = permission_rules.hook_waiting(item) and window.pet.answers.enabled(item)
+        ssh_prompt = permission_rules.ssh_permission_prompt(item or {})
+        approval_supported = permission_rules.supports_session_approvals(item or {})
         self.own = None  # (question, entry) when a typed answer can be sent
         self.radio = False  # the options are a pick-one list (a question)
         self.questions = questions if answerable else []
@@ -173,16 +178,21 @@ class PromptPanel:
                 agent_name = "codex" if (item or {}).get("agent") == "codex" else "claude"
                 self.options.append((f"{agent_name}: {common.suggestion_label(sug)}",
                                      lambda sug=sug: self.send("allow", permissions=[sug])))
-            if permission_rules.supports_session_approvals(item or {}):
+            if approval_supported:
                 self.options.append(("aipet: always (whitelist)", self.always))
-            if (item or {}).get("session_id") and permission_rules.supports_session_approvals(item):
-                grant = permission_rules.timed_grant_for(item)
-                self.options.append(("aipet: auto approving · reject blacklist" if grant and grant.get("reject_blacklist") else
-                                     "aipet: auto approving · pause on blacklist" if grant and grant.get("respect_blacklist") else
-                                     "aipet: auto approving this session · allow" if grant else
-                                     f"aipet: auto approve this session for {window.pet.answers.timed_minutes()} min…",
-                                     self.timed))
+        if approval_supported and (ssh_prompt or (answerable and not questions and (item or {}).get("session_id")
+                                                   and not (item or {}).get("ssh_connection"))):
+            grant = permission_rules.timed_grant_for(item)
+            self.options.append(("aipet: auto approving · reject blacklist" if grant and grant.get("reject_blacklist") else
+                                 "aipet: auto approving · pause on blacklist" if grant and grant.get("respect_blacklist") else
+                                 "aipet: auto approving this session · allow" if grant else
+                                 f"aipet: auto approve this session for {window.pet.answers.timed_minutes()} min…",
+                                 self.timed))
+        if answerable and not questions:
             self.options.append(("deny", lambda: self.send("deny")))
+        if ssh_prompt:
+            self.options.append(("whitelist / blacklist…" if approval_supported else "update SSH hooks…",
+                                 lambda: window.pet.answers.open_ssh_approval_options(window.item or {})))
         n_answers = len(self.options)
         self.options.append(("full card", lambda: window.pet.open_detail(window.key)))
         codex = (item or {}).get("agent") == "codex"
@@ -227,6 +237,9 @@ class PromptPanel:
         elif answerable:
             hint = ("# 1-9 or ↑↓ + enter to answer · type your own + enter · esc fold" if self.radio
                     else "# 1-9 or ←→ + enter to answer · esc fold")
+        elif ssh_prompt:
+            hint = ("# answer this prompt in your SSH session · rules apply to future requests" if approval_supported
+                    else "# answer in your SSH session · update hooks to use timed approvals and rules")
         elif req.get("id") in self.released:
             hint = "# handed back to codex: answer it in the codex window now (go to window takes you there)"
         elif req.get("source") == "codex-question":

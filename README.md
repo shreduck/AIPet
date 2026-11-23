@@ -199,7 +199,7 @@ Save the connection and select **Install hooks**. The server needs Python 3 and 
 
 Connection failures stay in the SSH settings window. Temporary outages retry in the background. A rejected password or host key pauses the connection until you update the profile or select **Reconnect**. If a connection drops while a hook is waiting for an answer, the remote agent resumes its normal prompt when AIPet's heartbeat expires.
 
-To use approval rules on a host set up with v1.0.0, select **Install hooks** again under **SSH connections**. Set a host's Claude Code and Codex rules under **Permissions → Auto approve**. To override the host's blacklist and whitelist for one session, use **Live Management → session → Approval rules for this session**. Select **Use host rules for this session** to inherit them again. On an SSH prompt, **Allow + whitelist** saves a rule for that session.
+When AIPet reconnects to a host set up with v1.0.0, it updates the existing SSH hook runtime. If the update fails, open **SSH connections** and select **Install hooks**. Set a host's Claude Code and Codex rules under **Permissions → Auto approve**. Use **Whitelist / blacklist** in a permission popup or **Live Management → session → Approval rules for this session** to override the host's rules. Select **Use host rules for this session** to inherit them again. On an SSH prompt, **Allow + whitelist** saves a rule for that session.
 
 Start a timer from **Live Management** or a waiting prompt and choose **Approve all**, **Pause on blacklist**, or **Reject all in blacklist**. The SSH host needs a recent policy refresh to apply rules, and timed approvals also stop at their selected end time. The policy refresh expires after eight seconds. AI questions still wait for an answer.
 

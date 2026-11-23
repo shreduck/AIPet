@@ -231,6 +231,25 @@ class SSHTests(unittest.TestCase):
                     if process.poll() is None:
                         process.kill()
 
+    def test_poll_updates_an_existing_runtime_without_changing_agent_settings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            remote, config = self._remote(tmp)
+            remote.install()
+            original = config.read_bytes()
+            base = remote.sftp.path(remote.base)
+            (base / ssh_transport.APPROVALS_MARKER).unlink()
+            # Simulate an older archive and a subsequent app connection.
+            (base / "aipet-hook.pyz").write_bytes(b"old runtime")
+            remote.approvals_supported = None
+            with patch.object(remote, "_deploy_runtime", side_effect=PermissionError):
+                self.assertEqual(remote.poll((False, False, 10), []), [])
+                self.assertFalse(remote.approvals_supported)
+            remote.approvals_supported = None
+            self.assertEqual(remote.poll((False, False, 10), []), [])
+            self.assertTrue(remote.approvals_supported)
+            self.assertTrue((base / "aipet-hook.pyz").read_bytes().startswith(b"PK"))
+            self.assertEqual(config.read_bytes(), original)
+
     def test_ssh_policy_sync_scopes_and_expires_approvals(self):
         with (tempfile.TemporaryDirectory() as tmp, patch.object(permissions.paths, "HOME_DIR", tmp),
               patch.object(permissions.paths, "AUTO_APPROVE_PATH", str(Path(tmp) / "approval.json"))):

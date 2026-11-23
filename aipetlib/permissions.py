@@ -147,6 +147,11 @@ def supports_session_approvals(item):
     return not item.get("ssh_connection") or bool(item.get("ssh_approvals"))
 
 
+def ssh_permission_prompt(item):
+    req = item.get("request") or {}
+    return bool(session_approval_key(item) and req and req.get("kind") != "question" and not req.get("questions"))
+
+
 def _search(pattern, text):
     try:
         return bool(re.search(pattern, text))

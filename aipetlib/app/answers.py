@@ -27,12 +27,21 @@ class Answers:
         self.navigation = PromptNavigation()
         self._timed_dialogs = {}
         self.rules_changed = None
+        self.ssh_rules_editor = None
 
     def read_again(self):
         """The hook (or the session file) is about to change: have the background reader look now."""
         reader = getattr(self.app, "reader", None)
         if reader:
             reader.wake()
+
+    def open_ssh_approval_options(self, item):
+        if not permission_rules.ssh_permission_prompt(item):
+            return
+        if not permission_rules.supports_session_approvals(item):
+            self.app.show_ssh_settings(connection=item["ssh_connection"])
+        elif self.ssh_rules_editor:
+            self.ssh_rules_editor(item)
 
     def send(self, key, behavior, answers=None, permissions=None, auto_approved=False):
         """Hand the user's click to the waiting PermissionRequest hook. Returns True if it was written.

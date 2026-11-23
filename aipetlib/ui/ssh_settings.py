@@ -93,9 +93,13 @@ class SSHSettings:
                 if job:
                     self.win.after_cancel(job)
 
-    def show(self):
+    def show(self, connection=None):
         if self.win.winfo_exists():
             self.win.lift()
+            if connection and self.list.exists(connection) and not self.busy:
+                self.list.selection_set(connection)
+                self.list.see(connection)
+                self._selected(None)
 
     def _new(self):
         self.selected = None

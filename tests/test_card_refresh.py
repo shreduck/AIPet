@@ -43,6 +43,19 @@ class CardRefreshTests(unittest.TestCase):
         self.assertEqual(self.card._render.call_count, 5)
         self.assertEqual(self.card._tick_texts.call_count, 0)
 
+    def test_ssh_wait_refresh_does_not_redraw_permission_controls(self):
+        item = self.item(ssh_connection="host", ssh_approvals=True,
+                         request={"id": "r1", "kind": "permission", "ssh_wait_until": 5.0})
+        self.card.update(item)
+        self.card.update(dict(item, request=dict(item["request"], ssh_wait_until=6.0)))
+        self.assertEqual(self.card._render.call_count, 1)
+        self.waiting = False
+        self.card.update(item)
+        self.assertEqual(self.card._render.call_count, 2)
+        self.assertTrue(self.card._show_timed_controls(item, can_answer=False))
+        self.assertFalse(self.card._show_timed_controls(dict(item, ssh_approvals=False), can_answer=False))
+        self.assertFalse(self.card._show_timed_controls(self.item(ssh_connection="host", ssh_approvals=True), False))
+
 
 if __name__ == "__main__":
     unittest.main()

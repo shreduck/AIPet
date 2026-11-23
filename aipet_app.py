@@ -198,6 +198,7 @@ class TrayApp:
         self._tk_thread = threading.current_thread()
         self.approvals = Approvals(self)  # auto approve rules per hook target, and which are on
         self.pet.answers.rules_changed = self.approvals.changed
+        self.pet.answers.ssh_rules_editor = self.approvals.open_session_editor
         self.version = releases.current_version()
         self.updates = UpdateFlow(self)  # new releases: daily check, menu entries, the dialog
         self.setup = SetupFlow(self)

@@ -60,6 +60,18 @@ class CarouselTests(unittest.TestCase):
     def labels(self):
         return [label for label, _ in self.prompt.options]
 
+    def test_ssh_approval_options_appear_even_without_manual_answering(self):
+        self.window.pet.answers.enabled = lambda _: False
+        self.window.item = {"agent": "codex", "state": "needs_input", "session_id": "session",
+                            "ssh_connection": "host", "request": {"id": "p", "tool": "Bash"}}
+        self.prompt.draw()
+        self.assertIn("update SSH hooks…", self.labels())
+        self.window.item["ssh_approvals"] = True
+        self.prompt.draw()
+        self.assertIn("aipet: auto approve this session for 15 min…", self.labels())
+        self.assertIn("whitelist / blacklist…", self.labels())
+        self.assertNotIn("allow once", self.labels())
+
     def choose(self, label):
         self.prompt.choose(self.labels().index(label))
 
