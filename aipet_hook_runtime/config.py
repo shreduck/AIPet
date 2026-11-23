@@ -2,6 +2,9 @@
 import sys
 
 AGENT = "codex" if "--codex" in sys.argv[1:] else "claude"
+SSH_HOOK = "--ssh" in sys.argv[1:]
+SSH_APPROVAL_FILE = "ssh-approvals.json"
+SSH_APPROVAL_LEASE = 8
 
 
 WORKING_EVENTS = {"UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "PostToolUseFailure", "PermissionDenied"}
@@ -27,6 +30,7 @@ QUESTION_TOOL = "AskUserQuestion"
 
 
 CODEX_QUESTION_TOOLS = {"request_user_input_async", "request_user_input"}
+QUESTION_TOOLS = CODEX_QUESTION_TOOLS | {QUESTION_TOOL}
 
 
 AUTO_APPROVE_FILE = "auto-approve.json"

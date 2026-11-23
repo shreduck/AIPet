@@ -6,7 +6,7 @@ import tkinter as tk
 
 from .. import permissions
 from ..runtime import diagnostics
-from ..integrations import targets
+from ..integrations import ssh, targets
 from ..ui import sprites
 from ..ui import theme
 from ..ui.approval_rules import RuleLists
@@ -36,8 +36,16 @@ class Approvals:
         if os.name == "nt" or IS_MAC:
             claude.append(("Cowork (Claude desktop app)", "cowork"))
         sections = [("Claude Code", claude), ("Codex", list(app.codex_targets))]
+        connections = getattr(getattr(app, "pet", None), "ssh_connections", None)
+        if connections:
+            profiles = connections.profiles()
+            if profiles:
+                for name, agent in (("SSH · Claude Code", "claude"), ("SSH · Codex", "codex")):
+                    sections.append((name, [(ssh.label(profile), permissions.ssh_target_key(profile["id"], agent))
+                                            for profile in profiles]))
         known = {k for _, items in sections for _, k in items}
-        other = [(k, k) for k in self.targets_on if k not in known]
+        other = [(k, k) for k in self.targets_on if k not in known
+                 and not (k.removeprefix("codex:").startswith("ssh:") and k.removeprefix("codex:").count(":") > 1)]
         if other:
             sections.append(("Not detected now", other))
         return sections
@@ -56,7 +64,13 @@ class Approvals:
             text += "  (hooks not installed)"
         return text + "..."
 
-    def open_editor(self, key, label):
+    def open_session_editor(self, item):
+        key = permissions.session_approval_key(item)
+        if key and permissions.supports_session_approvals(item):
+            label = " · ".join(x for x in (item.get("title"), item.get("conv"), item.get("where")) if x)
+            self.open_editor(key, label or "SSH session", inherit_key=permissions.auto_approve_key_for(item))
+
+    def open_editor(self, key, label, *, inherit_key=None):
         """The rules window of one hook config: on/off, Allow all, and a whitelist and a blacklist of regexes."""
         app = self.app
         wins = self.editors
@@ -66,7 +80,10 @@ class Approvals:
                 return
             except tk.TclError:
                 wins.pop(key, None)
-        old = permissions.auto_approve_rules().get(key) or permissions.default_auto_rules()
+        saved = permissions.auto_approve_rules()
+        override = saved.get(key)
+        host_rules = saved.get(inherit_key) or permissions.default_auto_rules()
+        old = override or host_rules
         win = wins[key] = tk.Toplevel(app.root)
         agent_label = "Codex" if targets.is_codex(key) else "Claude Code"
         win.title(f"AIPet - auto approve - {agent_label} - {label}")
@@ -91,6 +108,7 @@ class Approvals:
         grey = "#6b7280"
         enabled = tk.BooleanVar(value=bool(old.get("enabled")))
         allow_all = tk.BooleanVar(value=bool(old.get("allow_all")))
+        inherit = tk.BooleanVar(value=bool(inherit_key and override is None))
 
         tk.Label(body, text="AUTO APPROVAL", fg=accent, font=(sprites.MONO_FAMILY, 9, "bold")).pack(anchor="w")
         tk.Label(body, text=label, font=(sprites.MONO_FAMILY, 17, "bold")).pack(anchor="w", pady=(3, 6))
@@ -100,10 +118,15 @@ class Approvals:
         mode = tk.LabelFrame(body, text=" Approval mode ", font=(sprites.MONO_FAMILY, 10, "bold"),
                              relief="solid", bd=1, padx=10, pady=8)
         mode.pack(fill="x")
-        tk.Checkbutton(mode, text="Auto approve for this config", variable=enabled, font=(sprites.MONO_FAMILY, 10, "bold")
-                       ).pack(anchor="w")
-        tk.Checkbutton(mode, text="Allow all - approve every request (ignores both lists)",
-                       variable=allow_all, font=(sprites.MONO_FAMILY, 9)).pack(anchor="w", pady=(4, 0))
+        if inherit_key:
+            tk.Checkbutton(mode, text="Use host rules for this session", variable=inherit,
+                           font=(sprites.MONO_FAMILY, 10, "bold")).pack(anchor="w", pady=(0, 4))
+        enable_button = tk.Checkbutton(mode, text="Auto approve for this session" if inherit_key else "Auto approve for this config",
+                                       variable=enabled, font=(sprites.MONO_FAMILY, 10, "bold"))
+        enable_button.pack(anchor="w")
+        allow_button = tk.Checkbutton(mode, text="Allow all - approve every request (ignores both lists)",
+                                      variable=allow_all, font=(sprites.MONO_FAMILY, 9))
+        allow_button.pack(anchor="w", pady=(4, 0))
         mode_hint = tk.Label(mode, fg=grey, justify="left", wraplength=620, font=(sprites.MONO_FAMILY, 8))
         mode_hint.pack(anchor="w", padx=4, pady=(6, 0))
 
@@ -150,10 +173,15 @@ class Approvals:
         show_location()
 
         def sync(*_):  # Allow all switches the lists off
-            list_editor.set_disabled(allow_all.get())
-            mode_hint.configure(text="Auto approval is off. Requests still need your approval." if not enabled.get()
+            using_host = inherit.get()
+            list_editor.set_disabled(using_host or allow_all.get())
+            for widget in (enable_button, allow_button):
+                widget.configure(state="disabled" if using_host else "normal")
+            mode_hint.configure(text="This session uses its host's rules. Clear the checkbox to set session rules."
+                                if using_host else "Auto approval is off. Requests still need your approval." if not enabled.get()
                                 else "All requests will be approved. The lists below are ignored." if allow_all.get()
                                 else "Whitelist matches may proceed; the precedence switch resolves overlapping matches.")
+        inherit.trace_add("write", sync)
         allow_all.trace_add("write", sync)
         enabled.trace_add("write", sync)
 
@@ -189,9 +217,10 @@ class Approvals:
                 if win.winfo_exists():
                     save_button.configure(state="normal")
 
-        def confirm(rules):
+        def confirm(rules, effective, description):
             try:
-                self.warn(label, rules, parent=win, on_result=lambda accepted: finish_save(rules, accepted))
+                self.warn(label, effective, parent=win, on_result=lambda accepted: finish_save(rules, accepted),
+                          ssh=key.removeprefix("codex:").startswith("ssh:"), scope=description)
             except Exception as exc:
                 pending["value"] = False
                 if win.winfo_exists():
@@ -202,6 +231,16 @@ class Approvals:
             if pending["value"]:
                 return
             error.configure(text="")
+            scope = "this SSH session" if inherit_key else None
+            if inherit.get():
+                pending["value"] = True
+                save_button.configure(state="disabled")
+                current_host = permissions.auto_approve_rules().get(inherit_key) or permissions.default_auto_rules()
+                if override and current_host.get("enabled"):
+                    win.after_idle(lambda: confirm(None, current_host, scope))
+                else:
+                    finish_save(None, True)
+                return
             try:
                 lists = list_editor.read()
             except ValueError as exc:
@@ -216,7 +255,7 @@ class Approvals:
             if all_on or newly_on:
                 # Return from Aqua's button callback before opening the warning;
                 # continue saving asynchronously after the warning is destroyed.
-                win.after_idle(lambda: confirm(rules))
+                win.after_idle(lambda: confirm(rules, rules, scope))
                 return
             finish_save(rules, True)
 
@@ -244,25 +283,28 @@ class Approvals:
             win._mouse_bridge = mac_statusbar.PanelMouseBridge(win)
             win.bind("<Destroy>", lambda event: win._mouse_bridge.close() if event.widget is win else None, add="+")
 
-    def warn(self, label, rules, parent=None, on_result=None):
+    def warn(self, label, rules, parent=None, on_result=None, *, ssh=False, scope=None):
         app = self.app
+        scope = scope or "every session there"
         if rules.get("allow_all"):
             heading = f"Auto approve everything from {label}?"
             what = (f"Every permission request that reaches AIPet's hook from {label} will be approved at once, "
                     "without asking you: shell commands, file edits and deletions, web access and any other tool, "
-                    "in every session there, including subagents.")
+                    f"in {scope}, including subagents.")
         else:
             n = len([x for x in rules.get("whitelist") or [] if not x.strip().startswith("#")])
             heading = f"Turn on auto approve for {label}?"
             priority = ('Whitelist matches override blacklist matches.' if rules.get('precedence') == 'whitelist' else
                         'Blacklist matches override whitelist matches.')
             what = (f"Requests from {label} that match your {n} whitelist pattern{'s' if n != 1 else ''} will be "
-                    f"approved according to your list precedence. {priority} This applies in every session there, including "
+                    f"approved according to your list precedence. {priority} This applies in {scope}, including "
                     "subagents. A loose pattern can approve more than you meant: check them carefully.")
         return theme.themed_dialog(
             parent if parent is not None else app.root, "AIPet - auto approve", kind="warning", heading=heading,
-            text=(what + "\n\nIt takes effect immediately for running sessions and only while AIPet is running.\n\n"
-                  "Turn it off any time: pet or menu-bar / tray menu > Permissions > Auto approve."),
+            text=(what + ("\n\nSSH hosts apply the change when connected and synced.\n\n" if ssh else
+                           "\n\nIt takes effect immediately for running sessions and only while AIPet is running.\n\n")
+                  + ("Change it in Live Management under this session." if scope == "this SSH session" else
+                     "Turn it off any time under Permissions → Auto approve.")),
             buttons=(("Cancel", False, "secondary"), ("Auto approve", True, "danger")),
             cancel=False, enter_confirms=False, on_result=on_result)
 

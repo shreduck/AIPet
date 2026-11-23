@@ -374,4 +374,5 @@ def read_claude_code_sessions(cfg, ssh_records=()):
         })
         if ssh_key:
             items[-1]["ssh_connection"] = rec["ssh_connection"]
+            items[-1]["ssh_approvals"] = bool(rec.get("ssh_approvals"))
     return items

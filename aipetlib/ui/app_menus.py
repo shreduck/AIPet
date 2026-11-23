@@ -329,7 +329,8 @@ def _live_spec(app, item, settings=False):
             None]
     sessions = [d for d in app.pet._last_items if d.get("source") == "CC" and d.get("session_id")]
     for d in sessions:
-        grant = grants.get(str(d["session_id"]))
+        grant_key = permissions.timed_grant_key(d)
+        grant = grants.get(grant_key)
         name = d.get("title") or "session"
         if d.get("conv"):
             name += f" · {d['conv']}"
@@ -338,11 +339,17 @@ def _live_spec(app, item, settings=False):
         mode = (" · reject blacklist" if grant and grant.get("reject_blacklist") else
                 " · pause on blacklist" if grant and grant.get("respect_blacklist") else "")
         entries = ([item(f"Auto approving{mode} · {left(grant)}", enabled=False),
-                    item("Stop auto approving", lambda sid=d["session_id"]: app._stop_timed(sid))]
+                    item("Stop auto approving", lambda sid=grant_key: app._stop_timed(sid))]
                    if grant else
                    [item(f"Auto approve for {default} min…", lambda d=d: app._start_timed(d),
-                         help="Approves every permission prompt from this session until the timer ends "
-                              "(asks to confirm first). Questions from the AI still ask you.")])
+                         enabled=permissions.supports_session_approvals(d),
+                         help=("Approves permission prompts from this session until the timer ends. "
+                               "Questions from the AI still ask you." if permissions.supports_session_approvals(d)
+                               else "Update this host using Install hooks in SSH connections."))])
+        if permissions.session_approval_key(d):
+            entries.append(item("Approval rules for this session…", lambda d=d: app.approvals.open_session_editor(d),
+                                enabled=permissions.supports_session_approvals(d),
+                                help="Set a whitelist and blacklist for this session, or use the host's rules."))
         entries += [None, item(f"Subagents running: {len(agents)}" if agents else "No subagents running",
                                enabled=False)]
         entries += [item(f"• {a}", enabled=False) for a in agents]

@@ -18,6 +18,7 @@ from uuid import uuid4
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from aipet_hook_runtime.io import safe_name
+from aipet_hook_runtime.config import SSH_APPROVAL_FILE
 
 from . import protocol, settings, ssh_credentials
 from ..runtime import paths
@@ -26,6 +27,7 @@ TIMEOUT = 5
 MAX_SESSIONS = 48
 MAX_RECORD = 512 * 1024
 MAX_TRANSCRIPT_TAIL = 1024 * 1024
+APPROVALS_MARKER = "ssh-approval-hooks-v1"
 LOG_CHANNEL = "aipet.ssh.transport"
 _LOG = logging.getLogger(LOG_CHANNEL)
 _LOG.addHandler(logging.NullHandler())
@@ -91,6 +93,8 @@ class RemotePet:
         self.base = posixpath.join(sftp.normalize("."), ".aipet", "ssh")
         self.controls = None
         self.transcripts = {}
+        self.approvals_supported = None
+        self._approval_file_active = None
 
     def _path(self, *parts):
         return posixpath.join(self.base, *parts)
@@ -153,7 +157,9 @@ print(json.dumps([sys.executable, {kind: os.path.join(folder, name)
         archive = io.BytesIO()
         root = Path(paths.RESOURCE_DIR)
         with ZipFile(archive, "w", ZIP_DEFLATED) as bundle:
-            bundle.write(root / "aipet_hook.py", "__main__.py")
+            bundle.write(root / "aipet_hook.py", "aipet_hook.py")
+            bundle.writestr("__main__.py", "import runpy\nimport sys\nsys.argv.append('--ssh')\n"
+                           "runpy.run_module('aipet_hook', run_name='__main__')\n")
             for source in sorted((root / "aipet_hook_runtime").glob("*.py")):
                 bundle.write(source, str(source.relative_to(root)).replace(os.sep, "/"))
             for name in ("aipet_usage.py", "aipet_claude_usage.py"):
@@ -208,9 +214,36 @@ print(json.dumps([sys.executable, {kind: os.path.join(folder, name)
             if original is not None:
                 self._write(path + ".aipet-" + uuid4().hex + ".bak", original)
             self._write(path, updated, mode)
+        self._write(self._path(APPROVALS_MARKER), b"")
+        self.approvals_supported = True
         return "Hooks installed. Restart remote sessions" + (" and trust AIPet in Codex /hooks." if "codex" in configs else ".")
 
-    def poll(self, controls, decisions):
+    def _sync_approvals(self, approvals, remote_now):
+        if self.approvals_supported is None:
+            try:
+                self.sftp.stat(self._path(APPROVALS_MARKER))
+                self.approvals_supported = True
+            except OSError as exc:
+                if not _missing(exc):
+                    raise
+                self.approvals_supported = False
+        if not self.approvals_supported:
+            return
+        path = self._path(SSH_APPROVAL_FILE)
+        approvals = approvals or {}
+        targets = approvals.get("targets", {})
+        local_now = time.time()
+        timed = {key: dict(grant, until=remote_now + grant["until"] - local_now)
+                 for key, grant in approvals.get("timed", {}).items() if grant["until"] > local_now}
+        if timed or any(rules.get("enabled") for rules in targets.values()):
+            # Refresh the lease only after the whole policy has been written atomically.
+            self._write(path, json.dumps({"targets": targets, "timed": timed}).encode("utf-8"))
+            self._approval_file_active = True
+        elif self._approval_file_active is not False:
+            self._remove(path)
+            self._approval_file_active = False
+
+    def poll(self, controls, decisions, approvals=None):
         try:
             self.sftp.stat(self._path("aipet-hook.pyz"))
         except OSError as exc:
@@ -230,6 +263,7 @@ print(json.dumps([sys.executable, {kind: os.path.join(folder, name)
         heartbeat = self._path("alive")
         self._write(heartbeat, b"")
         remote_now = self.sftp.stat(heartbeat).st_mtime
+        self._sync_approvals(approvals, remote_now)
         waiting = self._waiting(remote_now)
         for name, data, deadline in decisions:
             if name in waiting and time.monotonic() < deadline:
@@ -245,6 +279,7 @@ print(json.dumps([sys.executable, {kind: os.path.join(folder, name)
                 record = json.loads(self._read(self._path("sessions", entry.filename), MAX_RECORD))
                 if not _valid_record(record):
                     continue
+                record["ssh_approvals"] = self.approvals_supported
                 for req in [record.get("request") or {}, *(record.get("requests") or [])]:
                     name = safe_name(req.get("id") or record["id"])
                     if req:

@@ -330,12 +330,13 @@ class PermissionCard:
         req = item.get("request") or {}
         can_answer = bool(self.app.answers.enabled(item) and permissions.hook_waiting(item) and not self.sent)
         stop = None if can_answer or self.sent or not req else permissions.hook_stop(item, permissions.answers_dir())
-        grant = permissions.timed_grants().get(str(item.get("session_id"))) if can_answer and not item.get("ssh_connection") else None
+        grant = permissions.timed_grant_for(item) if can_answer else None
         return (item.get("state", "needs_input"), self.sent, getattr(self, "_sent_id", None),
                 json.dumps(req, sort_keys=True, default=str), item.get("pending", 0), item.get("title"),
                 tuple(r.get("id") for r in item.get("requests") or []),
                 item.get("where"), item.get("detail"), item.get("agent"), item.get("message"), bool(item.get("changed")),
                 can_answer, bool(self.app.answers.enabled(item)), json.dumps(stop, default=str),
+                permissions.supports_session_approvals(item),
                 self.app.cfg.get("codex_answers", True), preferences.ANSWER_WAIT["v"],
                 json.dumps(grant, sort_keys=True), permissions.blacklist_blocked(item),
                 self.app.answers.timed_minutes() if can_answer else None)
@@ -345,7 +346,7 @@ class PermissionCard:
             prefix = "waiting" if self._state == "needs_input" or self.sent else "since"
             self.wait.config(text=f"{prefix} {textfmt.ago(item['changed'])}")
         if self._timed_grant:
-            grant = permissions.timed_grants().get(str(item.get("session_id")))
+            grant = permissions.timed_grant_for(item)
             if grant:
                 self.timedlink.config(text=self._timed_text(grant))
 
@@ -464,7 +465,8 @@ class PermissionCard:
         if can_answer:
             (self.q_row if question else self.answer_row).pack(fill="x", after=self.note)
         self._req_id = req.get("id")
-        if remote:
+        approval_supported = permissions.supports_session_approvals(item)
+        if not approval_supported:
             self.btn_whitelist.pack_forget()
         elif not self.btn_whitelist.winfo_manager():
             self.btn_whitelist.pack(side="right", ipady=3, padx=(0, 8))
@@ -473,8 +475,8 @@ class PermissionCard:
         else:
             self.clearlink.pack_forget()
         self._timed_grant = False
-        if can_answer and not question and not remote:
-            grant = permissions.timed_grants().get(str(item.get("session_id")))
+        if can_answer and not question and approval_supported:
+            grant = permissions.timed_grant_for(item)
             self.timedlink.config(text=self._timed_text(grant))
             self._timed_grant = bool(grant)
             self.timed_var.set(self.app.answers.timed_minutes())
@@ -696,12 +698,12 @@ class PermissionCard:
     def auto_approve_for_a_while(self):
         """Start the timed auto approve for this session (after its confirmation), and allow the prompt on screen."""
         item = next((i for i in self.app._last_items if i["key"] == self.key), {})
-        grant = permissions.timed_grants().get(str(item.get("session_id")))
+        grant = permissions.timed_grant_for(item)
         self._save_timed_minutes()
         def completed(accepted):
             if not accepted or not self.win.winfo_exists():
                 return
-            active = permissions.timed_grants().get(str(item.get('session_id'))) or {}
+            active = permissions.timed_grant_for(item) or {}
             if active.get('respect_blacklist') and not active.get('reject_blacklist'):
                 self.close()
                 return

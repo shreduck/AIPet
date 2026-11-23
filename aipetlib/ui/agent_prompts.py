@@ -173,10 +173,10 @@ class PromptPanel:
                 agent_name = "codex" if (item or {}).get("agent") == "codex" else "claude"
                 self.options.append((f"{agent_name}: {common.suggestion_label(sug)}",
                                      lambda sug=sug: self.send("allow", permissions=[sug])))
-            if not (item or {}).get("ssh_connection"):
+            if permission_rules.supports_session_approvals(item or {}):
                 self.options.append(("aipet: always (whitelist)", self.always))
-            if (item or {}).get("session_id") and not item.get("ssh_connection"):
-                grant = permission_rules.timed_grants().get(str(item["session_id"]))
+            if (item or {}).get("session_id") and permission_rules.supports_session_approvals(item):
+                grant = permission_rules.timed_grant_for(item)
                 self.options.append(("aipet: auto approving · reject blacklist" if grant and grant.get("reject_blacklist") else
                                      "aipet: auto approving · pause on blacklist" if grant and grant.get("respect_blacklist") else
                                      "aipet: auto approving this session · allow" if grant else
@@ -476,11 +476,11 @@ class PromptPanel:
         window = self.window
         item = window.item or {}
         key = window.key
-        grant = permission_rules.timed_grants().get(str(item.get("session_id")))
+        grant = permission_rules.timed_grant_for(item)
         def completed(accepted):
             if not accepted or not window.win.winfo_exists() or window.key != key:
                 return
-            active = permission_rules.timed_grants().get(str(item.get('session_id'))) or {}
+            active = permission_rules.timed_grant_for(item) or {}
             if active.get('respect_blacklist') and not active.get('reject_blacklist'):
                 self.open(False)
                 return

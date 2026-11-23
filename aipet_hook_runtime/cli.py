@@ -92,10 +92,13 @@ def main():
         return
 
     auto = None
-    if event == "PermissionRequest" and data.get("tool_name") != hook_config.QUESTION_TOOL:  # never auto-"approve" a question
-        auto = hook_approvals.timed_decision(os.path.dirname(target), session_id, data=data,
-                                           key=hook_approvals.auto_approve_key(wsl)) or \
-            hook_approvals.auto_decision(hook_approvals.auto_approve_rules(os.path.dirname(target), hook_approvals.auto_approve_key(wsl)), data)
+    if event == "PermissionRequest" and data.get("tool_name") not in hook_config.QUESTION_TOOLS:
+        base, key = os.path.dirname(target), hook_approvals.auto_approve_key(wsl)
+        if hook_config.SSH_HOOK:
+            auto = hook_approvals.permission_decision(base, session_id, data=data, key=key)
+        else:
+            auto = (hook_approvals.timed_decision(base, session_id, data=data, key=key)
+                    or hook_approvals.auto_decision(hook_approvals.auto_approve_rules(base, key), data))
     if auto and auto != "blocked":
         with hook_io.SessionLock(path):
             hook_sessions._update_session(path, target, event, data, wsl, auto=auto)

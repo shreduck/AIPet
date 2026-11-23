@@ -175,7 +175,7 @@ def answer_flow(base, path, aid, request_id=None, tool_input=None):
     # Re-evaluate it with the original input, so queued prompts advance too.
     from . import approvals as hook_approvals
     auto_check = None
-    if req.get("kind") != "question" and req.get("tool") != hook_config.QUESTION_TOOL:
+    if req.get("kind") != "question" and req.get("tool") not in hook_config.QUESTION_TOOLS:
         data = {"tool_name": req.get("tool"), "tool_input": tool_input}
         target_key = hook_approvals.auto_approve_key(record.get("env") == "wsl")
         auto_check = lambda: hook_approvals.timed_decision(base, record.get("id"), data=data, key=target_key)

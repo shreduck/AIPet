@@ -13,6 +13,7 @@ from uuid import uuid4
 from aipet_hook_runtime.io import safe_name
 
 from . import ssh_credentials, ssh_transport
+from .. import permissions
 from ..runtime import paths, preferences
 
 INTERVAL = 1.5
@@ -112,18 +113,20 @@ class SSHConnections:
             fields = ("host", "port", "user")
             if any(all(p[field] == endpoint[field] for field in fields) for p in other_profiles):
                 raise ValueError("This SSH connection already exists.")
-        profile = dict(endpoint, id=key or uuid4().hex, enabled=enabled)
+        same_host = old and all(old[field] == endpoint[field] for field in (*fields, "fingerprint"))
+        profile = dict(endpoint, id=key if same_host else uuid4().hex, enabled=enabled)
         if password:
             try:
                 profile["secret"] = ssh_credentials.seal(profile, password)
             except Exception:
                 raise ValueError("Could not save the password in the operating system credential store.") from None
-        elif old and all(old[field] == profile[field] for field in fields):
+        elif same_host:
             profile["secret"] = old["secret"]
         else:
             raise ValueError("Enter the password for this SSH host.")
         with self._lock:
-            self._replace({**self._profiles, profile["id"]: profile})
+            updated = {k: p for k, p in self._profiles.items() if k != key or same_host}
+            self._replace({**updated, profile["id"]: profile})
         return profile["id"]
 
     def remove(self, key):
@@ -295,7 +298,9 @@ class SSHWorker(threading.Thread):
                 controls = (self.cfg.get("claude_answers", True), self.cfg.get("codex_answers", False),
                             preferences.ANSWER_WAIT["v"])
                 with _deadline(client, 15):
-                    rows = remote.poll(controls, [(name, data, expiry) for name, (data, expiry) in decisions.items()])
-                self._publish(install_status or ("Connected · install hooks to start" if rows is None else "Connected"),
-                              rows or [])
+                    rows = remote.poll(controls, [(name, data, expiry) for name, (data, expiry) in decisions.items()],
+                                       permissions.ssh_approval_state(self.profile["id"]))
+                status = ("Connected · install hooks to start" if rows is None else "Connected" if remote.approvals_supported
+                          else "Connected · update hooks for approval rules")
+                self._publish(install_status or status, rows or [])
                 self._wait(INTERVAL)

@@ -57,6 +57,21 @@ class LocalSFTP:
 
 
 class SSHTests(unittest.TestCase):
+    def _remote(self, tmp):
+        sftp = LocalSFTP(tmp)
+        config_path = "/home/test/.codex/hooks.json"
+        sftp.path(config_path).parent.mkdir(parents=True)
+        sftp.path(config_path).write_text('{"other": true}', encoding="utf-8")
+        cache = sftp.root / "cache"
+        cache.mkdir()
+
+        class Client:
+            def exec_command(self, *args, **kwargs):
+                config = ["/usr/bin/python3", {"codex": config_path}]
+                return None, io.BytesIO(json.dumps(config).encode()), None
+
+        return ssh_transport.RemotePet(Client(), sftp, cache), sftp.path(config_path)
+
     def test_pinned_host_is_checked_before_sending_password(self):
         try:
             import paramiko
@@ -134,6 +149,9 @@ class SSHTests(unittest.TestCase):
                 with self.assertRaises(InvalidTag):
                     ssh_credentials.unlock(dict(profile, port=22))
                 self.assertNotIn("secret", connections.profiles()[0])
+                changed = connections.save(key, "ssh://other:2222", "agent", "example-secret", "", False)
+                self.assertNotEqual(changed, key)
+                self.assertEqual([p["id"] for p in connections.profiles()], [changed])
 
     def test_offline_worker_does_not_remove_other_hosts(self):
         offline = threading.Event()
@@ -167,23 +185,13 @@ class SSHTests(unittest.TestCase):
 
     def test_install_runs_real_hook_and_relays_waiting_answer(self):
         with tempfile.TemporaryDirectory() as tmp:
-            sftp = LocalSFTP(tmp)
-            config_path = "/home/test/.codex/hooks.json"
-            sftp.path(config_path).parent.mkdir(parents=True)
-            sftp.path(config_path).write_text('{"other": true}', encoding="utf-8")
-            cache = sftp.root / "cache"
-            cache.mkdir()
-
-            class Client:
-                def exec_command(self, *args, **kwargs):
-                    return None, io.BytesIO(json.dumps(["/usr/bin/python3", {"codex": config_path}]).encode()), None
-
-            remote = ssh_transport.RemotePet(Client(), sftp, cache)
+            remote, config_path = self._remote(tmp)
+            sftp = remote.sftp
             self.assertIn("/hooks", remote.install())
-            self.assertEqual(len(list(sftp.path(config_path).parent.glob("*.bak"))), 1)
+            self.assertEqual(len(list(config_path.parent.glob("*.bak"))), 1)
             remote.install()
-            self.assertEqual(len(list(sftp.path(config_path).parent.glob("*.bak"))), 1)
-            self.assertTrue(json.loads(sftp.path(config_path).read_text())["other"])
+            self.assertEqual(len(list(config_path.parent.glob("*.bak"))), 1)
+            self.assertTrue(json.loads(config_path.read_text())["other"])
 
             base = sftp.path(remote.base)
             hook = base / "aipet-hook.pyz"
@@ -212,6 +220,7 @@ class SSHTests(unittest.TestCase):
                           patch.object(sessions.paths, "LEGACY_SESSIONS_DIR", str(sftp.root / "unused"))):
                         item, = sessions.read_claude_code_sessions(cfg, records)
                     self.assertEqual(item["ssh_connection"], "profile")
+                    self.assertTrue(item["ssh_approvals"])
                     self.assertTrue(permissions.hook_waiting(item))
                     request = item["request"]
                     remote.poll(controls, [(request["id"], {"behavior": "deny"}, request["ssh_wait_until"])])
@@ -221,3 +230,79 @@ class SSHTests(unittest.TestCase):
                 finally:
                     if process.poll() is None:
                         process.kill()
+
+    def test_ssh_policy_sync_scopes_and_expires_approvals(self):
+        with (tempfile.TemporaryDirectory() as tmp, patch.object(permissions.paths, "HOME_DIR", tmp),
+              patch.object(permissions.paths, "AUTO_APPROVE_PATH", str(Path(tmp) / "approval.json"))):
+            remote, _ = self._remote(tmp)
+            remote.install()
+            base = remote.sftp.path(remote.base)
+            controls = False, False, 10
+            item = {"ssh_connection": "example", "agent": "codex", "session_id": "shared-id"}
+            local_target = permissions.auto_approve_key_for({"agent": "codex"})
+            all_rules = dict(permissions.default_auto_rules(), enabled=True, allow_all=True)
+            whitelist = dict(permissions.default_auto_rules(), enabled=True, whitelist=["pwd"], blacklist=["rm"])
+            self.assertTrue(permissions.save_auto_approve(local_target, all_rules))
+            self.assertTrue(permissions.save_auto_approve("codex:ssh:other", all_rules))
+            self.assertTrue(permissions.set_timed_grant("shared-id", 20))
+            self.assertTrue(permissions.save_auto_approve(permissions.auto_approve_key_for(item), whitelist))
+
+            def poll():
+                remote.poll(controls, [], permissions.ssh_approval_state(item["ssh_connection"]))
+
+            def decision(sid="shared-id", command="rm", *, codex=True, tool="Bash"):
+                event = {"hook_event_name": "PermissionRequest", "session_id": sid,
+                         "tool_name": tool, "tool_input": {"command": command}, "cwd": str(base)}
+                argv = [sys.executable, str(base / "aipet-hook.pyz")]
+                if codex:
+                    argv.append("--codex")
+                result = subprocess.run(argv, input=json.dumps(event), capture_output=True, timeout=5,
+                                        check=True, text=True, env=dict(os.environ, AIPET_DIR=str(base)))
+                return result.stdout
+
+            poll()
+            self.assertEqual(decision(), "")
+            self.assertIn('"allow"', decision(command="pwd"))
+            self.assertEqual(decision(command="pwd", codex=False), "")
+            key = permissions.timed_grant_key(item)
+            self.assertEqual(key, permissions.session_approval_key(item))
+            override = dict(whitelist, whitelist=["ls"], blacklist=["rm", "pwd"])
+            self.assertTrue(permissions.save_auto_approve(key, override))
+            poll()
+            self.assertEqual(decision(command="pwd"), "")
+            self.assertIn('"allow"', decision(command="ls"))
+            self.assertIn('"allow"', decision(sid="another-session", command="pwd"))
+            self.assertEqual(decision(sid="another-session", command="ls"), "")
+            self.assertTrue(permissions.set_timed_grant(key, 10))
+            poll()
+            self.assertIn('"allow"', decision())
+            self.assertEqual(decision(sid="another-session"), "")
+            self.assertEqual(decision(tool="request_user_input"), "")
+            self.assertEqual(decision(codex=False), "")
+
+            self.assertTrue(permissions.set_timed_grant(key, 10, respect_blacklist=True))
+            poll()
+            self.assertEqual(decision(), "")
+            self.assertTrue(permissions.set_timed_grant(key, 10, reject_blacklist=True))
+            poll()
+            self.assertIn('"deny"', decision())
+            self.assertIn('"deny"', decision(command="pwd"))
+            self.assertIn('"allow"', decision(command="ls"))
+            self.assertTrue(permissions.stop_timed_grant(key))
+            self.assertTrue(permissions.save_auto_approve(key, dict(override, enabled=False)))
+            poll()
+            self.assertEqual(decision(command="ls"), "")
+            self.assertEqual(decision(command="pwd"), "")
+            self.assertTrue(permissions.save_auto_approve(key, None))
+            poll()
+            self.assertIn('"allow"', decision(command="pwd"))
+
+            lease = base / ssh_transport.SSH_APPROVAL_FILE
+            past = time.time() - 30
+            os.utime(lease, (past, past))
+            (base / "alive").touch()
+            self.assertEqual(decision(), "")
+            self.assertEqual(decision(command="pwd"), "")
+            self.assertTrue(permissions.save_auto_approve(permissions.auto_approve_key_for(item), dict(whitelist, enabled=False)))
+            poll()
+            self.assertFalse(lease.exists())

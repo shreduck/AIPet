@@ -197,6 +197,7 @@ class TrayApp:
         self.agent_windows = AgentWindows(self)  # the agent network windows and their menu switches
         self._tk_thread = threading.current_thread()
         self.approvals = Approvals(self)  # auto approve rules per hook target, and which are on
+        self.pet.answers.rules_changed = self.approvals.changed
         self.version = releases.current_version()
         self.updates = UpdateFlow(self)  # new releases: daily check, menu entries, the dialog
         self.setup = SetupFlow(self)

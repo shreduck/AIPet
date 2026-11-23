@@ -26,6 +26,7 @@ class Answers:
         self.app = app
         self.navigation = PromptNavigation()
         self._timed_dialogs = {}
+        self.rules_changed = None
 
     def read_again(self):
         """The hook (or the session file) is about to change: have the background reader look now."""
@@ -101,11 +102,11 @@ class Answers:
         With on_result, return the window immediately and callback(True/False) after the choice.
         UI callers use that path; the synchronous form is retained for noninteractive callers."""
         app = self.app
-        if not item or not item.get("session_id") or item.get("ssh_connection"):
+        if not item or not item.get("session_id") or not permission_rules.supports_session_approvals(item):
             if on_result is not None:
                 on_result(False)
             return False
-        session_id = str(item['session_id'])
+        session_id = permission_rules.timed_grant_key(item)
         if on_result is not None:
             existing = self._timed_dialogs.get(session_id)
             try:
@@ -118,9 +119,14 @@ class Answers:
         name = item.get("title") or "this session"
         if item.get("conv"):
             name += f" \u00b7 {item['conv']}"
+        if item.get("ssh_connection") and item.get("where"):
+            name += f" · {item['where']}"
         from ..ui.approval_rules import RuleLists
-        key = permission_rules.auto_approve_key_for(item)
-        old_rules = permission_rules.auto_approve_rules().get(key) or permission_rules.default_auto_rules()
+        session_key = permission_rules.session_approval_key(item)
+        key = session_key or permission_rules.auto_approve_key_for(item)
+        scope = "this SSH session" if session_key else f"this install ({key})"
+        shared = " and used only by this session" if session_key else " and shared with its other sessions"
+        old_rules = permission_rules.approval_rules_for(item)
         controls = {}
 
         def build_lists(body):
@@ -134,8 +140,11 @@ class Answers:
         def save_lists(_mode):
             try:
                 edited = dict(old_rules, **controls['editor'].read())
-                if edited != old_rules and not permission_rules.save_auto_approve(key, edited):
-                    raise ValueError(permission_rules.approval_save_error() or "Couldn't save approval rules")
+                if edited != old_rules:
+                    if not permission_rules.save_auto_approve(key, edited):
+                        raise ValueError(permission_rules.approval_save_error() or "Couldn't save approval rules")
+                    if self.rules_changed:
+                        self.rules_changed()
                 return True
             except (ValueError, OSError) as exc:
                 controls['error'].configure(text=str(exc))
@@ -146,7 +155,7 @@ class Answers:
         def resolve(mode):
             completed['value'] = True
             self._timed_dialogs.pop(session_id, None)
-            accepted = bool(mode) and permission_rules.set_timed_grant(item['session_id'], minutes, name,
+            accepted = bool(mode) and permission_rules.set_timed_grant(session_id, minutes, name,
                 respect_blacklist=mode in ('blacklist', 'reject_blacklist'), reject_blacklist=mode == 'reject_blacklist')
             if accepted:
                 self.read_again()
@@ -161,8 +170,8 @@ class Answers:
             text=(f"Choose a mode for the next {minutes} minutes. Approve all ignores both lists.\n"
                   "Pause on blacklist waits for you; Reject all in blacklist denies matching requests. "
                   "Both use the precedence switch below, even if normal auto approval is off or Allow all.\n"
-                  f"Edit the complete lists for this install ({key}). Changes are saved when you choose a mode "
-                  "and shared with its other sessions. The default blacklist .* matches everything.\n"
+                  f"Edit the complete lists for {scope}. Changes are saved when you choose a mode"
+                  f"{shared}. The default blacklist .* matches everything.\n"
                   "The selected mode also applies to the prompt on screen. AI questions still wait; stop the timer in Live Management. "
                   "Quitting AIPet stops the grant."),
             buttons=(("Cancel", False, "secondary"), ("Pause on blacklist", "blacklist", "warning"),
@@ -185,7 +194,7 @@ class Answers:
         """Dismiss this session's visible cards; the hook still applies the timed pause policy."""
         details = getattr(self.app, 'details', {})
         for item in getattr(self.app, '_last_items', []):
-            if str(item.get('session_id')) == str(session_id):
+            if permission_rules.timed_grant_key(item) == str(session_id):
                 card = details.get(item.get('key'))
                 if card is not None:
                     card.close()
@@ -226,7 +235,7 @@ class Answers:
         """Add the prompt on this session's card to its hook config's auto-approve whitelist, as an exact match:
         the whole command (or path, URL...), or the tool itself when it has no such argument (MCP tools). Returns a
         line for the card, or None if nothing was saved."""
-        if (item or {}).get("ssh_connection"):
+        if not permission_rules.supports_session_approvals(item or {}):
             return None
         req = (item or {}).get("request") or {}
         tool = req.get("tool") or ""
@@ -234,8 +243,9 @@ class Answers:
             return None
         subject = req.get("subject") if req.get("primary") else ""
         pattern = re.escape(subject) if subject else re.escape(tool)
-        key = permission_rules.auto_approve_key_for(item)
-        rules = permission_rules.auto_approve_rules().get(key) or permission_rules.default_auto_rules()
+        session_key = permission_rules.session_approval_key(item)
+        key = session_key or permission_rules.auto_approve_key_for(item)
+        rules = permission_rules.approval_rules_for(item)
         white = [x for x in rules.get("whitelist") or [] if str(x).strip()]
         if pattern not in white:
             white.append(pattern)
@@ -245,11 +255,16 @@ class Answers:
             # matches only, nothing broader gets through
             black = []
         rules = dict(rules, enabled=True, whitelist=white, blacklist=black)
+        if session_key:
+            rules["allow_all"] = False
         if not permission_rules.save_auto_approve(key, rules):
             return None
+        if self.rules_changed:
+            self.rules_changed()
         blocked = permission_rules.lists_block(rules, [subject or tool, tool, f'{tool}({subject})'])
         what = "this exact command" if subject else f"every {tool} request"
-        return (f"Allowed, and {what} is now on the auto-approve whitelist ({key})."
+        label = "this SSH session" if session_key else key
+        return (f"Allowed, and {what} is now on the auto-approve whitelist ({label})."
                 + (" Your blacklist still asks for it, though." if blocked else ""))
 
     def enabled(self, item):

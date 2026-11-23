@@ -107,6 +107,8 @@ def write_answer_wait(sec):
 def auto_approve_key_for(item):
     """The hook config a session runs under, named like the hooks' auto_approve_key()."""
     item = item or {}
+    if item.get("ssh_connection"):
+        return ssh_target_key(item["ssh_connection"], item.get("agent"))
     if item.get("app") == "cowork" and item.get("agent") != "codex":
         return "cowork"
     if item.get("env") == "wsl":
@@ -114,6 +116,35 @@ def auto_approve_key_for(item):
     else:
         base = "windows" if os.name == "nt" else ("mac" if IS_MAC else sys.platform)
     return ("codex:" + base) if item.get("agent") == "codex" else base
+
+
+def ssh_target_key(connection, agent):
+    return ("codex:" if agent == "codex" else "") + f"ssh:{connection}"
+
+
+def timed_grant_key(item):
+    item = item or {}
+    return session_approval_key(item) or str(item.get("session_id"))
+
+
+def session_approval_key(item):
+    if item.get("ssh_connection") and item.get("session_id"):
+        return f"{auto_approve_key_for(item)}:{item['session_id']}"
+    return None
+
+
+def approval_rules_for(item):
+    rules = auto_approve_rules()
+    session_key = session_approval_key(item)
+    return rules.get(session_key) or rules.get(auto_approve_key_for(item)) or default_auto_rules()
+
+
+def timed_grant_for(item):
+    return timed_grants().get(timed_grant_key(item))
+
+
+def supports_session_approvals(item):
+    return not item.get("ssh_connection") or bool(item.get("ssh_approvals"))
 
 
 def _search(pattern, text):
@@ -131,11 +162,19 @@ def default_auto_rules():
 def auto_approve_rules():
     """{hook config key: rules} as saved by the Auto approve windows. A missing or unreadable file means all off.
     The first version stored a plain list of keys: those meant "allow all"."""
+    return _target_rules(_read_auto_approve().get("targets"))
+
+
+def _read_auto_approve():
     try:
         with open(approval_path(), encoding="utf-8") as f:
-            targets = json.load(f).get("targets")
-    except Exception:
+            config = json.load(f)
+        return config if isinstance(config, dict) else {}
+    except (OSError, ValueError):
         return {}
+
+
+def _target_rules(targets):
     if isinstance(targets, list):
         return {k: dict(default_auto_rules(), enabled=True, allow_all=True) for k in targets if isinstance(k, str)}
     if not isinstance(targets, dict):
@@ -155,11 +194,13 @@ def auto_approve_targets():
 
 
 def save_auto_approve(key, rules, *, directory=None):
-    """Save one hook config's rules (key None = switch every config off, keeping their lists). True if saved."""
+    """Save one config, remove an override with rules=None, or switch every config off with key=None."""
     targets = auto_approve_rules()
     if key is None:
         for r in targets.values():
             r["enabled"] = False
+    elif rules is None:
+        targets.pop(key, None)
     else:
         targets[key] = rules
     return _write_auto_approve(targets=targets, directory=directory)
@@ -199,14 +240,32 @@ def _write_auto_approve(targets=None, timed=None, directory=None):
 
 def timed_grants(now=None):
     """{session id: {"until", "title"}} for the grants still running (the hooks ignore expired ones too)."""
+    return _active_grants(_read_auto_approve().get("timed"), now)
+
+
+def _active_grants(timed, now=None):
     now = time.time() if now is None else now
-    try:
-        with open(approval_path(), encoding="utf-8") as f:
-            timed = json.load(f).get("timed") or {}
-    except Exception:
+    if not isinstance(timed, dict):
         return {}
     return {sid: g for sid, g in timed.items()
-            if isinstance(g, dict) and isinstance(g.get("until"), (int, float)) and g["until"] > now}
+            if isinstance(g, dict) and isinstance(g.get("until"), (int, float)) and now < g["until"] < float("inf")}
+
+
+def ssh_approval_state(connection):
+    """Project the approval rules and grants for just this connection onto its remote hook keys."""
+    config = _read_auto_approve()
+    rules = _target_rules(config.get("targets"))
+    grants = _active_grants(config.get("timed"))
+    targets, timed = {}, {}
+    for agent in ("claude", "codex"):
+        key = ssh_target_key(connection, agent)
+        remote = "codex:ssh" if agent == "codex" else "ssh"
+        if key in rules:
+            targets[remote] = rules[key]
+        prefix = key + ":"
+        targets.update({remote + entry[len(key):]: value for entry, value in rules.items() if entry.startswith(prefix)})
+        timed.update({remote + entry[len(key):]: value for entry, value in grants.items() if entry.startswith(prefix)})
+    return {"targets": targets, "timed": timed}
 
 
 def set_timed_grant(session_id, minutes, title="", respect_blacklist=False, reject_blacklist=False):
@@ -221,10 +280,10 @@ def set_timed_grant(session_id, minutes, title="", respect_blacklist=False, reje
 def blacklist_blocked(item):
     """Whether this displayed permission is paused or rejected by its timed blacklist policy."""
     req = (item or {}).get("request") or {}
-    grant = timed_grants().get(str((item or {}).get("session_id")))
+    grant = timed_grant_for(item)
     if not grant or not grant.get("respect_blacklist") or not req or req.get("kind") == "question":
         return False
-    rules = auto_approve_rules().get(auto_approve_key_for(item)) or default_auto_rules()
+    rules = approval_rules_for(item or {})
     subject, tool = req.get("subject", req.get("detail", "")), req.get("tool", "")
     subjects = [subject, tool, f"{tool}({subject})"]
     return lists_block(rules, subjects)
@@ -234,7 +293,7 @@ def timed_behavior(item):
     """Decision for the displayed permission under the current grant; None leaves a blocked prompt waiting."""
     if (item or {}).get("ssh_connection") or ((item or {}).get("request") or {}).get("kind") == "question":
         return None
-    grant = timed_grants().get(str((item or {}).get("session_id")))
+    grant = timed_grant_for(item)
     if not grant:
         return None
     if blacklist_blocked(item):
