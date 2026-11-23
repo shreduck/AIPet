@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   selftest:
-    runs-on: macos-14
+    runs-on: macos-15
     strategy:
       fail-fast: false
       matrix:
@@ -98,7 +98,7 @@ jobs:
           retention-days: 7  # results live only on the run page, never in the repo
 
   image-probe:  # which ways of drawing an image macOS Tk paints on a transparent window (one screenshot)
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
