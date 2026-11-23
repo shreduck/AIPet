@@ -173,8 +173,9 @@ class PromptPanel:
                 agent_name = "codex" if (item or {}).get("agent") == "codex" else "claude"
                 self.options.append((f"{agent_name}: {common.suggestion_label(sug)}",
                                      lambda sug=sug: self.send("allow", permissions=[sug])))
-            self.options.append(("aipet: always (whitelist)", self.always))
-            if (item or {}).get("session_id"):  # like the card: every prompt of this session, for a while
+            if not (item or {}).get("ssh_connection"):
+                self.options.append(("aipet: always (whitelist)", self.always))
+            if (item or {}).get("session_id") and not item.get("ssh_connection"):
                 grant = permission_rules.timed_grants().get(str(item["session_id"]))
                 self.options.append(("aipet: auto approving · reject blacklist" if grant and grant.get("reject_blacklist") else
                                      "aipet: auto approving · pause on blacklist" if grant and grant.get("respect_blacklist") else
@@ -185,7 +186,8 @@ class PromptPanel:
         n_answers = len(self.options)
         self.options.append(("full card", lambda: window.pet.open_detail(window.key)))
         codex = (item or {}).get("agent") == "codex"
-        self.options.append(("answer in codex" if codex and answerable else "go to window", self.go))
+        if not (item or {}).get("ssh_connection") or (codex and answerable):
+            self.options.append(("answer in codex" if codex and answerable else "go to window", self.go))
         self.opt_row = tk.Frame(ov, bg=P["node"])
         self.opt_row.pack(fill="x", padx=pad, pady=window.px(6))
         self.opt_labels, self.opt_flow = [], None

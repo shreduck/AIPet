@@ -191,6 +191,14 @@ Claude Code, kept in `~/.codex/hooks.json` (or `$CODEX_HOME/hooks.json`):
 - Events: start, prompt, tool use, permission, stop, **Interrupt** (shows as done), session end and subagents. Codex has no
   `Notification` event.
 
+## SSH sessions
+
+Open **Settings → Integrations → SSH connections** to add a Linux or macOS host running Claude Code or Codex. Enter the host or an `ssh://host:port` URL, username, and password. AIPet verifies the server against your OpenSSH `known_hosts` file or a verified SHA256 fingerprint entered in Settings. The password is encrypted with AES-256-GCM. Windows Credential Locker or macOS Keychain holds the key.
+
+Save the connection and select **Install hooks**. The server needs Python 3 and OpenSSH-compatible SFTP. AIPet backs up existing provider settings it changes. Restart the remote agent after setup, and use `/hooks` in Codex to trust the installed hooks. Remote pets show session status and recent main-session transcript activity. The pet can relay individual approvals and Claude question answers when the corresponding Permissions toggle is enabled. Codex question replies happen in the SSH session.
+
+Connection failures stay in the SSH settings window. Temporary outages retry in the background. A rejected password or host key pauses the connection until you update the profile or select **Reconnect**. If a connection drops while a hook is waiting for an answer, the remote agent resumes its normal prompt when AIPet's heartbeat expires.
+
 ## Cowork (Claude desktop app)
 Cowork runs its own Claude Code with a private config folder, so it never reads `settings.json` and the hooks above don't reach it. It does run plugin hooks, on Windows itself (not in its Linux sandbox), so AIPet ships its hooks as a plugin. Only the Claude app can install plugins, so this step is manual:
 

@@ -23,6 +23,7 @@ from aipetlib.app.placement import Placement
 from aipetlib.app.pointer import Pointer
 from aipetlib.app.answers import Answers
 from aipetlib.app.session_reader import SessionReader
+from aipetlib.integrations.ssh import SSHConnections
 import aipetlib.housekeeping as housekeeping
 import aipetlib.ui.native_menu as native_menu
 import aipetlib.ui.sounds as sounds
@@ -240,6 +241,7 @@ class PetApp:
         m.add_checkbutton(label="Mute sounds", variable=self.muted)
         m.add_command(label="Clear finished", command=self.clear_finished)
         m.add_command(label="Save diagnostics...", command=lambda: app_diagnostics.save(self))
+        m.add_command(label="SSH connections...", command=self.show_ssh_settings)
         m.add_separator()
         m.add_command(label="Workbench: " + ("starting…" if self.wb else "off"), state="disabled")
         self.wb_menu_index = m.index("end")
@@ -254,8 +256,10 @@ class PetApp:
         self.pointer.passing = None
         # sessions are read in the background; the poll below takes the newest list (at twice its rate, so a change
         # shows within one poll)
+        self.ssh_connections = SSHConnections(self.cfg)
         self.reader = SessionReader(self.read_items, max(0.2, self.cfg["poll_ms"] / 2000))
         self.reader.start()
+        root.bind("<Destroy>", self._stop_readers, add="+")
         self.refresh()
         self.animate()
         perf.watch(root)  # UI stalls to perf.log while debugging
@@ -273,9 +277,23 @@ class PetApp:
             root.bind("<Map>", lambda e: root.after(100, self.preferences._apply_all_spaces) if e.widget is root else None, add="+")
 
     # ---- data
+    def _stop_readers(self, event):
+        if event.widget is self.root:
+            self.reader.stop()
+            self.ssh_connections.close()
+
+    def show_ssh_settings(self, parent=None):
+        from aipetlib.ui.ssh_settings import SSHSettings
+        window = getattr(self, "ssh_settings", None)
+        if window and window.win.winfo_exists():
+            window.show()
+        else:
+            self.ssh_settings = SSHSettings(parent or self.root, self.ssh_connections)
+
     def read_items(self):
         """Every session, read from disk (and Workbench): the slow part, run by the session reader thread."""
-        items = read_claude_code_sessions(self.cfg)
+        ssh = getattr(self, "ssh_connections", None)
+        items = read_claude_code_sessions(self.cfg, ssh.records()) if ssh else read_claude_code_sessions(self.cfg)
         if self.wb:
             items += self.wb.items()
         return items
@@ -451,7 +469,7 @@ class PetApp:
     def focus_session(self, pet):
         """Bring the window that hosts this session to the front (best effort)."""
         d = pet.data
-        if d.get("source") != "CC":
+        if d.get("source") != "CC" or d.get("ssh_connection"):
             return
         if d.get("ide") == "vscode":
             self.open_in_vscode(pet)  # `code <folder>` raises the right VS Code window, then the conversation tab
@@ -532,7 +550,9 @@ class PetApp:
         self.root.after(3600 * 1000, self._sweep_usage)
 
     def dismiss_item(self, d):
-        if d.get("source") == "CC" and d.get("path"):
+        if d.get("ssh_connection"):
+            self.ssh_connections.dismiss(d)
+        elif d.get("source") == "CC" and d.get("path"):
             try:
                 os.remove(d["path"])
                 usage.remove_for(d["path"])
@@ -669,6 +689,8 @@ class PetApp:
         """Open/focus the session's folder in VS Code (Remote-WSL for WSL sessions)."""
         pet = pet or self.menu_pet
         d = pet.data if pet else {}
+        if d.get("ssh_connection"):
+            return
         code = shutil.which("code") or next(
             (p for p in ("/usr/local/bin/code", "/opt/homebrew/bin/code",
                          "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code")

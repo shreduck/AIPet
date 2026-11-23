@@ -28,12 +28,12 @@ def _context_menu_spec(app, pet):
     real_pet = bool(pet and pet.key != "_none")
     session_actions = [
         item("Session details...", lambda: app.pet.open_detail(pet.data.get("focus", pet.key)), real_pet),
-        item("Go to session window", lambda: app.pet.focus_session(pet), real_pet),
+        item("Go to session window", lambda: app.pet.focus_session(pet), real_pet and not (session or {}).get("ssh_connection")),
         item("Open in VS Code", lambda: app.pet.open_in_vscode(pet),
-             bool(pet and pet.data.get("source") == "CC" and pet.data.get("cwd"))),
+             bool(pet and pet.data.get("source") == "CC" and pet.data.get("cwd") and not pet.data.get("ssh_connection"))),
         None,
         item("Mark as finished", app.pet.finish_menu_pet,
-             bool(session and session.get("source") == "CC" and session.get("state") in
+             bool(session and not session.get("ssh_connection") and session.get("source") == "CC" and session.get("state") in
                   ("working", "needs_input", "error"))),
         item("Dismiss this pet", app.pet.dismiss_menu_pet, real_pet),
     ]
@@ -260,6 +260,8 @@ def _mac_menu_spec(app, settings=False):
                  help="Hooks let Claude Code tell the pet what each session is doing."),
             item("Codex hooks", icon="link", submenu=codex,
                  help="Hooks let Codex tell the pet what each session is doing."),
+            item("SSH connections...", lambda: app.show_ssh_settings(), icon="link",
+                 help="Connect to Claude Code and Codex sessions on a remote machine."),
             item("Extra", icon="wrench", submenu=[
                 item("Claude account usage (unofficial)", app.toggle_claude_oauth_usage,
                      checked=bool(cfg.get("claude_oauth_usage", False)),

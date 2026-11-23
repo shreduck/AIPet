@@ -57,6 +57,8 @@ def hook_waiting(item):
     req = (item or {}).get("request") or {}
     if not req.get("answerable"):
         return False
+    if "ssh_wait_until" in req or (item or {}).get("ssh_connection"):
+        return time.monotonic() < req.get("ssh_wait_until", 0)
     try:
         return time.time() - os.path.getmtime(os.path.join(answers_dir(), answer_name(item) + ".waiting")) < 4
     except OSError:
@@ -71,6 +73,8 @@ def hook_stop(item, answers_dir):
     req = (item or {}).get("request") or {}
     if isinstance(req.get("hook_stopped"), dict):
         return {"after": req["hook_stopped"].get("after"), "signal": req["hook_stopped"].get("signal") or ""}
+    if (item or {}).get("ssh_connection"):
+        return None
     if not req.get("answerable"):
         return None
     try:
@@ -228,7 +232,7 @@ def blacklist_blocked(item):
 
 def timed_behavior(item):
     """Decision for the displayed permission under the current grant; None leaves a blocked prompt waiting."""
-    if ((item or {}).get("request") or {}).get("kind") == "question":
+    if (item or {}).get("ssh_connection") or ((item or {}).get("request") or {}).get("kind") == "question":
         return None
     grant = timed_grants().get(str((item or {}).get("session_id")))
     if not grant:

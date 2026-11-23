@@ -3,3 +3,6 @@ pystray>=0.19
 pillow>=10.0
 certifi>=2024.8.30
 pyvda>=0.6.0; sys_platform == "win32"
+paramiko>=4.0
+cryptography>=44
+keyring>=25

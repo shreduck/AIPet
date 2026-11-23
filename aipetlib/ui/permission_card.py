@@ -330,7 +330,7 @@ class PermissionCard:
         req = item.get("request") or {}
         can_answer = bool(self.app.answers.enabled(item) and permissions.hook_waiting(item) and not self.sent)
         stop = None if can_answer or self.sent or not req else permissions.hook_stop(item, permissions.answers_dir())
-        grant = permissions.timed_grants().get(str(item.get("session_id"))) if can_answer else None
+        grant = permissions.timed_grants().get(str(item.get("session_id"))) if can_answer and not item.get("ssh_connection") else None
         return (item.get("state", "needs_input"), self.sent, getattr(self, "_sent_id", None),
                 json.dumps(req, sort_keys=True, default=str), item.get("pending", 0), item.get("title"),
                 tuple(r.get("id") for r in item.get("requests") or []),
@@ -452,18 +452,28 @@ class PermissionCard:
                     "(the pet can't type into Codex).")
         elif question:
             note = f"Answer this in {who}: press Go to window."
+        remote = bool(item.get("ssh_connection"))
+        if remote and not self.sent:
+            note = (f"Respond here or in your SSH session running {who}." if can_answer
+                    else f"Respond in your SSH session running {who}.")
+            if can_answer and item.get("agent") == "codex":
+                note = "Respond here or select Show in Codex to hand the prompt back to your SSH session."
         self.note.config(text=note)
         self.answer_row.pack_forget()
         self.q_row.pack_forget()
         if can_answer:
             (self.q_row if question else self.answer_row).pack(fill="x", after=self.note)
         self._req_id = req.get("id")
-        if req and not self.sent and req.get("source") != "transcript":
+        if remote:
+            self.btn_whitelist.pack_forget()
+        elif not self.btn_whitelist.winfo_manager():
+            self.btn_whitelist.pack(side="right", ipady=3, padx=(0, 8))
+        if req and not self.sent and req.get("source") != "transcript" and not remote:
             self.clearlink.pack(fill="x", pady=(0, 6), after=self.note)
         else:
             self.clearlink.pack_forget()
         self._timed_grant = False
-        if can_answer and not question:
+        if can_answer and not question and not remote:
             grant = permissions.timed_grants().get(str(item.get("session_id")))
             self.timedlink.config(text=self._timed_text(grant))
             self._timed_grant = bool(grant)
@@ -475,7 +485,14 @@ class PermissionCard:
             self.timed_row.pack(fill="x", pady=(0, 4), after=self.note)
         else:
             self.timed_row.pack_forget()
-        if can_answer or self.sent:  # small link while the answer buttons (or the "sent" note) are showing
+        if remote:
+            self.golink.pack_forget()
+            self.go_row.pack_forget()
+            if can_answer and item.get("agent") == "codex":
+                self.golink.config(text="Show in Codex ›")
+                self.golink.pack(side="right")
+        elif can_answer or self.sent:  # small link while the answer buttons (or the "sent" note) are showing
+            self.golink.config(text="Go to window ›")
             self.golink.pack(side="right")
             self.go_row.pack_forget()
         else:  # nothing to answer from here: the big button
@@ -613,13 +630,17 @@ class PermissionCard:
             self.ask.config(text=item["message"])
             self.ask.pack(fill="x")
         self.wait.config(text=f"since {textfmt.ago(item['changed'])}" if item.get("changed") else "")
-        self.note.config(text="Press Go to window to jump to the session.")
+        remote = item.get("ssh_connection")
+        self.note.config(text="" if remote else "Press Go to window to jump to the session.")
         self.answer_row.pack_forget()
         self.q_row.pack_forget()
         self.qframe.pack_forget()
         self.timed_row.pack_forget()
         self.golink.pack_forget()
-        self.go_row.pack(fill="x", after=self.note)
+        if remote:
+            self.go_row.pack_forget()
+        else:
+            self.go_row.pack(fill="x", after=self.note)
         self._place()
 
     # ---- size

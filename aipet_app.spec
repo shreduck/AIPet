@@ -26,12 +26,10 @@ EXCLUDES = [
     "PIL._imagingmath", "PIL.ImageMath", "PIL._imagingft", "PIL.ImageQt", "numpy",
     # standard-library tools that never run inside the app
     "unittest", "doctest", "pydoc", "pdb", "lib2to3", "idlelib", "turtle", "turtledemo", "tkinter.test",
-    "distutils", "setuptools", "pip", "sqlite3",
+    "pip", "sqlite3",
     # compression formats nothing reads (zipfile / shutil fall back without them)
     "lzma", "_lzma", "bz2", "_bz2",
-    # OpenSSL: the two HTTPS requests (update check, opt-in Claude usage) go through the system's curl instead
-    # (aipet_usage.https_get_json), and hashlib falls back to Python's built-in hashes
-    "ssl", "_ssl", "_hashlib", "certifi",
+    "certifi",
     # legacy East Asian text codecs (AIPet reads and writes UTF-8 only) and Python 3.14's zstd
     "_multibytecodec", "_codecs_cn", "_codecs_hk", "_codecs_iso2022", "_codecs_jp", "_codecs_kr", "_codecs_tw",
     "_zstd", "compression.zstd",

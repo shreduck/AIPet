@@ -50,6 +50,8 @@ def transcript_file(rec):
 def transcript_path(rec):
     """The session's transcript as this machine can open it (WSL paths through \\\\wsl.localhost\\<distro>)."""
     path = str(rec.get("transcript_path") or "")
+    if rec.get("ssh_connection"):
+        return path
     if rec.get("env") == "wsl" and os.name == "nt" and path.startswith("/") and rec.get("distro"):
         path = "\\\\wsl.localhost\\" + rec["distro"] + path.replace("/", "\\")
     if rec.get("agent") == "codex" and (rec.get("env") != "wsl" or os.name == "nt"):
@@ -69,7 +71,7 @@ def visible_hook_session(rec):
         return False
     # Ephemeral post-turn jobs have no conversation rollout. Keep real alerts
     # visible even if their transcript is not available, and preserve remote WSL sessions.
-    return bool(path or rec.get("env") == "wsl" or rec.get("state") in ("needs_input", "error"))
+    return bool(path or rec.get("env") in ("wsl", "ssh") or rec.get("state") in ("needs_input", "error"))
 
 
 def turn_interrupted(rec):
@@ -241,7 +243,7 @@ def _active_agents(rec, now=None):
     return sum(1 for ts in (rec.get("agents") or {}).values() if now - ts < 900)
 
 
-def read_claude_code_sessions(cfg):
+def read_claude_code_sessions(cfg, ssh_records=()):
     items = []
     if not cfg["claude_code"]["enabled"]:
         return items
@@ -280,7 +282,12 @@ def read_claude_code_sessions(cfg):
                 os.remove(stale_path)
             except OSError:
                 pass
-    for path, rec in sorted(newest.values(), key=lambda pr: pr[0]):
+    records = [(path, rec, None, None) for path, rec in sorted(newest.values(), key=lambda pr: pr[0])]
+    for ssh_key, connection, host, rec in ssh_records:
+        if rec["updated"] >= cutoff or (preferences.DONE_TIMEOUT["v"] == 0 and rec["state"] in ("done", "idle")):
+            records.append(("", dict(rec, env="ssh", distro="", ide="", hwnd=None, pid=None,
+                                     ssh_connection=connection), ssh_key, host))
+    for path, rec, ssh_key, host in records:
         if not visible_hook_session(rec):
             continue
         sid = str(rec.get("id"))
@@ -321,10 +328,12 @@ def read_claude_code_sessions(cfg):
             where.append(f"WSL ({rec['distro']})" if rec.get("distro") else "WSL")
         if ide == "vscode":
             where.append("VS Code")
+        if ssh_key:
+            where.append("SSH " + host)
         items.append({
-            "key": "cc:" + sid,
+            "key": ssh_key or "cc:" + sid,
             "source": "CC",
-            "badges": badges or ["CC"],
+            "badges": (["Codex SSH" if codex else "Claude SSH"] if ssh_key else badges) or ["CC"],
             "where": " · ".join(where),
             "env": env,
             "distro": rec.get("distro", ""),
@@ -360,7 +369,9 @@ def read_claude_code_sessions(cfg):
             "auto_kind": rec.get("auto_kind", ""),
             "auto_what": rec.get("auto_what", ""),
             "conv": session_title(rec, cfg.get("session_titles", "name")),
-            "usage": [r for r in usage.load(path) if cfg.get("claude_oauth_usage", False) or not r.get("provider", "").startswith("Claude Code account")],
+            "usage": [r for r in usage.load(path) if cfg.get("claude_oauth_usage", False) or not r.get("provider", "").startswith("Claude Code account")] if path else [],
             "updated": rec.get("updated", 0),
         })
+        if ssh_key:
+            items[-1]["ssh_connection"] = rec["ssh_connection"]
     return items

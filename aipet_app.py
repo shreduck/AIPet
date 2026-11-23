@@ -223,6 +223,7 @@ class TrayApp:
         self.config_watch = ConfigWatcher(self)  # config.json edited by hand: applied live
         self.config_watch.start()
         self.pump()
+        self.root.after(1500, self.show_ssh_intro)
         self.root.after(2000, self.addin_intro.maybe_show)
 
     # ---- threading
@@ -349,6 +350,28 @@ class TrayApp:
         return (not setup_is_done() or self.setup.win is not None or self.hooks.busy
                 or bool(theme.OPEN_DIALOGS) or self.root.grab_current() is not None)
 
+    def show_ssh_intro(self):
+        if self.pet.cfg.get("ssh_intro_seen") is True:
+            return
+        if self.startup_dialogs_open():
+            self.root.after(1000, self.show_ssh_intro)
+            return
+
+        def dismissed(open_settings):
+            self.pet.cfg["ssh_intro_seen"] = True
+            runtime_settings.save_setting("ssh_intro_seen", True)
+            if open_settings:
+                self.show_settings()
+                self.show_ssh_settings()
+
+        theme.themed_dialog(
+            self.root, "AIPet", heading="SSH hosts are now supported",
+            text="Follow Claude Code and Codex sessions on Linux and macOS hosts. "
+                 "Add a host under Settings → Integrations → SSH connections.",
+            buttons=(("Got it", False, "secondary"), ("SSH settings", True, "primary")),
+            on_result=dismissed,
+        )
+
     def show_settings(self):
         if getattr(self, "settings_win", None) is not None and self.settings_win.alive():
             self.settings_win.raise_()
@@ -356,6 +379,10 @@ class TrayApp:
         self.settings_win = aipet_settings.SettingsWindow(self.root, lambda: self._mac_menu_spec(settings=True),
                                                           version=self.version,
                                                           zoom_fn=self.settings_zoom, set_zoom=self.set_settings_zoom)
+
+    def show_ssh_settings(self):
+        settings_window = getattr(self, "settings_win", None)
+        self.pet.show_ssh_settings(settings_window.win if settings_window and settings_window.alive() else self.root)
 
     def copy_ai_guide(self):
         """Settings > General: the settings guide for an AI assistant, on the clipboard (Tk's clipboard is the

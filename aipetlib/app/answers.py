@@ -42,14 +42,17 @@ class Answers:
         req = (item or {}).get("request") or {}
         if not self.enabled(item) or not permission_rules.hook_waiting(item) or behavior not in ("allow", "deny", "release"):
             return False
+        data = {"behavior": behavior, **({"answers": answers} if answers else {}),
+                **({"auto_approved": True} if auto_approved else {}),
+                **({"permissions": permissions} if permissions else {})}
+        if item.get("ssh_connection"):
+            return not auto_approved and app.ssh_connections.answer(item, data)
         name = permission_rules.answer_name(item)
         try:
             os.makedirs(permission_rules.answers_dir(), exist_ok=True)
             path = os.path.join(permission_rules.answers_dir(), name + ".json")
             with open(path + ".tmp", "w", encoding="utf-8") as f:
-                json.dump(dict({"behavior": behavior, "t": time.time()}, **({"answers": answers} if answers else {}),
-                               **({"auto_approved": True} if auto_approved else {}),
-                               **({"permissions": permissions} if permissions else {})), f)
+                json.dump(dict(data, t=time.time()), f)
             os.replace(path + ".tmp", path)
             self.read_again()
             return True
@@ -98,7 +101,7 @@ class Answers:
         With on_result, return the window immediately and callback(True/False) after the choice.
         UI callers use that path; the synchronous form is retained for noninteractive callers."""
         app = self.app
-        if not item or not item.get("session_id"):
+        if not item or not item.get("session_id") or item.get("ssh_connection"):
             if on_result is not None:
                 on_result(False)
             return False
@@ -223,6 +226,8 @@ class Answers:
         """Add the prompt on this session's card to its hook config's auto-approve whitelist, as an exact match:
         the whole command (or path, URL...), or the tool itself when it has no such argument (MCP tools). Returns a
         line for the card, or None if nothing was saved."""
+        if (item or {}).get("ssh_connection"):
+            return None
         req = (item or {}).get("request") or {}
         tool = req.get("tool") or ""
         if not tool:

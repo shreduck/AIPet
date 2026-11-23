@@ -40,7 +40,7 @@ def _read_network(item, now=None, include_tools=False, bootstrap=False):
     now = now or time.time()
     codex = item.get("agent") == "codex"
     transcript = transcript_path(item)
-    if codex and item.get("session_id") and item.get("env") != "wsl":
+    if codex and item.get("session_id") and item.get("env") not in ("wsl", "ssh"):
         transcript = root_rollout(item["session_id"], transcript)
     parse = parse_codex if codex else parse_claude
     main_info = (history.STORE.read(transcript, history.MAIN_TAIL, parse, bootstrap=bootstrap) if transcript else None) or _empty()
